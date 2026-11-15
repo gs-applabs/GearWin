@@ -323,6 +323,8 @@ namespace OptimizerWpf.Services
 
         private static async Task<string?> ResolveCatalogDownloadUrlAsync(string updateId)
         {
+            // Το updateId μπαίνει σε σώμα JSON/form: δέχεται μόνο GUID (προστασία από injection, π.χ. από παραποιημένη cache στο δίσκο).
+            if (!Guid.TryParseExact(updateId, "D", out _)) return null;
             var body = $"updateIDs=[{{\"size\":0,\"updateID\":\"{updateId}\",\"uidInfo\":\"{updateId}\"}}]";
             var content = new StringContent(Uri.UnescapeDataString(body));
             content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/x-www-form-urlencoded");
