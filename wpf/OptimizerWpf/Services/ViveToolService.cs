@@ -53,6 +53,16 @@ namespace OptimizerWpf.Services
         // εγγράψιμος από κάθε μη-elevated διεργασία του χρήστη (θα μπορούσε να αντικαταστήσει το exe → privilege
         // escalation χωρίς UAC). Τώρα ζει στο %ProgramData%\GearWin με ACL μόνο-Administrators/SYSTEM εγγραφής
         // (οι Users έχουν μόνο ανάγνωση/εκτέλεση), και το zip ΔΕΝ περνά ποτέ από το %TEMP% (εξαγωγή από τη μνήμη).
+        /// <summary>Ακριβής έλεγχος host: github.com / *.github.com / *.githubusercontent.com (ΟΧΙ απλό EndsWith - το "evilgithub.com" θα περνούσε).</summary>
+        internal static bool IsGitHubHost(string host) =>
+            host.Equals("github.com", StringComparison.OrdinalIgnoreCase) ||
+            host.EndsWith(".github.com", StringComparison.OrdinalIgnoreCase) ||
+            host.Equals("githubusercontent.com", StringComparison.OrdinalIgnoreCase) ||
+            host.EndsWith(".githubusercontent.com", StringComparison.OrdinalIgnoreCase);
+
+        private static string? DigestOf(JsonElement asset) =>
+            asset.TryGetProperty("digest", out var d) && d.ValueKind == JsonValueKind.String ? d.GetString() : null;
+
         private static string RootDir => SecureStorage.RootDir;
         private static string ToolsDir => Path.Combine(RootDir, "tools", "vivetool");
         private static void SecureDirectory(string dir) => SecureStorage.SecureDirectory(dir);
@@ -76,26 +86,33 @@ namespace OptimizerWpf.Services
                 var json = await http.GetStringAsync("https://api.github.com/repos/thebookisclosed/ViVe/releases/latest");
                 var root = JsonDocument.Parse(json).RootElement;
                 string? assetUrl = null;
+                string? assetDigest = null; // "sha256:<hex>" όπως το δημοσιεύει το GitHub API για κάθε asset (αν υπάρχει)
                 foreach (var asset in root.GetProperty("assets").EnumerateArray())
                 {
                     var name = asset.GetProperty("name").GetString() ?? "";
-                    if (name.Contains("IntelAmd", StringComparison.OrdinalIgnoreCase)) { assetUrl = asset.GetProperty("browser_download_url").GetString(); break; }
+                    if (name.Contains("IntelAmd", StringComparison.OrdinalIgnoreCase)) { assetUrl = asset.GetProperty("browser_download_url").GetString(); assetDigest = DigestOf(asset); break; }
                 }
                 if (assetUrl == null)
                 {
                     foreach (var asset in root.GetProperty("assets").EnumerateArray())
                     {
                         var name = asset.GetProperty("name").GetString() ?? "";
-                        if (name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)) { assetUrl = asset.GetProperty("browser_download_url").GetString(); break; }
+                        if (name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)) { assetUrl = asset.GetProperty("browser_download_url").GetString(); assetDigest = DigestOf(asset); break; }
                     }
                 }
                 if (assetUrl == null) throw new InvalidOperationException(LanguageService.T("Vive_NoAssetFound"));
                 // Μόνο HTTPS προς το github.com (ή τα δικά του asset hosts) — το URL προέρχεται από απάντηση API.
-                if (!Uri.TryCreate(assetUrl, UriKind.Absolute, out var assetUri) || assetUri.Scheme != Uri.UriSchemeHttps ||
-                    !(assetUri.Host.EndsWith("github.com", StringComparison.OrdinalIgnoreCase) || assetUri.Host.EndsWith("githubusercontent.com", StringComparison.OrdinalIgnoreCase)))
+                if (!Uri.TryCreate(assetUrl, UriKind.Absolute, out var assetUri) || assetUri.Scheme != Uri.UriSchemeHttps || !IsGitHubHost(assetUri.Host))
                     throw new InvalidOperationException(LanguageService.T("Vive_NoAssetFound"));
 
                 var bytes = await http.GetByteArrayAsync(assetUrl);
+                // Το vivetool.exe τρέχει elevated: αν το GitHub δημοσιεύει SHA-256 για το asset, πρέπει να ταιριάζει πριν ανοίξει το zip.
+                if (assetDigest != null && assetDigest.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase))
+                {
+                    var actualHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes));
+                    if (!actualHash.Equals(assetDigest["sha256:".Length..], StringComparison.OrdinalIgnoreCase))
+                        throw new InvalidOperationException("SHA-256 mismatch: the downloaded ViVeTool archive does not match the digest published by GitHub.");
+                }
                 using var archive = new ZipArchive(new MemoryStream(bytes), ZipArchiveMode.Read);
                 var exeEntry = archive.Entries.FirstOrDefault(en => string.Equals(en.Name, "ViVeTool.exe", StringComparison.OrdinalIgnoreCase));
                 if (exeEntry == null) throw new InvalidOperationException(LanguageService.T("Vive_ExeNotFound"));
