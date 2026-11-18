@@ -33,8 +33,11 @@ namespace OptimizerWpf.Services
     // άγνωστα πεδία αγνοούνται, ο owner πρέπει να είναι ο γνωστός λογαριασμός (ώστε ένας αλλοιωμένος κατάλογος να μην οδηγεί σε ξένο repo).
     public static class SuiteCatalogService
     {
-        public const string Owner = "giorstergiopoulos-design";
-        public const string CatalogUrl = "https://raw.githubusercontent.com/giorstergiopoulos-design/Opsis/master/suite/apps.json";
+        public const string Owner = "gs-applabs";
+        // Το παλιό όνομα λογαριασμού (πριν τη μετονομασία, 6.9.11): οι έλεγχοι trusted-URL δέχονται ΚΑΙ τα δύο (παλιές εκδόσεις/ανακατευθύνσεις GitHub).
+        public const string LegacyOwner = "giorstergiopoulos-design";
+        public static bool IsKnownOwner(string? o) => string.Equals(o, Owner, StringComparison.Ordinal) || string.Equals(o, LegacyOwner, StringComparison.Ordinal);
+        public const string CatalogUrl = "https://raw.githubusercontent.com/gs-applabs/Opsis/master/suite/apps.json";
         public const int MaxBytes = 256 * 1024;
         public const int MaxApps = 24;
         public static readonly string[] AllowedHosts = { "github.com", "raw.githubusercontent.com", "api.github.com" };
@@ -68,7 +71,7 @@ namespace OptimizerWpf.Services
                 if (!root.TryGetProperty("schema", out var sch) || sch.ValueKind != JsonValueKind.Number || !sch.TryGetInt32(out var schema) || schema != 1)
                 { error = "schema"; return null; }
                 var owner = Str(root, "owner");
-                if (owner != null && !string.Equals(owner, Owner, StringComparison.Ordinal)) { error = "owner"; return null; }
+                if (owner != null && !IsKnownOwner(owner)) { error = "owner"; return null; }
                 if (!root.TryGetProperty("apps", out var apps) || apps.ValueKind != JsonValueKind.Array) { error = "apps"; return null; }
                 var list = new List<SuiteApp>();
                 var ids = new HashSet<string>();

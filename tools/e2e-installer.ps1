@@ -8,7 +8,7 @@
 param(
     [Parameter(Mandatory)][ValidateSet('fresh', 'from-latest', 'in-app')][string]$Scenario,
     [Parameter(Mandatory)][string]$NewSetup,
-    [string]$Repository = 'giorstergiopoulos-design/GearWin',
+    [string]$Repository = 'gs-applabs/GearWin',
     [string]$Out = (Join-Path ([IO.Path]::GetTempPath()) 'gearwin-e2e'),
     [switch]$IAmADisposableMachine
 )

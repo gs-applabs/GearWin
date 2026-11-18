@@ -10,6 +10,14 @@ namespace OptimizerWpf;
 /// </summary>
 public partial class App : Application
 {
+    // Test host (βλ. TestIsolation): τα tests δημιουργούν το App χωρίς Run() και ανοίγουν/κλείνουν παράθυρα σε διαδοχικά STA threads. Με το
+    // προεπιλεγμένο OnLastWindowClose, το κλείσιμο του τελευταίου παραθύρου ενός test έκανε Shutdown() στο κοινό Application και τα επόμενα
+    // window tests (WelcomeSuiteWindowTests) αποτύγχαναν με "Cannot set Owner property to a Window that has not been shown previously".
+    public App()
+    {
+        if (Environment.GetEnvironmentVariable("GEARWIN_TEST_HOST") == "1") ShutdownMode = ShutdownMode.OnExplicitShutdown;
+    }
+
     // ΔΙΟΡΘΩΣΗ (χρήστης ανέφερε: "η εφαρμογή εξακολουθεί να εμφανίζεται ως 4.6.0") - το MainWindow.xaml
     // και το SplashWindow.xaml είχαν το version string ΚΥΡΙΟΛΕΚΤΙΚΑ γραμμένο ("v4.6.0") αντί να
     // διαβάζεται από το OptimizerWpf.csproj's <Version> - κάθε version bump ξεχνιόταν εύκολα σε ένα από

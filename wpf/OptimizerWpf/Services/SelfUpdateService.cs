@@ -25,9 +25,10 @@ namespace OptimizerWpf.Services
     //  - πάντα με ρητή επιβεβαίωση του χρήστη (βλ. AppearanceSettingsWindow).
     public static class SelfUpdateService
     {
-        public const string Owner = "giorstergiopoulos-design";
+        public const string Owner = SuiteCatalogService.Owner;
         public const string Repo = "GearWin";
         private static readonly string DownloadPrefix = $"https://github.com/{Owner}/{Repo}/releases/download/";
+        private static readonly string LegacyDownloadPrefix = $"https://github.com/{SuiteCatalogService.LegacyOwner}/{Repo}/releases/download/";
         private static readonly Regex InstallerName = new(@"^GearWin-Setup-\d+\.\d+\.\d+(\.\d+)?\.exe$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
         private static readonly HttpClient Http = CreateClient();
@@ -62,7 +63,7 @@ namespace OptimizerWpf.Services
 
         public static bool IsTrustedDownloadUrl(string? url) =>
             Uri.TryCreate(url, UriKind.Absolute, out var u) && u.Scheme == Uri.UriSchemeHttps
-            && url!.StartsWith(DownloadPrefix, StringComparison.Ordinal) && u.Host == "github.com" && string.IsNullOrEmpty(u.UserInfo);
+            && (url!.StartsWith(DownloadPrefix, StringComparison.Ordinal) || url.StartsWith(LegacyDownloadPrefix, StringComparison.Ordinal)) && u.Host == "github.com" && string.IsNullOrEmpty(u.UserInfo);
 
         // "sha256:ABC..." -> "abc..." (64 hex) ή null.
         public static string? ParseDigest(string? digest)

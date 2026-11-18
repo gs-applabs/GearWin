@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Text.Json;
@@ -27,7 +28,10 @@ namespace OptimizerWpf.Services
 
         public static bool IsRepoDownloadUrl(string? url, string owner, string repo) =>
             Uri.TryCreate(url, UriKind.Absolute, out var u) && u.Scheme == Uri.UriSchemeHttps && u.Host == "github.com"
-            && string.IsNullOrEmpty(u.UserInfo) && url!.StartsWith(DownloadPrefix(owner, repo), StringComparison.Ordinal);
+            && string.IsNullOrEmpty(u.UserInfo) && OwnerAliases(owner).Any(o => url!.StartsWith(DownloadPrefix(o, repo), StringComparison.Ordinal));
+
+        // Μετονομασία λογαριασμού: ο γνωστός owner ισχύει και με το παλιό και με το νέο όνομα.
+        private static string[] OwnerAliases(string owner) => SuiteCatalogService.IsKnownOwner(owner) ? new[] { SuiteCatalogService.Owner, SuiteCatalogService.LegacyOwner } : new[] { owner };
 
         // Καθαρή συνάρτηση (δοκιμάζεται χωρίς δίκτυο).
         public static ReleaseData? Parse(string json, string owner, string repo)
@@ -45,7 +49,7 @@ namespace OptimizerWpf.Services
                 var notes = root.TryGetProperty("body", out var b) && b.ValueKind == JsonValueKind.String ? b.GetString() ?? "" : "";
                 var fallbackPage = $"https://github.com/{owner}/{repo}/releases/tag/{Uri.EscapeDataString(tag)}";
                 var page = root.TryGetProperty("html_url", out var h) && h.ValueKind == JsonValueKind.String ? h.GetString() : null;
-                if (!SuiteCatalogService.IsAllowedUrl(page) || !page!.StartsWith($"https://github.com/{owner}/{repo}/", StringComparison.Ordinal)) page = fallbackPage;
+                if (!SuiteCatalogService.IsAllowedUrl(page) || !OwnerAliases(owner).Any(o => page!.StartsWith($"https://github.com/{o}/{repo}/", StringComparison.Ordinal))) page = fallbackPage;
                 var assets = new List<ReleaseAsset>();
                 if (root.TryGetProperty("assets", out var arr) && arr.ValueKind == JsonValueKind.Array)
                 {
@@ -59,7 +63,7 @@ namespace OptimizerWpf.Services
                         assets.Add(new ReleaseAsset(name, url!, size, digest));
                     }
                 }
-                return new ReleaseData(tag, version, page, notes, assets, json);
+                return new ReleaseData(tag, version, page!, notes, assets, json);
             }
             catch (JsonException) { return null; }
         }

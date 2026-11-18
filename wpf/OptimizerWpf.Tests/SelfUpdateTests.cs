@@ -10,9 +10,9 @@ namespace OptimizerWpf.Tests
         private static string Release(string tag = "v6.5.0", string asset = "GearWin-Setup-6.5.0.exe",
             string? url = null, string digest = "sha256:" + Hash, bool prerelease = false)
         {
-            var downloadUrl = url ?? "https://github.com/giorstergiopoulos-design/GearWin/releases/download/" + tag + "/" + asset;
+            var downloadUrl = url ?? "https://github.com/gs-applabs/GearWin/releases/download/" + tag + "/" + asset;
             return "{\"tag_name\":\"" + tag + "\",\"draft\":false,\"prerelease\":" + prerelease.ToString().ToLowerInvariant()
-                + ",\"body\":\"notes\",\"html_url\":\"https://github.com/giorstergiopoulos-design/GearWin/releases/tag/" + tag + "\","
+                + ",\"body\":\"notes\",\"html_url\":\"https://github.com/gs-applabs/GearWin/releases/tag/" + tag + "\","
                 + "\"assets\":[{\"name\":\"" + asset + "\",\"size\":1234,\"digest\":\"" + digest + "\",\"browser_download_url\":\"" + downloadUrl + "\"}]}";
         }
 
@@ -27,9 +27,9 @@ namespace OptimizerWpf.Tests
 
         [Theory]
         [InlineData("https://evil.example.com/GearWin-Setup-6.5.0.exe")]
-        [InlineData("http://github.com/giorstergiopoulos-design/GearWin/releases/download/v6.5.0/GearWin-Setup-6.5.0.exe")]
+        [InlineData("http://github.com/gs-applabs/GearWin/releases/download/v6.5.0/GearWin-Setup-6.5.0.exe")]
         [InlineData("https://github.com/someone-else/GearWin/releases/download/v6.5.0/GearWin-Setup-6.5.0.exe")]
-        [InlineData("https://user@github.com/giorstergiopoulos-design/GearWin/releases/download/v6.5.0/GearWin-Setup-6.5.0.exe")]
+        [InlineData("https://user@github.com/gs-applabs/GearWin/releases/download/v6.5.0/GearWin-Setup-6.5.0.exe")]
         public void RejectsUntrustedDownloadUrls(string url) => Assert.Null(SelfUpdateService.ParseRelease(Release(url: url)));
 
         [Theory]

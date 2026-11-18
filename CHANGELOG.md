@@ -6,6 +6,20 @@ available inside the app itself, via Help/Instructions → the "Version History"
 
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
+## v6.9.11 — GitHub account rename (giorstergiopoulos-design to gs-applabs)
+
+- All update, catalog, README, installer, license, Company/Publisher/Copyright/RepositoryUrl and CI references now use **gs-applabs**. Trusted-URL checks (self-update download prefix, release page, suite catalog owner) accept BOTH names, so older versions and GitHub redirects keep working. Earlier CHANGELOG entries are left as written.
+- New test that no current file still points at the old name outside the explicit legacy-compatibility constants.
+- NOT VERIFIED on a real Windows PC / real GitHub: an update from a published older version after the account rename.
+
+## v6.9.10 — ViVeTool hardening, Help history order
+
+- **ViVeTool download**: exact GitHub host check (`IsGitHubHost`; the old `EndsWith("github.com")` also accepted `evilgithub.com`) and the SHA-256 digest published by the GitHub API is verified before the zip is opened (skipped only when the API gives no digest).
+- **Driver catalog**: the update id must be a GUID (`Guid.TryParseExact(..., "D")`) before it is used in the request body.
+- **Help → Version History**: the duplicate 6.9.0 summary card shown above 6.9.9 was removed; order is newest first (test added).
+- Tests: WelcomeSuiteWindowTests "Cannot set Owner" in the full suite fixed by an explicit ShutdownMode in the test host (see PROJECT_STATE.md).
+- NOT VERIFIED: live ViVeTool download and the Help window on a real Windows PC.
+
 ## v6.9.9 — Self-update review
 
 - **Likely cause of "the update downloads but does not install"** (found by reading the path end to end): since 6.9.7 the setup runs `taskkill /F /T /IM GearWin.exe` before the mutex check; the in-app update starts the setup as a CHILD of GearWin.exe, so `/T` could kill the setup together with the program. Removed `/T` (test: the script must not use it). Not reproduced on a real machine before the fix; the new CI scenario below is the check.

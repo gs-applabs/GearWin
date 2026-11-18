@@ -41,15 +41,15 @@
          ενημερωμένα OptimizerWpf.dll/.exe - σιωπηλή αποτυχία ενημέρωσης. ΠΡΕΠΕΙ να ενημερώνεται σε
          ΚΑΘΕ έκδοση, μαζί με τα υπόλοιπα 3 σημεία (MainWindow.xaml/SplashWindow.xaml τίτλοι,
          installer/OptimizerWpf.iss's MyAppVersion) - βλ. HANDOFF.md/commit history για το μοτίβο. -->
-    <Version>6.9.9</Version>
-    <AssemblyVersion>6.9.9.0</AssemblyVersion>
-    <FileVersion>6.9.9.0</FileVersion>
-    <Authors>giorstergiopoulos-design</Authors>
-    <Company>giorstergiopoulos-design</Company>
+    <Version>6.9.11</Version>
+    <AssemblyVersion>6.9.11.0</AssemblyVersion>
+    <FileVersion>6.9.11.0</FileVersion>
+    <Authors>gs-applabs</Authors>
+    <Company>gs-applabs</Company>
     <Product>GearWin - Complete PC Care</Product>
     <Description>GearWin - Complete PC Care: Windows maintenance, updates, drivers and tweaks in one app.</Description>
-    <Copyright>Copyright (c) 2026 giorstergiopoulos-design</Copyright>
-    <RepositoryUrl>https://github.com/giorstergiopoulos-design/GearWin</RepositoryUrl>
+    <Copyright>Copyright (c) 2026 gs-applabs</Copyright>
+    <RepositoryUrl>https://github.com/gs-applabs/GearWin</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <!-- 6.9.7: αναπαραγώγιμο build χωρίς προσωπικές διαδρομές (PathMap) και χωρίς PDB στα δημοσιευμένα αρχεία -->

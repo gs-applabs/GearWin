@@ -12,7 +12,7 @@ Name: GearWin - Complete PC Care (WPF port of the original Optimizer.ps1)
 - Tests: `wpf/OptimizerWpf.Tests/` (xUnit-style, run via `dotnet test`), 221 tests in the default battery (all passing as of last verification), plus one opt-in UI Automation click-through test (`GEARWIN_UI_CLICKTHROUGH=1`, shows real windows - not run by default)
 - Installer: Inno Setup, `installer/OptimizerWpf.iss` → `installer/Output/GearWin-Setup-<version>.exe`. Build: `dotnet publish -c Release -r win-x64 --self-contained true -o wpf/OptimizerWpf/publish/win-x64` then `ISCC.exe installer/OptimizerWpf.iss`. ISCC lives at `AppData\Local\Programs\Inno Setup 6\ISCC.exe` (not Program Files).
 - 14 supported UI languages, all strings in `Services/LanguageService.cs` (huge file, ~18k lines, one dictionary block per language in fixed order: el, en, de, fr, es, ko, zh, it, ru, ja, pt, tr, ar, hi). New keys must be added to all 14 blocks (use a small Python script to insert by anchor-key line number, descending order, rather than hand-editing).
-- Repo: `giorstergiopoulos-design/GearWin` on GitHub. `gh release create` works from this environment (has previously needed a retry after an auto-mode permission block).
+- Repo: `gs-applabs/GearWin` (renamed from giorstergiopoulos-design in 6.9.11) on GitHub. `gh release create` works from this environment (has previously needed a retry after an auto-mode permission block).
 
 ## Current Objective
 v6.3.5 (2026-10-06, branch `claude/full-audit` - this is the ACTIVE branch, NOT master; a separate
@@ -229,3 +229,8 @@ Compile-checked only (Services/* via scratch project on Linux; Views/XAML not bu
 - 6.2.5 follow-up (2026-10-02): window transparency with a border. Layered-alpha on the native frame (WindowOpacityService) was never confirmed on Windows, so the DEFAULT is now own frame: AllowsTransparency + WindowChrome + own min/max/close buttons + 1px CardBorderBrush outline + work-area WM_GETMINMAXINFO hook; opacity = Window.Opacity (always live). `NativeWindowFrame` (new setting, Appearance checkbox, restart) restores the native frame with best-effort layered alpha. Old `BorderlessWindow` setting unused. NOT verified on Windows (compile + 90 tests only).
 
 - REQ-590-04 (2026-10-02): System tab card "System health timeline" -> `Views/HealthTimelineWindow` + `Services/HealthTimelineService` (Event Log, last 30 days: Kernel-Power 41 / EventLog 6008 / BugCheck 1001 / Application Error 1000 + MsiInstaller 11707 / UserPnp 20001; installs <=48h before a BSOD/unexpected shutdown are flagged as suspect). 10 `Timeline_*` strings x 14 languages. Read-only. NOT verified on Windows (real Event Log queries/XPath). Still NOT STARTED: REQ-590-05 (usage-based bloatware suggestions), REQ-590-06 (per-game tweak profiles).
+
+## 6.9.10 / 6.9.11 (re-created 2026-11-18 from the written specs; the original local commits were lost)
+- 6.9.10: ViVeTool exact GitHub host check + SHA-256 digest check, driver catalog GUID check, Help version history without the duplicate 6.9.0 card (newest first).
+- 6.9.11: GitHub account renamed giorstergiopoulos-design -> gs-applabs everywhere (trusted-URL checks accept both names via `SuiteCatalogService.LegacyOwner`); consistency test in `Release6911Tests`.
+- Test isolation: `App()` sets `ShutdownMode.OnExplicitShutdown` under `GEARWIN_TEST_HOST` (the default OnLastWindowClose shut the shared Application down after the first window test closed its last window, so later WelcomeSuiteWindowTests failed with "Cannot set Owner"). Cause inferred from code, confirmed only if the full suite passes.

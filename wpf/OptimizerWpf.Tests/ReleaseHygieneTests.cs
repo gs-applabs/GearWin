@@ -37,9 +37,9 @@ namespace OptimizerWpf.Tests
             foreach (var f in new[] { "GearWin.dll", "GearWin.exe" }.Select(n => Path.Combine(AppDir(), n)).Where(File.Exists))
             {
                 var v = FileVersionInfo.GetVersionInfo(f);
-                Assert.Equal("giorstergiopoulos-design", v.CompanyName);
+                Assert.Equal("gs-applabs", v.CompanyName);
                 Assert.Equal("GearWin - Complete PC Care", v.ProductName);
-                Assert.Contains("giorstergiopoulos-design", v.LegalCopyright);
+                Assert.Contains("gs-applabs", v.LegalCopyright);
                 Assert.False(string.IsNullOrWhiteSpace(v.FileDescription));
                 Assert.Matches(@"^\d+\.\d+\.\d+\.0$", v.FileVersion);
                 Assert.StartsWith(v.FileVersion!.Substring(0, v.FileVersion.Length - 2), v.ProductVersion);

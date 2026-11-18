@@ -116,7 +116,7 @@ namespace OptimizerWpf.Tests
     public class SuiteCatalogTests
     {
         private const string Good = """
-        { "schema": 1, "updated": "2026-10-23", "owner": "giorstergiopoulos-design", "future": 1, "apps": [
+        { "schema": 1, "updated": "2026-10-23", "owner": "gs-applabs", "future": 1, "apps": [
           { "id": "a", "name": "A", "repo": "Aapp", "installerAsset": "^A\\.exe$", "checksumAsset": "A.exe.sha256", "uninstallDisplayName": "A", "paths": ["%LocalAppData%\\A\\A.exe"],
             "unknown": 5, "tagline": {"en":"t","el":"τ"}, "capabilities": {"en":["x","y"]} } ] }
         """;
@@ -180,7 +180,7 @@ namespace OptimizerWpf.Tests
         }
 
         [Theory]
-        [InlineData("https://raw.githubusercontent.com/giorstergiopoulos-design/Opsis/master/suite/apps.json", true)]
+        [InlineData("https://raw.githubusercontent.com/gs-applabs/Opsis/master/suite/apps.json", true)]
         [InlineData("https://api.github.com/repos/o/r/releases/latest", true)]
         [InlineData("https://github.com/o/r/releases", true)]
         [InlineData("http://github.com/o/r", false)]
@@ -285,7 +285,7 @@ namespace OptimizerWpf.Tests
 
     public class ReleaseAndInstallerTests
     {
-        private const string Owner = "giorstergiopoulos-design";
+        private const string Owner = "gs-applabs";
 
         private static string ReleaseJson(string tag, string sha = "", bool prerelease = false, string assetUrl = "", string assetName = "GearWin-Setup-9.9.9.exe")
         {
