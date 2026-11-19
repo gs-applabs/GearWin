@@ -6,6 +6,12 @@ available inside the app itself, via Help/Instructions → the "Version History"
 
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
+## v6.9.12 — Migration to .NET 11
+
+- Target framework is now `net11.0-windows` (SDK pinned via `global.json`, CI `dotnet-version: 11.0.x`); `System.Management` and `Microsoft.Data.Sqlite` 11.0.0. The installer stays self-contained, so no runtime install is needed. WinForms analyzers WFO2000/WFO0003 (not applicable to this WPF app) suppressed.
+- Help → Version History entry in all 14 languages.
+- NOT VERIFIED on a real Windows PC: running the .NET 11 self-contained build/installer.
+
 ## v6.9.11 — GitHub account rename (giorstergiopoulos-design to gs-applabs)
 
 - All update, catalog, README, installer, license, Company/Publisher/Copyright/RepositoryUrl and CI references now use **gs-applabs**. Trusted-URL checks (self-update download prefix, release page, suite catalog owner) accept BOTH names, so older versions and GitHub redirects keep working. Earlier CHANGELOG entries are left as written.

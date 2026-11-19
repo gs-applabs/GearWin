@@ -501,6 +501,9 @@
                         <TextBlock Text="{tr:Tr VerHist_Title}" Style="{StaticResource CardTitleStyle}" FontSize="16" Margin="0,0,0,4"/>
                         <TextBlock Text="{tr:Tr VerHist_Subtitle}" Style="{StaticResource SubTextStyle}" TextWrapping="Wrap" Margin="0,0,0,14"/>
 
+                        <TextBlock Text="{tr:Tr VerHist_v6912Title}" Style="{StaticResource CardTitleStyle}" Margin="0,0,0,4"/>
+                        <TextBlock Style="{StaticResource SubTextStyle}" TextWrapping="Wrap" Text="{tr:Tr VerHist_v6912Desc}" Margin="0,0,0,14"/>
+
                         <TextBlock Text="{tr:Tr VerHist_v6911Title}" Style="{StaticResource CardTitleStyle}" Margin="0,0,0,4"/>
                         <TextBlock Style="{StaticResource SubTextStyle}" TextWrapping="Wrap" Text="{tr:Tr VerHist_v6911Desc}" Margin="0,0,0,14"/>
 

@@ -28,7 +28,7 @@ namespace OptimizerWpf.Tests
             Version V(string k) => new(int.Parse(k[..1]), int.Parse(k[1..2]), int.Parse(k[2..]));
             var versions = keys.Select(V).ToList();
             Assert.Equal(versions.OrderByDescending(v => v).ToList(), versions);
-            Assert.Equal("6911", keys[0]);
+            Assert.Equal("6912", keys[0]);
             // η παλιά μπλε σύνοψη "6.9.0 (6.7 - 6.9)" δεν υπάρχει πια πάνω από τις εκδόσεις
             Assert.DoesNotContain("VerHist_690Title", xaml);
         }
@@ -38,7 +38,7 @@ namespace OptimizerWpf.Tests
         {
             var csproj = File.ReadAllText(Path.Combine(Root(), "wpf", "OptimizerWpf", "OptimizerWpf.csproj"));
             var ver = Regex.Match(csproj, @"<Version>([\d.]+)</Version>").Groups[1].Value;
-            Assert.Equal("6.9.11", ver);
+            Assert.Equal("6.9.12", ver);
             Assert.Contains("## v" + ver + " ", File.ReadAllText(Path.Combine(Root(), "CHANGELOG.md")));
         }
 

@@ -2,8 +2,10 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net10.0-windows</TargetFramework>
+    <TargetFramework>net11.0-windows</TargetFramework>
     <Nullable>enable</Nullable>
+    <!-- .NET 11: οι WinForms analyzers (WFO2000 "getter returns new instance", WFO0003 "high DPI στο manifest") αφορούν WinForms UI· η εφαρμογή είναι WPF (WinForms μόνο για το tray icon) και το manifest DPI είναι σωστό για WPF. -->
+    <NoWarn>$(NoWarn);WFO2000;WFO0003</NoWarn>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
     <!-- ΝΕΟ - roadmap "Mini widget / system tray live view" - το System.Windows.Forms.NotifyIcon
@@ -41,9 +43,9 @@
          ενημερωμένα OptimizerWpf.dll/.exe - σιωπηλή αποτυχία ενημέρωσης. ΠΡΕΠΕΙ να ενημερώνεται σε
          ΚΑΘΕ έκδοση, μαζί με τα υπόλοιπα 3 σημεία (MainWindow.xaml/SplashWindow.xaml τίτλοι,
          installer/OptimizerWpf.iss's MyAppVersion) - βλ. HANDOFF.md/commit history για το μοτίβο. -->
-    <Version>6.9.11</Version>
-    <AssemblyVersion>6.9.11.0</AssemblyVersion>
-    <FileVersion>6.9.11.0</FileVersion>
+    <Version>6.9.12</Version>
+    <AssemblyVersion>6.9.12.0</AssemblyVersion>
+    <FileVersion>6.9.12.0</FileVersion>
     <Authors>gs-applabs</Authors>
     <Company>gs-applabs</Company>
     <Product>GearWin - Complete PC Care</Product>
@@ -118,7 +120,7 @@
          γενικό disk-icon.png). -->
     <Resource Include="Assets\nvme-icon.png" />
     <Resource Include="Assets\ssd-icon.png" />
-    <PackageReference Include="System.Management" Version="10.0.13" />
+    <PackageReference Include="System.Management" Version="11.0.0" />
     <!-- Θερμοκρασίες CPU/GPU/Δίσκου (ρητό αίτημα χρήστη, μετά από έρευνα - βλ. HANDOFF.md): καμία
          WMI κλάση δεν είναι αξιόπιστη σε όλο το hardware (επιβεβαιώθηκε ζωντανά - το
          MSFT_PhysicalDisk.GetStorageReliabilityCounter επέστρεψε τίποτα για NVMe δίσκο σε αυτό το
@@ -152,7 +154,7 @@
          υπάρχει τρόπος να διαβαστεί χωρίς πραγματικό SQLite reader (το format της σελίδας δεν είναι
          hand-parseable αξιόπιστα). Το Microsoft.Data.Sqlite είναι η επίσημη, ελαφριά βιβλιοθήκη της
          Microsoft γι' αυτό ακριβώς (φέρνει το δικό της native e_sqlite3, καμία εξωτερική εξάρτηση). -->
-    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.13" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="11.0.0" />
   </ItemGroup>
 
 </Project>

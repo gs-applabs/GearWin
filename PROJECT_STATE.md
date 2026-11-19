@@ -4,7 +4,7 @@
 Name: GearWin - Complete PC Care (WPF port of the original Optimizer.ps1)
 
 ## Technology
-- .NET: net10.0-windows
+- .NET: net11.0-windows
 - C#: WPF (OptimizerWpf.csproj), assembly/exe name `GearWin.exe`
 - UI: WPF, `wpf/OptimizerWpf/` — Views (XAML + code-behind, no MVVM/ViewModels — direct code-behind is the established pattern here), Services (static classes), Themes/Styles.xaml. WPF-UI 4.3.0 nuget also in use for the standalone `DashboardPreviewWindow` pilot only (normal app/MainWindow untouched).
 - Mobile: none
@@ -206,7 +206,7 @@ Separate project, separate repo, at `<MotionDeskStudio repo>` (own `.sln`, own g
 - `Views/HomeView.xaml(.cs)`, `Views/OptimizationView.xaml(.cs)`, `Views/SystemView.xaml(.cs)`, `Views/HealthCheckWindow.xaml(.cs)` — largest/most frequently touched views.
 
 ## Last Verification
-Build: `dotnet build -c Release` (net10.0-windows) — succeeded, 0 errors.
+Build: `dotnet build -c Release` (net11.0-windows) — succeeded, 0 errors.
 Tests: `dotnet test` (OptimizerWpf.Tests) — 182/182 passed, including the 14-language key-parity test, `ButtonAutoFitTests`, and the new `GamesMediaViewConstructsWithoutThrowing`.
 Publish: `dotnet publish -c Release -r win-x64 --self-contained true -o publish/win-x64` (run from `wpf/OptimizerWpf` - NOT `../../publish/win-x64`, a path mistake made once this session that left `Run_OptimizerWpf.bat` launching a stale build; fixed, confirmed via `publish/win-x64/GearWin.exe` timestamp matching the latest build).
 Installer: `ISCC.exe installer/OptimizerWpf.iss` — succeeded, `GearWin-Setup-6.3.6.exe` (v6.3.6 released 2026-10-14), sent to user.
