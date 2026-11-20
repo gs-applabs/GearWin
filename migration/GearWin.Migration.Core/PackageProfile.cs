@@ -4,7 +4,8 @@ namespace GearWin.Migration;
 
 public enum PackageManager
 {
-    Winget, Apt, Dnf, Pacman, Zypper, Apk, Xbps, Emerge, RpmOstree, NixOs, Flatpak
+    Winget, Apt, Dnf, Pacman, Zypper, Apk, Xbps, Emerge, RpmOstree, NixOs, Flatpak,
+    Snap, Eopkg, Urpmi, Slackpkg, PackageKit, TransactionalUpdate, Guix
 }
 
 public sealed record PackageBackend(PackageManager Manager, string Executable);
@@ -28,7 +29,10 @@ public static class PackageDiscovery
         new(PackageManager.Zypper, "zypper"),
         new(PackageManager.Apk, "apk"),
         new(PackageManager.Xbps, "xbps-install"),
-        new(PackageManager.Emerge, "emerge")
+        new(PackageManager.Emerge, "emerge"),
+        new(PackageManager.Eopkg, "eopkg"),
+        new(PackageManager.Urpmi, "urpmi"),
+        new(PackageManager.Slackpkg, "slackpkg")
     ];
 
     public static PackageProfile InspectHost()
@@ -62,6 +66,8 @@ public static class PackageDiscovery
 
         if (id == "nixos")
             backends.Add(new(PackageManager.NixOs, ""));
+        else if (id == "guix")
+            backends.Add(new(PackageManager.Guix, ""));
         else if (isOstree)
         {
             if (hasCommand("rpm-ostree"))
@@ -71,7 +77,12 @@ public static class PackageDiscovery
         }
         else if (id is "opensuse-microos" or "opensuse-aeon" or "opensuse-kalpa" or "slemicro" or "sle-micro"
                  || variant is "microos" or "aeon" or "kalpa")
-            note = "Transactional deployment detected. Native packages need a verified deployment-specific workflow.";
+        {
+            if (hasCommand("transactional-update"))
+                backends.Add(new(PackageManager.TransactionalUpdate, "transactional-update"));
+            else
+                note = "Transactional deployment detected. Native packages need a verified deployment-specific workflow.";
+        }
         else
         {
             PackageBackend[] detected = LinuxNative
@@ -90,25 +101,35 @@ public static class PackageDiscovery
                 : detected.FirstOrDefault(backend => backend.Manager == family);
             if (native is not null)
                 backends.Add(native);
+            else if (hasCommand("pkcon"))
+            {
+                backends.Add(new(PackageManager.PackageKit, "pkcon"));
+                note = "PackageKit was found. Confirm its backend and package availability before installing.";
+            }
             else
                 note = "No unambiguous native package backend was detected.";
         }
 
         if (hasCommand("flatpak"))
             backends.Add(new(PackageManager.Flatpak, "flatpak"));
+        if (hasCommand("snap"))
+            backends.Add(new(PackageManager.Snap, "snap"));
 
         return new PackageProfile("linux", architecture, id, fields.GetValueOrDefault("VERSION_ID"), variant, backends, note);
     }
 
     private static PackageManager? FamilyFor(string? id) => id switch
     {
-        "debian" or "ubuntu" or "linuxmint" or "pop" or "raspbian" or "zorin" or "kali" => PackageManager.Apt,
+        "debian" or "ubuntu" or "linuxmint" or "pop" or "raspbian" or "zorin" or "kali" or "devuan" or "pclinuxos" => PackageManager.Apt,
         "fedora" or "rhel" or "centos" or "rocky" or "almalinux" => PackageManager.Dnf,
         "arch" or "manjaro" or "endeavouros" or "cachyos" => PackageManager.Pacman,
         "suse" or "opensuse" or "opensuse-leap" or "opensuse-tumbleweed" or "sles" => PackageManager.Zypper,
-        "alpine" => PackageManager.Apk,
+        "alpine" or "chimera" or "adelie" => PackageManager.Apk,
         "void" => PackageManager.Xbps,
         "gentoo" => PackageManager.Emerge,
+        "solus" => PackageManager.Eopkg,
+        "mageia" => PackageManager.Urpmi,
+        "slackware" => PackageManager.Slackpkg,
         _ => null
     };
 

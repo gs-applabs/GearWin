@@ -13,13 +13,24 @@ public sealed record PackageTarget(string? DistributionId = null, string? Versio
 }
 
 public sealed record PackageCandidate(PackageManager Manager, string PackageId, string? Source = null, PackageTarget? Target = null);
-public sealed record ApplicationRequest(string Name, IReadOnlyList<PackageCandidate> Candidates);
+public sealed record ApplicationIdentity(InventorySource Kind, string? Id = null, string? Name = null, string? Publisher = null)
+{
+    internal bool Matches(InstalledApplication application) => Kind == application.Kind &&
+        (Id is null || string.Equals(Id, application.Id, Kind == InventorySource.LinuxDesktop
+            ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase)) &&
+        (Name is null || string.Equals(Name, application.Name, StringComparison.OrdinalIgnoreCase)) &&
+        (Publisher is null || string.Equals(Publisher, application.Publisher, StringComparison.OrdinalIgnoreCase));
+}
+
+public sealed record ApplicationRequest(string Name, IReadOnlyList<PackageCandidate> Candidates,
+    IReadOnlyList<ApplicationIdentity>? Sources = null);
 public sealed record PackageManifest(int SchemaVersion, IReadOnlyList<ApplicationRequest> Applications);
 
 public enum PlanStatus { CommandPreview, Manual, Unresolved }
 
 public sealed record CommandPreview(string Executable, IReadOnlyList<string> Arguments);
-public sealed record ApplicationPlan(string Name, PlanStatus Status, PackageCandidate? Candidate, CommandPreview? Command, string Note);
+public sealed record ApplicationPlan(string Name, PlanStatus Status, PackageCandidate? Candidate,
+    CommandPreview? Command, string Note, InstalledApplication? Source = null);
 
 public static partial class PackagePlanner
 {
@@ -34,7 +45,8 @@ public static partial class PackagePlanner
     [GeneratedRegex(@"\A[A-Za-z_][A-Za-z0-9_-]*(\.[A-Za-z_][A-Za-z0-9_-]*){2,}\z", RegexOptions.CultureInvariant)]
     private static partial Regex FlatpakAppId();
 
-    public static IReadOnlyList<ApplicationPlan> CreatePlan(PackageProfile target, PackageManifest manifest)
+    public static IReadOnlyList<ApplicationPlan> CreatePlan(PackageProfile target, PackageManifest manifest,
+        ApplicationInventory? source = null)
     {
         if (manifest.SchemaVersion != SchemaVersion)
             throw new ArgumentException($"Unsupported manifest schema version {manifest.SchemaVersion}.");
@@ -50,37 +62,64 @@ public static partial class PackagePlanner
             })
             .ToLookup(backend => backend.Manager);
 
-        var plan = new List<ApplicationPlan>(manifest.Applications.Count);
         foreach (ApplicationRequest request in manifest.Applications)
         {
             if (request is null || string.IsNullOrWhiteSpace(request.Name))
                 throw new ArgumentException("Every application needs a name.");
             foreach (PackageCandidate candidate in request.Candidates)
                 Validate(request.Name, candidate);
+            if (request.Sources?.Any(identity => identity is null || !Enum.IsDefined(identity.Kind) ||
+                    (string.IsNullOrWhiteSpace(identity.Id) && string.IsNullOrWhiteSpace(identity.Name))) == true)
+                throw new ArgumentException($"Every source identity for {request.Name} needs an application ID or name.");
+        }
 
-            var candidateOnTarget = request.Candidates.FirstOrDefault(candidate =>
-                backends.Contains(candidate.Manager) && (candidate.Target?.Matches(target) ?? true));
-            if (candidateOnTarget is null)
+        if (source is null)
+            return manifest.Applications.Select(request => PlanApplication(target, backends, request)).ToArray();
+        if (source.SchemaVersion != SchemaVersion)
+            throw new ArgumentException($"Unsupported inventory schema version {source.SchemaVersion}.");
+
+        var plan = new List<ApplicationPlan>(source.Applications.Count);
+        foreach (InstalledApplication application in source.Applications)
+        {
+            if (application is null || string.IsNullOrWhiteSpace(application.Id) ||
+                string.IsNullOrWhiteSpace(application.Name) || !Enum.IsDefined(application.Kind))
+                throw new ArgumentException("The inventory contains an invalid application.");
+
+            var matches = manifest.Applications.Where(request =>
+                request.Sources?.Any(identity => identity.Matches(application)) == true).Take(2).ToArray();
+            plan.Add(matches.Length switch
             {
-                plan.Add(new(request.Name, PlanStatus.Unresolved, null, null,
-                    "No catalog entry matches the destination profile and its detected backends."));
-                continue;
-            }
-
-            if (candidateOnTarget.Manager == PackageManager.NixOs)
-            {
-                plan.Add(new(request.Name, PlanStatus.Manual, candidateOnTarget, null,
-                    "Review this package in the target's NixOS configuration before rebuilding."));
-                continue;
-            }
-
-            PackageBackend backend = backends[candidateOnTarget.Manager].First();
-            string note = backend.Manager == PackageManager.RpmOstree
-                ? "Package layering generally takes effect after reboot. Check availability on the destination."
-                : "Check package availability and compatibility on the destination before installing.";
-            plan.Add(new(request.Name, PlanStatus.CommandPreview, candidateOnTarget, BuildCommand(backend, candidateOnTarget), note));
+                1 => PlanApplication(target, backends, matches[0]) with { Source = application },
+                0 => new(application.Name, PlanStatus.Unresolved, null, null,
+                    "No explicit catalog identity matches this installed application.", application),
+                _ => new(application.Name, PlanStatus.Unresolved, null, null,
+                    "More than one catalog application matches this identity. Review the catalog.", application)
+            });
         }
         return plan;
+    }
+
+    private static ApplicationPlan PlanApplication(PackageProfile target, ILookup<PackageManager, PackageBackend> backends,
+        ApplicationRequest request)
+    {
+        var candidate = request.Candidates.FirstOrDefault(candidate =>
+            backends.Contains(candidate.Manager) && (candidate.Target?.Matches(target) ?? true));
+        if (candidate is null)
+            return new(request.Name, PlanStatus.Unresolved, null, null,
+                "No catalog entry matches the destination profile and its detected backends.");
+
+        if (candidate.Manager == PackageManager.NixOs)
+            return new(request.Name, PlanStatus.Manual, candidate, null,
+                "Review this package in the target's NixOS configuration before rebuilding.");
+        if (candidate.Manager == PackageManager.Guix)
+            return new(request.Name, PlanStatus.Manual, candidate, null,
+                "Review this package in the target's Guix configuration or user profile.");
+
+        PackageBackend backend = backends[candidate.Manager].First();
+        string note = backend.Manager is PackageManager.RpmOstree or PackageManager.TransactionalUpdate
+            ? "System package changes are staged. Check availability and reboot requirements on the destination."
+            : "Check package availability and compatibility on the destination before installing.";
+        return new(request.Name, PlanStatus.CommandPreview, candidate, BuildCommand(backend, candidate), note);
     }
 
     private static void Validate(string appName, PackageCandidate candidate)
@@ -126,6 +165,12 @@ public static partial class PackagePlanner
             PackageManager.Emerge => new("emerge", [id]),
             PackageManager.RpmOstree => new("rpm-ostree", ["install", id]),
             PackageManager.Flatpak => new("flatpak", ["install", candidate.Source ?? "flathub", id]),
+            PackageManager.Snap => new("snap", ["install", id]),
+            PackageManager.Eopkg => new("eopkg", ["install", id]),
+            PackageManager.Urpmi => new("urpmi", [id]),
+            PackageManager.Slackpkg => new("slackpkg", ["install", id]),
+            PackageManager.PackageKit => new("pkcon", ["install", id]),
+            PackageManager.TransactionalUpdate => new("transactional-update", ["pkg", "install", id]),
             _ => throw new ArgumentOutOfRangeException(nameof(backend))
         };
     }

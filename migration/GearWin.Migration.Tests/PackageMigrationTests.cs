@@ -12,6 +12,10 @@ public sealed class PackageMigrationTests
     [InlineData("alpine", "apk", PackageManager.Apk)]
     [InlineData("void", "xbps-install", PackageManager.Xbps)]
     [InlineData("gentoo", "emerge", PackageManager.Emerge)]
+    [InlineData("solus", "eopkg", PackageManager.Eopkg)]
+    [InlineData("mageia", "urpmi", PackageManager.Urpmi)]
+    [InlineData("slackware", "slackpkg", PackageManager.Slackpkg)]
+    [InlineData("chimera", "apk", PackageManager.Apk)]
     public void RoutesNativePackageManagers(string distro, string executable, PackageManager manager)
     {
         PackageProfile target = Inspect([$"ID={distro}", "VERSION_ID=\"1.0\""], [executable]);
@@ -50,6 +54,34 @@ public sealed class PackageMigrationTests
         var target = Inspect(["ID=opensuse-aeon", "ID_LIKE=opensuse"], ["zypper", "flatpak"]);
         Assert.Equal(PackageManager.Flatpak, Assert.Single(target.Backends).Manager);
         Assert.NotNull(target.NativeBackendNote);
+    }
+
+    [Fact]
+    public void TransactionalOpenSuseCanPreviewViaItsOwnBackend()
+    {
+        var target = Inspect(["ID=opensuse-aeon"], ["zypper", "transactional-update"]);
+        var plan = PlanOne(target, new(PackageManager.Zypper, "vlc"), new(PackageManager.TransactionalUpdate, "vlc"));
+        Assert.Equal("transactional-update", plan.Command?.Executable);
+        Assert.Equal(new[] { "pkg", "install", "vlc" }, plan.Command?.Arguments);
+    }
+
+    [Fact]
+    public void UnknownDistributionCanPreviewPackageKitAndCrossDistroBackends()
+    {
+        var target = Inspect(["ID=unknown"], ["apt-get", "dnf", "pkcon", "flatpak", "snap"]);
+        Assert.Equal(new[] { PackageManager.PackageKit, PackageManager.Flatpak, PackageManager.Snap },
+            target.Backends.Select(backend => backend.Manager));
+        Assert.Equal("pkcon", PlanOne(target, new PackageCandidate(PackageManager.PackageKit, "vlc")).Command?.Executable);
+        Assert.Equal("snap", PlanOne(target, new PackageCandidate(PackageManager.Snap, "vlc")).Command?.Executable);
+    }
+
+    [Fact]
+    public void GuixRemainsAnExplicitManualPlan()
+    {
+        var target = Inspect(["ID=guix"], ["guix", "pkcon"]);
+        var plan = PlanOne(target, new PackageCandidate(PackageManager.Guix, "vlc"));
+        Assert.Equal(PlanStatus.Manual, plan.Status);
+        Assert.Null(plan.Command);
     }
 
     [Fact]

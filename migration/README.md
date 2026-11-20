@@ -1,21 +1,23 @@
 # GearWin Migration
 
-This prototype produces a package installation preview for Windows and Linux. It can plan on the destination or on another PC using an exported destination profile. The .NET 10 core can be referenced from both the Windows app and a future Linux UI.
+This prototype inventories installed desktop apps and produces a package installation preview for Windows and Linux. The .NET 10 core can be referenced from both the Windows app and a future Linux UI.
 
 Run from the repository root with the .NET 10 SDK:
 
 ```sh
 dotnet run --project migration/GearWin.Migration.Cli -- inspect > target.json
-dotnet run --project migration/GearWin.Migration.Cli -- plan migration/example-manifest.json --target target.json
+dotnet run --project migration/GearWin.Migration.Cli -- inventory > inventory.json
+dotnet run --project migration/GearWin.Migration.Cli -- plan migration/example-manifest.json --target target.json --inventory inventory.json
 ```
 
-Run `inspect` on the destination. Copy `target.json` to the planning PC if needed. Omit `--target` to plan against the current machine. The profile includes OS and architecture metadata and the detected package backends. Keep `target.json` outside source control.
+Run `inspect` on the destination and `inventory` on the source. Copy the JSON files to the planning PC if needed. Omit `--target` to plan against the current machine, or omit `--inventory` to preview every application in the manifest. Inventory files contain the application names on the source PC. Keep both exports outside source control.
 
 ## Scope
 
-- `inspect` reads local OS and executable metadata. Windows can detect WinGet. Linux can detect APT, DNF/DNF5, Pacman, Zypper, APK, XBPS, Portage, rpm-ostree, Flatpak and NixOS. Unknown distributions can use a single unambiguous native backend or Flatpak. Atomic OSTree and NixOS systems have separate routing rules.
-- `plan` accepts schema version 1. Each application has an ordered `candidates` list. The first candidate supported by a detected backend and matching the destination is used. Each candidate may specify a `target` object with exact `distributionId`, `version`, `variantId`, or `architecture` requirements. Supply package IDs appropriate to the target's repositories. Flathub and WinGet are the default sources for their respective backends. NixOS entries are reported for declarative review.
-- A `commandPreview` is a proposed command to review. Package availability, repository setup and application compatibility still need confirmation. An `unresolved` entry needs a matching package candidate or backend. The prototype does not run these commands, touch disks, export installed applications, or restore files, settings, game saves or drivers.
+- `inspect` reads local OS and executable metadata. Windows can detect WinGet. Linux can detect APT, DNF/DNF5, Pacman, Zypper, APK, XBPS, Portage, Eopkg, Urpmi, Slackpkg, Flatpak, Snap, rpm-ostree and transactional-update. PackageKit is a fallback when `pkcon` is present and there is no selected native manager. NixOS and Guix use manual configuration plans. Unknown variants use detected capabilities. Each preview still needs repository and installation validation on the destination.
+- `inventory` reads Windows uninstall registrations or Linux desktop entries, including known Flatpak, Snap, Nix and Guix export directories. It captures app identities and available version and publisher metadata. Store/MSIX apps without uninstall registrations, command-line packages without desktop entries, and standalone apps without registrations require other discovery methods.
+- `plan` accepts schema version 1. `sources` contains explicit source identities by `kind` (`linuxDesktop` or `windowsRegistry`), app `id` or `name`, and optional `publisher`. An unrecognized or ambiguous source stays in the report as `unresolved`. The first candidate supported by a detected backend and matching the destination is used. A candidate may specify a `target` with exact `distributionId`, `version`, `variantId` or `architecture` requirements.
+- A `commandPreview` is a proposed action for review. File, disk, settings, game and driver migration belong to later stages. The CLI reads metadata and prints results.
 
 Run the focused tests with:
 

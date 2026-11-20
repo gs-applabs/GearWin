@@ -15,7 +15,7 @@ Name: GearWin - Complete PC Care (WPF port of the original Optimizer.ps1)
 - Repo: `gs-applabs/GearWin` (renamed from giorstergiopoulos-design in 6.9.11) on GitHub. `gh release create` works from this environment (has previously needed a retry after an auto-mode permission block).
 
 ## Migration prototype
-- GearWin issue #1 tracks PC migration. `migration/` contains the .NET 10 package-planning prototype with a shared core, a Windows/Linux CLI and focused tests. It exports destination profiles and previews package actions using explicit catalog mappings. File and disk migration, application discovery, compatibility data, driver installation and WPF integration are subsequent work.
+- GearWin issue #1 and draft PR #2 track PC migration. `migration/` contains the shared .NET 10 core, Windows/Linux CLI and focused tests. It exports destination profiles and source desktop-app inventories and previews package actions using explicit catalog mappings. Linux discovery uses XDG desktop entries and recognizes native, transactional and cross-distribution package backends. File and disk migration, expanded compatibility data, installed-package verification, driver installation and WPF integration are subsequent work.
 
 ## Current Objective
 v6.3.5 (2026-10-06, branch `claude/full-audit` - this is the ACTIVE branch, NOT master; a separate
