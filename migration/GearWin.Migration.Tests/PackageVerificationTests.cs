@@ -63,6 +63,33 @@ public sealed class PackageVerificationTests
     }
 
     [Fact]
+    public void ApkConfirmsThePackageNameAndNativeArchitectureEvenWhenTheOriginDiffers()
+    {
+        const string output = "libstdc++-12-3.0-r1 x86_64 {gcc12} (GPL)\n" +
+            "libstdc++-15.2.0-r5 aarch64 {gcc} (GPL)\nlibstdc++-15.2.0-r5 x86_64 {gcc} (GPL) [installed]\n";
+        var candidate = new PackageCandidate(PackageManager.Apk, "libstdc++");
+        var result = PackageVerifier.ParseLocalMetadata(candidate, output, "x86_64");
+        Assert.Equal(VerificationStatus.FoundInLocalMetadata, result.Status);
+        Assert.Equal("15.2.0-r5", result.Version);
+        Assert.Equal("x86_64", result.Architecture);
+        Assert.Equal(VerificationStatus.NotConfirmed, PackageVerifier.ParseLocalMetadata(candidate, output, "s390x").Status);
+    }
+
+    [Fact]
+    public void XbpsChecksTheResolvedPackageInsteadOfConfirmingVirtualProviders()
+    {
+        const string output = "pipewire-pulse-1.4.9_1\nx86_64-musl\n";
+        var candidate = new PackageCandidate(PackageManager.Xbps, "pipewire-pulse");
+        var result = PackageVerifier.ParseLocalMetadata(candidate, output, "x86_64");
+        Assert.Equal(VerificationStatus.FoundInLocalMetadata, result.Status);
+        Assert.Equal("1.4.9_1", result.Version);
+        Assert.Equal("x86_64-musl", result.Architecture);
+        Assert.Equal(VerificationStatus.NotConfirmed,
+            PackageVerifier.ParseLocalMetadata(candidate with { PackageId = "pulseaudio-daemon" }, output, "x86_64").Status);
+        Assert.Equal(VerificationStatus.NotConfirmed, PackageVerifier.ParseLocalMetadata(candidate, output, "aarch64").Status);
+    }
+
+    [Fact]
     public void FlatpakOnlyReportsInstalledAppsFromTheSelectedOrigin()
     {
         const string output = "VLC addon\tx86_64\t3.0\tflathub\norg.videolan.VLC\tx86_64\t3.0.22\tcustom\n" +

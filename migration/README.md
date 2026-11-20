@@ -18,7 +18,7 @@ Run a local metadata check on the destination with:
 dotnet run --project migration/GearWin.Migration.Cli -- plan migration/example-manifest.json --inventory inventory.json --verify
 ```
 
-`--verify` uses APT, Pacman, DNF/DNF5 or Zypper local metadata. It reports an exact match with its version and architecture, an unconfirmed result, or an unsupported verifier. Flatpak checks installed applications and the selected origin, reported separately as `installedOnDestination`. Local package metadata can be stale and a missing Flatpak is not a statement about its remote availability. Verification uses the existing local package data without downloading packages or executing installation previews.
+`--verify` uses local package indexes for APT, Pacman, DNF/DNF5, Zypper, APK and XBPS. It reports an exact match with its version and architecture, an unconfirmed result, or an unsupported verifier. Flatpak checks installed applications and the selected origin, reported separately as `installedOnDestination`. Local indexes can be stale. Flatpak remote availability requires a separate check. Verification uses the existing local package data without downloading packages or executing installation previews.
 
 ## Scope
 

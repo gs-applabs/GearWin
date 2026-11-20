@@ -179,6 +179,7 @@ public static partial class PackagePlanner
     {
         PackageManager.Apt => AptPackageId().IsMatch(candidate.PackageId),
         PackageManager.Pacman or PackageManager.Dnf or PackageManager.Zypper => SimplePackageId().IsMatch(candidate.PackageId),
+        PackageManager.Apk or PackageManager.Xbps => SimplePackageId().IsMatch(candidate.PackageId) && !candidate.PackageId.Contains(':'),
         PackageManager.Flatpak => FlatpakAppId().IsMatch(candidate.PackageId),
         _ => false
     };

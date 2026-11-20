@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Xml;
 
 namespace GearWin.Migration;
@@ -10,12 +11,15 @@ public enum VerificationStatus { FoundInLocalMetadata, NotConfirmed, Unsupported
 
 public sealed record PackageVerification(VerificationStatus Status, string? Version, string? Architecture, string Detail);
 
-public static class PackageVerifier
+public static partial class PackageVerifier
 {
     private sealed record Query(string Executable, IReadOnlyList<string> Arguments);
     private sealed record QueryResult(string? Output, string? Error = null);
     private static readonly Query FlatpakList = new("/usr/bin/flatpak",
         ["list", "--app", "--columns=application:f,arch:f,version:f,origin:f"]);
+
+    [GeneratedRegex(@"\A[0-9][A-Za-z0-9._+]*(?:-r[0-9]+)?\z", RegexOptions.CultureInvariant)]
+    private static partial Regex ApkVersion();
 
     public static async Task<IReadOnlyList<ApplicationPlan>> VerifyAsync(IReadOnlyList<ApplicationPlan> plan)
     {
@@ -77,10 +81,15 @@ public static class PackageVerifier
             PackageManager.Dnf => BuildDnfQuery(id, command),
             PackageManager.Zypper => new("/usr/bin/zypper",
                 ["--non-interactive", "--no-refresh", "--xmlout", "search", "--match-exact", "--details", "--type", "package", "--", id]),
+            PackageManager.Apk => new(FindApk(), ["--no-network", "list", "--available", "--", id]),
+            PackageManager.Xbps => new("/usr/bin/xbps-query", ["-R", "--property=pkgver,architecture", "--", id]),
             PackageManager.Flatpak => FlatpakList,
             _ => null
         };
     }
+
+    private static string FindApk() =>
+        Array.Find(new[] { "/sbin/apk", "/usr/sbin/apk", "/usr/bin/apk", "/bin/apk" }, File.Exists) ?? "/sbin/apk";
 
     private static Query BuildDnfQuery(string id, string? command)
     {
@@ -161,6 +170,8 @@ public static class PackageVerifier
             PackageManager.Apt or PackageManager.Pacman => ParseFields(candidate, output),
             PackageManager.Dnf => ParseDnf(candidate, output, nativeArchitecture),
             PackageManager.Zypper => ParseZypper(candidate, output, nativeArchitecture),
+            PackageManager.Apk => ParseApk(candidate, output, nativeArchitecture),
+            PackageManager.Xbps => ParseXbps(candidate, output, nativeArchitecture),
             PackageManager.Flatpak => ParseFlatpak(candidate, output, nativeArchitecture),
             _ => throw new ArgumentException("No local metadata parser for this backend.")
         };
@@ -187,6 +198,37 @@ public static class PackageVerifier
                 return Found(version, arch);
         }
         return Missing();
+    }
+
+    private static PackageVerification ParseApk(PackageCandidate candidate, string output, string? nativeArchitecture)
+    {
+        string prefix = candidate.PackageId + "-";
+        using var reader = new StringReader(output);
+        while (reader.ReadLine() is { } line)
+        {
+            string[] fields = line.Split(' ', 3, StringSplitOptions.RemoveEmptyEntries);
+            if (fields is not [var package, var arch, _] || !package.StartsWith(prefix, StringComparison.Ordinal))
+                continue;
+
+            string version = package[prefix.Length..];
+            if (ApkVersion().IsMatch(version) && HasPackageVersion(version, arch, nativeArchitecture))
+                return Found(version, arch);
+        }
+        return Missing();
+    }
+
+    private static PackageVerification ParseXbps(PackageCandidate candidate, string output, string? nativeArchitecture)
+    {
+        using var reader = new StringReader(output);
+        string? package = reader.ReadLine();
+        string? arch = reader.ReadLine();
+        int separator = package?.LastIndexOf('-') ?? -1;
+        if (separator < 1 || package![..separator] != candidate.PackageId || reader.ReadLine() is not null)
+            return Missing();
+
+        string version = package[(separator + 1)..];
+        string? comparisonArchitecture = arch?.EndsWith("-musl", StringComparison.Ordinal) == true ? arch[..^5] : arch;
+        return HasPackageVersion(version, comparisonArchitecture, nativeArchitecture) ? Found(version, arch!) : Missing();
     }
 
     private static PackageVerification ParseDnf(PackageCandidate candidate, string output, string? nativeArchitecture)
