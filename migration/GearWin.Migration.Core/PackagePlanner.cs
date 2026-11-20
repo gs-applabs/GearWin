@@ -178,7 +178,8 @@ public static partial class PackagePlanner
     internal static bool IsLocalQueryIdentifier(PackageCandidate candidate) => candidate.Manager switch
     {
         PackageManager.Apt => AptPackageId().IsMatch(candidate.PackageId),
-        PackageManager.Pacman => SimplePackageId().IsMatch(candidate.PackageId),
+        PackageManager.Pacman or PackageManager.Dnf or PackageManager.Zypper => SimplePackageId().IsMatch(candidate.PackageId),
+        PackageManager.Flatpak => FlatpakAppId().IsMatch(candidate.PackageId),
         _ => false
     };
 

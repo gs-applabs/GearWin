@@ -30,6 +30,54 @@ public sealed class PackageVerificationTests
             PackageVerifier.ParseLocalMetadata(new(PackageManager.Pacman, "vl"), output).Status);
     }
 
+    [Fact]
+    public void DnfRequiresAnExactPackageNameAndNativeArchitecture()
+    {
+        const string output = "vlc-addon\t5.1-1\tx86_64\nvlc\t5.2-1\ti686\nvlc\t5.2-2\tx86_64\n";
+        var candidate = new PackageCandidate(PackageManager.Dnf, "vlc");
+        var result = PackageVerifier.ParseLocalMetadata(candidate, output, "x86_64");
+        Assert.Equal(VerificationStatus.FoundInLocalMetadata, result.Status);
+        Assert.Equal("5.2-2", result.Version);
+        Assert.Equal("x86_64", result.Architecture);
+        Assert.Equal(VerificationStatus.NotConfirmed, PackageVerifier.ParseLocalMetadata(candidate, output, "aarch64").Status);
+    }
+
+    [Fact]
+    public void ZypperIgnoresPatternsAndAcceptsArchitectureIndependentPackages()
+    {
+        const string output = """
+            <stream><search-result version="0.0"><solvable-list>
+            <solvable name="vlc" kind="pattern" edition="9.0" arch="noarch"/>
+            <solvable name="vlc" kind="package" edition="3.0.22-2" arch="noarch"/>
+            </solvable-list></search-result></stream>
+            """;
+        var candidate = new PackageCandidate(PackageManager.Zypper, "vlc");
+        var result = PackageVerifier.ParseLocalMetadata(candidate, output, "x86_64");
+        Assert.Equal(VerificationStatus.FoundInLocalMetadata, result.Status);
+        Assert.Equal("3.0.22-2", result.Version);
+        Assert.Equal("noarch", result.Architecture);
+        Assert.Equal(VerificationStatus.NotConfirmed,
+            PackageVerifier.ParseLocalMetadata(candidate, "<!DOCTYPE stream>" + output).Status);
+        Assert.Equal(VerificationStatus.NotConfirmed,
+            PackageVerifier.ParseLocalMetadata(candidate, output + "<trailing>").Status);
+    }
+
+    [Fact]
+    public void FlatpakOnlyReportsInstalledAppsFromTheSelectedOrigin()
+    {
+        const string output = "VLC addon\tx86_64\t3.0\tflathub\norg.videolan.VLC\tx86_64\t3.0.22\tcustom\n" +
+            "org.videolan.VLC\taarch64\t3.0\tflathub\norg.videolan.VLC\tx86_64\t\tflathub\n";
+        var app = new PackageCandidate(PackageManager.Flatpak, "org.videolan.VLC");
+        var result = PackageVerifier.ParseLocalMetadata(app, output, "x86_64");
+        Assert.Equal(VerificationStatus.InstalledOnDestination, result.Status);
+        Assert.Equal("x86_64", result.Architecture);
+        Assert.Null(result.Version);
+        var custom = PackageVerifier.ParseLocalMetadata(app with { Source = "custom" }, output, "x86_64");
+        Assert.Equal("3.0.22", custom.Version);
+        Assert.Equal(VerificationStatus.NotConfirmed,
+            PackageVerifier.ParseLocalMetadata(app with { Source = "unlisted" }, output).Status);
+    }
+
     [Theory]
     [InlineData("example-")]
     [InlineData("g++")]
