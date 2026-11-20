@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "applications": [
+    {
+      "name": "VLC",
+      "candidates": [
+        { "manager": "winget", "packageId": "VideoLAN.VLC" },
+        { "manager": "flatpak", "packageId": "org.videolan.VLC", "source": "flathub" },
+        { "manager": "apt", "packageId": "vlc" },
+        { "manager": "dnf", "packageId": "vlc" },
+        { "manager": "pacman", "packageId": "vlc" },
+        { "manager": "nixOs", "packageId": "vlc" }
+      ]
+    }
+  ]
+}
