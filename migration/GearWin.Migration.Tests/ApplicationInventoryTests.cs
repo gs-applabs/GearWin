@@ -70,6 +70,34 @@ public sealed class ApplicationInventoryTests
         Assert.Contains("No explicit", plans[1].Note);
     }
 
+    [Fact]
+    public void OversizedDesktopEntryDoesNotBlockTheRestOfTheInventory()
+    {
+        DirectoryInfo fixture = Directory.CreateTempSubdirectory();
+        try
+        {
+            WriteEntry(fixture.FullName, "large.desktop", Entry("Oversized") + new string('X', 64 * 1024));
+            WriteEntry(fixture.FullName, "small.desktop", Entry("Small"));
+            var inventory = ApplicationDiscovery.InspectLinux([fixture.FullName]);
+            Assert.Equal("small.desktop", Assert.Single(inventory.Applications).Id);
+            Assert.Single(inventory.Warnings);
+        }
+        finally { fixture.Delete(recursive: true); }
+    }
+
+    [Fact]
+    public void MultipleAliasesForOneCatalogApplicationResolveOnce()
+    {
+        var target = new PackageProfile("linux", "x64", "debian", "13", null, [new(PackageManager.Apt, "apt-get")], null);
+        var manifest = new PackageManifest(1,
+            [new("VLC", [new(PackageManager.Apt, "vlc")],
+                [new(InventorySource.WindowsRegistry, Id: "vlc"),
+                 new(InventorySource.WindowsRegistry, Name: "vlc media player", Publisher: "videolan")])]);
+        var source = new ApplicationInventory(1, "windows",
+            [new(InventorySource.WindowsRegistry, "VLC", "VLC media player", Publisher: "VideoLAN")], []);
+        Assert.Equal("vlc", Assert.Single(PackagePlanner.CreatePlan(target, manifest, source)).Candidate?.PackageId);
+    }
+
     private static string Entry(string name) => $"[Desktop Entry]\nType=Application\nName={name}\n";
 
     private static void WriteEntry(string dataDirectory, string relativePath, string content)

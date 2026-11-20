@@ -15,11 +15,23 @@ public sealed record PackageTarget(string? DistributionId = null, string? Versio
 public sealed record PackageCandidate(PackageManager Manager, string PackageId, string? Source = null, PackageTarget? Target = null);
 public sealed record ApplicationIdentity(InventorySource Kind, string? Id = null, string? Name = null, string? Publisher = null)
 {
-    internal bool Matches(InstalledApplication application) => Kind == application.Kind &&
-        (Id is null || string.Equals(Id, application.Id, Kind == InventorySource.LinuxDesktop
-            ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase)) &&
-        (Name is null || string.Equals(Name, application.Name, StringComparison.OrdinalIgnoreCase)) &&
-        (Publisher is null || string.Equals(Publisher, application.Publisher, StringComparison.OrdinalIgnoreCase));
+    internal ApplicationIdentity Normalize() => new(Kind,
+        Kind == InventorySource.WindowsRegistry ? Id?.ToUpperInvariant() : Id,
+        Name?.ToUpperInvariant(), Publisher?.ToUpperInvariant());
+
+    internal static IEnumerable<ApplicationIdentity> KeysFor(InstalledApplication application)
+    {
+        var identity = new ApplicationIdentity(application.Kind, application.Id, application.Name, application.Publisher).Normalize();
+        yield return identity with { Name = null, Publisher = null };
+        yield return identity with { Id = null, Publisher = null };
+        yield return identity with { Publisher = null };
+        if (identity.Publisher is not null)
+        {
+            yield return identity with { Name = null };
+            yield return identity with { Id = null };
+            yield return identity;
+        }
+    }
 }
 
 public sealed record ApplicationRequest(string Name, IReadOnlyList<PackageCandidate> Candidates,
@@ -30,7 +42,7 @@ public enum PlanStatus { CommandPreview, Manual, Unresolved }
 
 public sealed record CommandPreview(string Executable, IReadOnlyList<string> Arguments);
 public sealed record ApplicationPlan(string Name, PlanStatus Status, PackageCandidate? Candidate,
-    CommandPreview? Command, string Note, InstalledApplication? Source = null);
+    CommandPreview? Command, string Note, InstalledApplication? Source = null, PackageVerification? Verification = null);
 
 public static partial class PackagePlanner
 {
@@ -38,6 +50,9 @@ public static partial class PackagePlanner
 
     [GeneratedRegex(@"\A[A-Za-z0-9][A-Za-z0-9._+:-]*\z", RegexOptions.CultureInvariant)]
     private static partial Regex SimplePackageId();
+
+    [GeneratedRegex(@"\A[a-z0-9][a-z0-9.+-]+(?::[a-z0-9][a-z0-9-]*)?\z", RegexOptions.CultureInvariant)]
+    private static partial Regex AptPackageId();
 
     [GeneratedRegex(@"\A[A-Za-z0-9][A-Za-z0-9._+-]*/[A-Za-z0-9][A-Za-z0-9._+-]*\z", RegexOptions.CultureInvariant)]
     private static partial Regex GentooPackageId();
@@ -69,7 +84,10 @@ public static partial class PackagePlanner
             foreach (PackageCandidate candidate in request.Candidates)
                 Validate(request.Name, candidate);
             if (request.Sources?.Any(identity => identity is null || !Enum.IsDefined(identity.Kind) ||
-                    (string.IsNullOrWhiteSpace(identity.Id) && string.IsNullOrWhiteSpace(identity.Name))) == true)
+                    (identity.Id is null && identity.Name is null) ||
+                    (identity.Id is not null && string.IsNullOrWhiteSpace(identity.Id)) ||
+                    (identity.Name is not null && string.IsNullOrWhiteSpace(identity.Name)) ||
+                    (identity.Publisher is not null && string.IsNullOrWhiteSpace(identity.Publisher))) == true)
                 throw new ArgumentException($"Every source identity for {request.Name} needs an application ID or name.");
         }
 
@@ -78,6 +96,9 @@ public static partial class PackagePlanner
         if (source.SchemaVersion != SchemaVersion)
             throw new ArgumentException($"Unsupported inventory schema version {source.SchemaVersion}.");
 
+        var identities = manifest.Applications.SelectMany(request =>
+            (request.Sources ?? []).Select(identity => (Identity: identity.Normalize(), Request: request)))
+            .ToLookup(entry => entry.Identity, entry => entry.Request);
         var plan = new List<ApplicationPlan>(source.Applications.Count);
         foreach (InstalledApplication application in source.Applications)
         {
@@ -85,8 +106,8 @@ public static partial class PackagePlanner
                 string.IsNullOrWhiteSpace(application.Name) || !Enum.IsDefined(application.Kind))
                 throw new ArgumentException("The inventory contains an invalid application.");
 
-            var matches = manifest.Applications.Where(request =>
-                request.Sources?.Any(identity => identity.Matches(application)) == true).Take(2).ToArray();
+            var matches = ApplicationIdentity.KeysFor(application).SelectMany(key => identities[key])
+                .Distinct<ApplicationRequest>(ReferenceEqualityComparer.Instance).Take(2).ToArray();
             plan.Add(matches.Length switch
             {
                 1 => PlanApplication(target, backends, matches[0]) with { Source = application },
@@ -108,6 +129,9 @@ public static partial class PackagePlanner
             return new(request.Name, PlanStatus.Unresolved, null, null,
                 "No catalog entry matches the destination profile and its detected backends.");
 
+        if (candidate.Manager == PackageManager.Apt && candidate.PackageId.Split(':')[0][^1] is '+' or '-')
+            return new(request.Name, PlanStatus.Manual, candidate, null,
+                "Confirm this exact APT package name. Trailing + and - have special meaning in install requests.");
         if (candidate.Manager == PackageManager.NixOs)
             return new(request.Name, PlanStatus.Manual, candidate, null,
                 "Review this package in the target's NixOS configuration before rebuilding.");
@@ -131,6 +155,7 @@ public static partial class PackagePlanner
         {
             PackageManager.Emerge => GentooPackageId(),
             PackageManager.Flatpak => FlatpakAppId(),
+            PackageManager.Apt => AptPackageId(),
             _ => SimplePackageId()
         };
 
@@ -149,6 +174,13 @@ public static partial class PackagePlanner
         if (!supportedSource)
             throw new ArgumentException($"Unsupported {candidate.Manager} package source for {appName}.");
     }
+
+    internal static bool IsLocalQueryIdentifier(PackageCandidate candidate) => candidate.Manager switch
+    {
+        PackageManager.Apt => AptPackageId().IsMatch(candidate.PackageId),
+        PackageManager.Pacman => SimplePackageId().IsMatch(candidate.PackageId),
+        _ => false
+    };
 
     private static CommandPreview BuildCommand(PackageBackend backend, PackageCandidate candidate)
     {

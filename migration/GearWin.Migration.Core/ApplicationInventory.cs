@@ -48,7 +48,7 @@ public static class ApplicationDiscovery
                             continue;
                         try
                         {
-                            if (ReadDesktopEntry(File.ReadLines(file.FullName), id) is { } application)
+                            if (ReadDesktopEntry(BoundedText.ReadFile(file.FullName, 64 * 1024).Split('\n'), id) is { } application)
                                 applications.Add(application);
                         }
                         catch (IOException) { incomplete = true; }

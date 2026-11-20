@@ -12,12 +12,20 @@ dotnet run --project migration/GearWin.Migration.Cli -- plan migration/example-m
 
 Run `inspect` on the destination and `inventory` on the source. Copy the JSON files to the planning PC if needed. Omit `--target` to plan against the current machine, or omit `--inventory` to preview every application in the manifest. Inventory files contain the application names on the source PC. Keep both exports outside source control.
 
+Run a local metadata check on the destination with:
+
+```sh
+dotnet run --project migration/GearWin.Migration.Cli -- plan migration/example-manifest.json --inventory inventory.json --verify
+```
+
+`--verify` uses APT or Pacman local metadata. It reports an exact match with its version and architecture, an unconfirmed result, or an unsupported verifier. A local record can be stale. The check does not refresh repositories, download packages or execute installation previews.
+
 ## Scope
 
 - `inspect` reads local OS and executable metadata. Windows can detect WinGet. Linux can detect APT, DNF/DNF5, Pacman, Zypper, APK, XBPS, Portage, Eopkg, Urpmi, Slackpkg, Flatpak, Snap, rpm-ostree and transactional-update. PackageKit is a fallback when `pkcon` is present and there is no selected native manager. NixOS and Guix use manual configuration plans. Unknown variants use detected capabilities. Each preview still needs repository and installation validation on the destination.
 - `inventory` reads Windows uninstall registrations or Linux desktop entries, including known Flatpak, Snap, Nix and Guix export directories. It captures app identities and available version and publisher metadata. Store/MSIX apps without uninstall registrations, command-line packages without desktop entries, and standalone apps without registrations require other discovery methods.
 - `plan` accepts schema version 1. `sources` contains explicit source identities by `kind` (`linuxDesktop` or `windowsRegistry`), app `id` or `name`, and optional `publisher`. An unrecognized or ambiguous source stays in the report as `unresolved`. The first candidate supported by a detected backend and matching the destination is used. A candidate may specify a `target` with exact `distributionId`, `version`, `variantId` or `architecture` requirements.
-- A `commandPreview` is a proposed action for review. File, disk, settings, game and driver migration belong to later stages. The CLI reads metadata and prints results.
+- A `commandPreview` is a proposed action for review. APT identifiers with trailing action suffixes are reported for manual review. JSON exports are limited to 16 MiB and desktop entries to 64 KiB. File, disk, settings, game and driver migration belong to later stages.
 
 Run the focused tests with:
 
