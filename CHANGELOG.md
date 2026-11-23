@@ -6,6 +6,13 @@ available inside the app itself, via Help/Instructions → the "Version History"
 
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
+## v7.0.0 — Windows system backup and migration preview
+
+- System image backup validates the selected disk and displays the backup catalog for the selected volume.
+- The recovery card links to Windows system image recovery and Clonezilla Live disk-to-disk guides.
+- The source includes the Windows/Linux migration CLI for read-only application inventory and package planning.
+- Release validation is pending on Windows, including system image recovery and boot from a cloned replacement disk.
+
 ## v6.9.11 — GitHub account rename (giorstergiopoulos-design to gs-applabs)
 
 - All update, catalog, README, installer, license, Company/Publisher/Copyright/RepositoryUrl and CI references now use **gs-applabs**. Trusted-URL checks (self-update download prefix, release page, suite catalog owner) accept BOTH names, so older versions and GitHub redirects keep working. Earlier CHANGELOG entries are left as written.

@@ -52,14 +52,26 @@
                         <TextBlock Grid.Column="1" Text="{tr:Tr Backup_Title}" Style="{StaticResource CardTitleStyle}"/>
                     </Grid>
                     <TextBlock Text="{tr:Tr Backup_Desc}" Style="{StaticResource SubTextStyle}" TextWrapping="Wrap" Margin="0,0,0,10"/>
-                    <Grid Margin="0,0,0,10">
+                    <Grid x:Name="BackupControls" Margin="0,0,0,10">
                         <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                         <ComboBox x:Name="ListBackupTargetDrives" Grid.Column="0" Margin="0,0,8,0"/>
                         <Button Grid.Column="1" Content="{tr:Tr Backup_StartButton}" Style="{StaticResource AccentButtonStyle}" Padding="16,8" MinWidth="280" Margin="0,0,8,0" Click="BtnStartBackup_Click"/>
                         <Button Grid.Column="2" Content="{tr:Tr Backup_ViewVersionsButton}" Style="{StaticResource FlatButtonStyle}" Padding="16,8" MinWidth="300" Click="BtnViewBackupVersions_Click"/>
                     </Grid>
+                    <WrapPanel Margin="0,0,0,8">
+                        <Button Content="Windows RE" Style="{StaticResource FlatButtonStyle}" Margin="0,0,8,0"
+                                Click="BtnWindowsRecoveryGuide_Click"/>
+                        <Button Content="Clonezilla Live" Style="{StaticResource FlatButtonStyle}"
+                                Click="BtnDiskCloneGuide_Click"/>
+                    </WrapPanel>
                     <TextBlock x:Name="TxtBackupStatus" Style="{StaticResource SubTextStyle}" TextWrapping="Wrap" Margin="0,0,0,8"/>
-                    <ItemsControl x:Name="ListBackupVersions"/>
+                    <ItemsControl x:Name="ListBackupVersions">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <TextBlock Text="{Binding}" TextWrapping="Wrap" Style="{StaticResource SubTextStyle}"/>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
                 </StackPanel>
             </Border>
 

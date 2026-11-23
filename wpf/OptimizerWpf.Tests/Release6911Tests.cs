@@ -23,12 +23,12 @@ namespace OptimizerWpf.Tests
         {
             var xaml = File.ReadAllText(Path.Combine(Root(), "wpf", "OptimizerWpf", "Views", "HelpWindow.xaml"));
             var tab = xaml.Substring(xaml.IndexOf("{tr:Tr VerHist_Title}", StringComparison.Ordinal));
-            var keys = Regex.Matches(tab, @"\{tr:Tr VerHist_v(\d+)Title\}").Select(m => m.Groups[1].Value).ToList();
+            var keys = Regex.Matches(tab, @"VerHist_v(\d+)Title").Select(m => m.Groups[1].Value).ToList();
             Assert.Equal(keys.Count, keys.Distinct().Count());
             Version V(string k) => new(int.Parse(k[..1]), int.Parse(k[1..2]), int.Parse(k[2..]));
             var versions = keys.Select(V).ToList();
             Assert.Equal(versions.OrderByDescending(v => v).ToList(), versions);
-            Assert.Equal("6911", keys[0]);
+            Assert.Contains("6911", keys);
             // η παλιά μπλε σύνοψη "6.9.0 (6.7 - 6.9)" δεν υπάρχει πια πάνω από τις εκδόσεις
             Assert.DoesNotContain("VerHist_690Title", xaml);
         }
@@ -38,7 +38,9 @@ namespace OptimizerWpf.Tests
         {
             var csproj = File.ReadAllText(Path.Combine(Root(), "wpf", "OptimizerWpf", "OptimizerWpf.csproj"));
             var ver = Regex.Match(csproj, @"<Version>([\d.]+)</Version>").Groups[1].Value;
-            Assert.Equal("6.9.11", ver);
+            var xaml = File.ReadAllText(Path.Combine(Root(), "wpf", "OptimizerWpf", "Views", "HelpWindow.xaml"));
+            var latest = Regex.Match(xaml, @"VerHist_v(\d+)Title").Groups[1].Value;
+            Assert.Equal(ver.Replace(".", ""), latest);
             Assert.Contains("## v" + ver + " ", File.ReadAllText(Path.Combine(Root(), "CHANGELOG.md")));
         }
 

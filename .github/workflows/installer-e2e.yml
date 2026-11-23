@@ -8,7 +8,7 @@ name: installer-e2e
 on:
   workflow_dispatch:
   push:
-    branches: [main, master]
+    branches: [main, master, release/7.0.0-validation]
     paths-ignore: ['docs/**', '**/*.md']
 
 concurrency:
@@ -27,6 +27,13 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
+      - name: Test Windows desktop and migration
+        shell: pwsh
+        run: |
+          dotnet test wpf/OptimizerWpf.Tests -c Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet test migration/GearWin.Migration.Tests -c Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Inno Setup (free)
         shell: pwsh
         run: ./tools/ci-install-inno.ps1

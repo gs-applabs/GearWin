@@ -124,7 +124,7 @@ The app is organized into 7 tabs (with sub-pages):
 | 🛡 Security & Privacy | Windows Defender, firewall rules and open ports, telemetry blocking, browser password manager, DNS/hosts and network tools |
 | 🎮 Games & Multimedia | Steam/Epic/GOG/Ubisoft/Xbox library with launch, per-game GPU/gaming profiles, launcher-cache cleanup and game-save backup |
 | 🔧 Windows Tweaks | Dozens of interface/performance/privacy tweaks, safely restorable to their original value, with named profiles |
-| 🖥 System & Tools | Information (hardware/OS, displays, audio, camera/microphone, codecs) · Tools (reports, backups and restore points, Windows toolbox, UWP apps, WSL, USB history, fonts) |
+| 🖥 System & Tools | Information (hardware/OS, displays, audio, camera/microphone, codecs) · Tools (reports, [system image backups and disk recovery](docs/disk-backup-and-recovery.md), restore points, Windows toolbox, UWP apps, WSL, USB history, fonts) |
 
 File conversion is no longer part of GearWin: it lives in Opsis Media Player Pro (video/image) and Waveframe (audio) — see "The Opsis family" window.
 

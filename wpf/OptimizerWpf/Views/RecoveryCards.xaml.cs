@@ -1,6 +1,4 @@
-using System.Collections.Generic;
 using System.Collections.ObjectModel;
-using System.ComponentModel;
 using System.IO;
 using System.Linq;
 using System.Windows;
@@ -17,10 +15,6 @@ namespace OptimizerWpf.Views
         private readonly ObservableCollection<RestorePointInfo> _restorePoints = new();
 
 
-        // ΝΕΟ - roadmap "Backup/imaging" - λίστα υποψήφιων δίσκων-στόχων για το wbadmin system image
-        // backup: ΟΛΟΙ οι έτοιμοι δίσκοι (σταθεροί + αφαιρούμενοι/USB, συνηθισμένος στόχος για τέτοιου
-        // είδους backup) ΕΚΤΟΣ από τον δίσκο συστήματος - το wbadmin ούτως ή άλλως θα απέτυχε αν ο
-        // χρήστης διάλεγε τον δίσκο συστήματος ως στόχο, αλλά προτιμότερο να μη φαίνεται καν επιλογή.
         private async System.Threading.Tasks.Task LoadBackupTargetDrivesAsync()
         {
             var systemDrive = Path.GetPathRoot(System.Environment.SystemDirectory)?.TrimEnd('\\') ?? "C:";
@@ -37,17 +31,67 @@ namespace OptimizerWpf.Views
         private async void BtnStartBackup_Click(object sender, RoutedEventArgs e)
         {
             if (ListBackupTargetDrives.SelectedItem is not string targetDrive) return;
+            if (ThemedMessageBox.Show(
+                    $"{LanguageService.T("Backup_StartButton")} → {targetDrive}",
+                    LanguageService.T("Backup_StartButton"), MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+                return;
+
+            BackupControls.IsEnabled = false;
+            ListBackupVersions.ItemsSource = null;
             TxtBackupStatus.Text = LanguageService.T("Backup_Running");
             StatusService.SetBusy(LanguageService.T("Backup_Running"));
-            var (success, _) = await BackupService.StartSystemImageBackupAsync(targetDrive);
-            StatusService.SetIdle(LanguageService.T("Ready"));
-            TxtBackupStatus.Text = LanguageService.T(success ? "Backup_Success" : "Backup_Failed");
+            try
+            {
+                var (success, output) = await BackupService.StartSystemImageBackupAsync(targetDrive);
+                TxtBackupStatus.Text = LanguageService.T(success ? "Backup_Success" : "Backup_Failed");
+                if (!success && !string.IsNullOrWhiteSpace(output))
+                    ListBackupVersions.ItemsSource = new[] { output };
+            }
+            finally
+            {
+                BackupControls.IsEnabled = true;
+                StatusService.SetIdle(LanguageService.T("Ready"));
+            }
         }
 
         private async void BtnViewBackupVersions_Click(object sender, RoutedEventArgs e)
         {
-            var versions = await BackupService.GetBackupVersionsAsync();
-            ListBackupVersions.ItemsSource = versions.Count > 0 ? versions : new List<string> { LanguageService.T("Backup_NoVersionsFound") };
+            if (ListBackupTargetDrives.SelectedItem is not string targetDrive) return;
+            BackupControls.IsEnabled = false;
+            TxtBackupStatus.Text = "";
+            try
+            {
+                var (success, output) = await BackupService.GetBackupVersionsAsync(targetDrive);
+                if (!success) TxtBackupStatus.Text = LanguageService.T("Backup_Failed");
+                ListBackupVersions.ItemsSource = new[] { string.IsNullOrWhiteSpace(output)
+                    ? LanguageService.T("Backup_NoVersionsFound") : output };
+            }
+            finally
+            {
+                BackupControls.IsEnabled = true;
+            }
+        }
+
+        private void BtnWindowsRecoveryGuide_Click(object sender, RoutedEventArgs e) =>
+            OpenBackupGuide("https://learn.microsoft.com/windows-server/administration/windows-commands/wbadmin-start-sysrecovery");
+
+        private void BtnDiskCloneGuide_Click(object sender, RoutedEventArgs e) =>
+            OpenBackupGuide("https://clonezilla.org/show-live-doc-content.php?topic=clonezilla-live/doc/03_Disk_to_disk_clone");
+
+        private void OpenBackupGuide(string address)
+        {
+            try
+            {
+                using var browser = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(address)
+                {
+                    UseShellExecute = true,
+                });
+            }
+            catch (System.ComponentModel.Win32Exception ex)
+            {
+                ThemedMessageBox.Show(ex.Message, LanguageService.T("Sys_ErrorTitle"),
+                    MessageBoxButton.OK, MessageBoxImage.Error);
+            }
         }
 
         private async System.Threading.Tasks.Task LoadRestorePointsAsync()

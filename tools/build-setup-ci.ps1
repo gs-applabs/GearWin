@@ -5,6 +5,18 @@ Push-Location $root
 try {
     dotnet publish wpf/OptimizerWpf/OptimizerWpf.csproj -c Release -r win-x64 --self-contained true -o wpf/OptimizerWpf/publish/win-x64
     if ($LASTEXITCODE -ne 0) { throw 'dotnet publish failed' }
+    dotnet publish migration/GearWin.Migration.Cli -c Release -r win-x64 --self-contained true -o wpf/OptimizerWpf/publish/win-x64/migration
+    if ($LASTEXITCODE -ne 0) { throw 'Migration CLI publish failed' }
+    $migration = Join-Path $root 'wpf/OptimizerWpf/publish/win-x64/migration/GearWin.Migration.Cli.exe'
+    foreach ($command in @('inspect', 'inventory')) {
+        $result = & $migration $command
+        if ($LASTEXITCODE -ne 0) { throw "Migration CLI $command failed" }
+        $null = ($result -join "`n") | ConvertFrom-Json -ErrorAction Stop
+    }
+    Copy-Item migration/example-manifest.json (Split-Path $migration)
+    $result = & $migration plan migration/example-manifest.json
+    if ($LASTEXITCODE -ne 0) { throw 'Migration CLI plan failed' }
+    $null = ($result -join "`n") | ConvertFrom-Json -ErrorAction Stop
     $iscc = @("$env:LOCALAPPDATA\Programs", $env:ProgramFiles, ${env:ProgramFiles(x86)}) | Where-Object { $_ -and (Test-Path $_) } |
         ForEach-Object { Get-ChildItem $_ -Directory -Filter 'Inno Setup*' -ErrorAction SilentlyContinue } | Sort-Object Name -Descending |
         ForEach-Object { Join-Path $_.FullName 'ISCC.exe' } | Where-Object { Test-Path $_ } | Select-Object -First 1
