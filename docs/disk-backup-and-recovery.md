@@ -36,3 +36,21 @@ sectors*, including unused SSD space, so ordinary SSD migrations should use the
 official Clonezilla filesystem-aware procedure instead. Physical UEFI clone boot
 remains an unverified acceptance criterion. Reagentc /info offers a read-only WinRE
 status in GearWin; Microsoft full-system recovery is run from Windows Recovery.
+
+## 7.0.0 safety hardening and optional used-block images
+
+Raw disk cloning refuses known mounted/swap, dm/LVM/RAID, kernel holders,
+unknown geometry, or mismatched logical sector sizes, and verifies the
+source and destination SHA-256 before reporting success. This safety policy
+is intentionally conservative. It is not proof of restored Windows boot.
+
+`partclone_adapter.py` creates used-block **partition** images using a
+separately installed Partclone executable in independently booted Linux Live.
+It does not restore GPT, EFI, WinRE, BCD or the OS, and never overwrites an
+existing image file. Run `plan` before an interactive `backup`. Refer to
+`tools/recovery/README.md` for exact requirements and supported filesystems.
+
+The Windows `wbadmin` GUI now checks that the backup catalog has changed
+after a successful imaging command. A different version list still does not
+prove restoration or a bootable replacement disk. The Windows metadata
+queries are time-bounded; actual live backups are not force-killed on a timer.

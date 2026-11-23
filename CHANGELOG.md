@@ -7,6 +7,10 @@ available inside the app itself, via Help/Instructions → the "Version History"
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased — Windows system backup and migration preview
+- **Hardened offline cloning**: physical disk `major:minor`, Linux sysfs holders, logical sector and geometry checks; block LVM/RAID/device-mapper; exclusive device handles, no source device aliases; extended Python safety tests.
+- **Partclone used-block imaging adapter**: own `partclone_adapter.py` wrapper for separately installed Partclone on offline Linux Live; supports read-only plan, unmounted-NTFS/ext*/FAT/exFAT/XFS/Btrfs/F2FS partition backup, `partclone.chkimg` verification, SHA-256 manifest, non-overwriting export. **Not a disk restore/boot implementation.**
+- **Windows backup feedback**: compare catalog before/after instead of accepting an old catalog, bound log memory, 90-second metadata query deadline without killing ongoing actual backups.
+
 - Offline Linux Live expert raw disk cloner `tools/recovery/gearwin_clone.py`: whole-disk identity/space/mount/swap checks, two typed destructive confirmations, full SHA-256 clone verification. GUI exports the recovery kit ZIP and installer includes the script/manual. **Not run on physical devices; virtual disk-file tests only.**
 - Read-only Windows RE status (`reagentc /info`) available in the backup card.
 - Windows system image backup uses `-vssCopy` and queries the selected backup catalog on completion; successful catalog access is not proof of restored system boot.

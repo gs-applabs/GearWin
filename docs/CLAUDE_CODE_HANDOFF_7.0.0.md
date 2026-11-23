@@ -102,3 +102,18 @@ Real device clone, system-image recovery from WinRE, UEFI replacement-disk
 boot, BitLocker/Storage Spaces and hardware SSD-write measurement are
 **still unsupported as test claims**. Do not label the feature production
 validated until separately tested on an isolated disposable UEFI VM/hardware.
+
+## Follow-up integration: hardened clone / Partclone (2026-11-23)
+
+`tools/recovery/gearwin_clone.py` now requires geometry and kernel holders
+inspection for destructive raw disk operations. `tools/recovery/partclone_adapter.py`
+adds optional **used-block partition image creation** via installed Partclone
+executables only (GPL binaries are not distributed by GearWin). The Partclone
+output is NOT a bootable complete disk clone and no partition restore is
+provided. The WPF Export Offline Kit ZIP now contains both Python modules
+and the manual. The installer CI verifies both are published and installed.
+
+Windows `BackupService.cs` verifies backup catalog changes rather than
+nonempty prior output, bounds process log capture and applies a 90-second
+metadata query timeout. Raw physical device cloning, actual Partclone images,
+and a cold UEFI recovery boot are still not proven by CI.

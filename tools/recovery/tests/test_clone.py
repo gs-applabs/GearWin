@@ -65,3 +65,48 @@ class CloneSafetyTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class AdvancedCloneSafetyTests(unittest.TestCase):
+    def test_sector_mismatch_and_same_majmin_are_rejected(self):
+        a=clone.Disk('/dev/sda',1000,'SOURCE','src',False,False,512,4096,'8:0')
+        b=clone.Disk('/dev/sdb',1000,'TARGET','dst',False,False,4096,4096,'8:16')
+        with self.assertRaises(ValueError):
+            clone.inspect({'/dev/sda':a,'/dev/sdb':b},a.path,b.path)
+        b=clone.Disk('/dev/sdb',1000,'TARGET','dst',False,False,512,512,'8:0')
+        with self.assertRaises(ValueError):
+            clone.inspect({'/dev/sda':a,'/dev/sdb':b},a.path,b.path)
+
+    def test_dmcrypt_lvm_raid_blocked(self):
+        for kind, fstype in [('crypt','crypto_LUKS'),('lvm','ext4'),('part','LVM2_member')]:
+            data={'blockdevices':[{'path':'/dev/sda','type':'disk','size':1000,'ro':0,
+                 'children':[{'path':'/dev/sda1','type':'part','fstype':'ntfs',
+                              'children':[{'path':'/dev/dm-0','type':kind,'fstype':fstype}]}]},
+                {'path':'/dev/sdb','type':'disk','size':2000,'ro':0}]}
+            with self.subTest(kind=kind,fstype=fstype):
+                records=clone.parse_disks(data)
+                self.assertTrue(records['/dev/sda'].layered)
+                with self.assertRaises(ValueError):
+                    clone.inspect(records,'/dev/sda','/dev/sdb')
+
+    def test_sysfs_holders_on_disk_and_partition_fail_closed(self):
+        import types
+        import os
+        with tempfile.TemporaryDirectory() as base:
+            root=Path(base)
+            device=root/'device'
+            (device/'holders').mkdir(parents=True)
+            (device/'dev').write_text('8:0')
+            part=device/'sda1'
+            (part/'holders').mkdir(parents=True)
+            (part/'partition').write_text('1')
+            link=root/'8:0'
+            link.symlink_to(device, target_is_directory=True)
+            st=types.SimpleNamespace(st_rdev=os.makedev(8,0))
+            self.assertEqual(clone.sysfs_safety(st,sysfs_root=root),'8:0')
+            (part/'holders'/'dm-0').touch()
+            with self.assertRaises(ValueError):
+                clone.sysfs_safety(st,sysfs_root=root)
+            (part/'holders'/'dm-0').unlink()
+            (part/'holders').rmdir()
+            with self.assertRaises(ValueError):
+                clone.sysfs_safety(st,sysfs_root=root)
