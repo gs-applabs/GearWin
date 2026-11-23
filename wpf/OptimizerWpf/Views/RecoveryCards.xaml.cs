@@ -135,6 +135,12 @@ namespace OptimizerWpf.Views
         }
 
 
+        private void OnTransferLanguageChanged()
+        {
+            if (Dispatcher.CheckAccess()) TranslateTransferUi();
+            else Dispatcher.BeginInvoke(new System.Action(TranslateTransferUi));
+        }
+
         private void TranslateTransferUi()
         {
             bool greek = LanguageService.Current == "el";
@@ -233,8 +239,8 @@ namespace OptimizerWpf.Views
             _ = LoadRestorePointsAsync();
             _ = LoadBackupTargetDrivesAsync();
             TranslateTransferUi();
-            Loaded += (_, _) => { LanguageService.Changed -= TranslateTransferUi; LanguageService.Changed += TranslateTransferUi; };
-            Unloaded += (_, _) => LanguageService.Changed -= TranslateTransferUi;
+            Loaded += (_, _) => { LanguageService.Changed -= OnTransferLanguageChanged; LanguageService.Changed += OnTransferLanguageChanged; };
+            Unloaded += (_, _) => LanguageService.Changed -= OnTransferLanguageChanged;
         }
     }
 }
