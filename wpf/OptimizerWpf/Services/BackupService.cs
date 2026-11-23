@@ -25,7 +25,14 @@ namespace OptimizerWpf.Services
                 if (!await Task.Run(() => IsSeparateBackupDisk(targetDrive)))
                     return (false, "The backup volume must be on a separate physical disk from the Windows and boot partitions.");
 
-                return await RunAsync("start", "backup", $"-backupTarget:{targetDrive}", "-allCritical", "-quiet");
+                var backup = await RunAsync("start", "backup", $"-backupTarget:{targetDrive}", "-allCritical", "-vssCopy", "-quiet");
+                if (!backup.Success) return backup;
+                var catalog = await RunAsync("get", "versions", $"-backupTarget:{targetDrive}");
+                if (!catalog.Success || string.IsNullOrWhiteSpace(catalog.Output))
+                    return (false, "Windows Backup reported success but the backup catalog could not be checked; " +
+                        "do not assume the image can be restored. " + catalog.Output);
+                return (true, "Windows Backup completed and the selected disk's backup catalog is readable. " +
+                    "Bare-metal boot recovery is NOT validated.\n" + catalog.Output);
             }
             catch (Exception ex) when (ex is ManagementException or IOException or UnauthorizedAccessException or System.Runtime.InteropServices.COMException)
             {

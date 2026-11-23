@@ -83,6 +83,14 @@ jobs:
             installer/Output/GearWin-Setup.exe.sha256
           retention-days: 7
 
+  offline-clone-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test offline cloning safeguards and virtual disk images (no physical drives)
+        run: python3 -m unittest discover -s tools/recovery/tests -v
+
   e2e:
     needs: build-setup
     runs-on: ${{ matrix.os }}

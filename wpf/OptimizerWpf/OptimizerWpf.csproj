@@ -159,4 +159,12 @@
     <ProjectReference Include="..\\..\\migration\\GearWin.Migration.Core\\GearWin.Migration.Core.csproj" />
   </ItemGroup>
 
+
+  <ItemGroup>
+    <Content Include="..\..\tools\recovery\gearwin_clone.py" Link="Recovery\gearwin_clone.py"
+             CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\..\tools\recovery\README.md" Link="Recovery\README.md"
+             CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

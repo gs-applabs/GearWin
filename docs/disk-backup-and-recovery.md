@@ -23,3 +23,16 @@ Use the offline disk-to-disk workflow in Clonezilla Live. Keep a separate backup
 Use a disposable UEFI Windows VM with a source disk, a distinct image disk and a blank replacement disk. Include a second volume on the source disk to check that GearWin rejects it as an image target. Confirm the selected image disk appears in the backup catalog and that invalid or disconnected targets surface an error. Restore the image to a blank replacement disk using recovery media and boot it with the source detached. Repeat with a fresh replacement disk for the direct clone. Record the Windows build, firmware mode, disk identities, result of each boot and sample file checks. Repeat on spare physical hardware for controller, firmware and driver coverage.
 
 For SSD activity, collect Windows Process Monitor file-write events for GearWin and its child processes during 30 minutes of idle, an update scan and a backup. Record writes and bytes by path, with the image volume identified separately. Logical file writes and physical SSD host writes are different measurements. Use the SSD's host-write counter before and after each scenario when testing physical hardware.
+
+
+## Offline cloning kit — expert option
+
+The Windows app can export `gearwin_clone.py` and `README.md` as an offline kit.
+The script supports a complete raw disk-to-disk copy when started in Linux Live:
+checks disk identities, mounted partitions and capacities, requires two interactive
+erase confirmations, then verifies the full copied source byte range with SHA-256.
+The tool **never clones the active Windows system in place**. It writes *all source
+sectors*, including unused SSD space, so ordinary SSD migrations should use the
+official Clonezilla filesystem-aware procedure instead. Physical UEFI clone boot
+remains an unverified acceptance criterion. Reagentc /info offers a read-only WinRE
+status in GearWin; Microsoft full-system recovery is run from Windows Recovery.
