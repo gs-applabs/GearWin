@@ -11,7 +11,8 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 - System image backup validates the selected disk and displays the backup catalog for the selected volume.
 - The recovery card links to Windows system image recovery and Clonezilla Live disk-to-disk guides.
 - The source includes the Windows/Linux migration CLI for read-only application inventory and package planning.
-- Release validation is pending on Windows, including system image recovery and boot from a cloned replacement disk.
+- Folder preflight and installed app export now appear immediately below System Image Backup in System > Tools. The folder preflight uses a bounded read-only metadata scan; the JSON app list uses the shared migration core.
+- Installer tests pass on GitHub Windows 2022/2025 VMs, but system image recovery, disk cloning/boot, SSD write benchmarks and real hardware remain unverified; disk-to-disk cloning and file transfer are not performed by GearWin.
 
 ## v6.9.11 — GitHub account rename (giorstergiopoulos-design to gs-applabs)
 

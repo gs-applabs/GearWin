@@ -134,12 +134,107 @@ namespace OptimizerWpf.Views
             }
         }
 
+
+        private void TranslateTransferUi()
+        {
+            bool greek = LanguageService.Current == "el";
+            TxtTransferTitle.Text = greek ? "Έλεγχος φακέλων και λίστα εφαρμογών" : "Folder check and application inventory";
+            TxtTransferHelp.Text = greek
+                ? "Έλεγχος πριν από μεταφορά: διαδρομές, σύνδεσμοι και ελεύθερος χώρος. Δεν γίνεται αντιγραφή ή δοκιμαστική εγγραφή στον SSD."
+                : "Read-only check of paths, links and free space before a transfer. No copying or test writes to your SSD.";
+            BtnChooseFrom.Content = greek ? "Φάκελος πηγής…" : "Source folder…";
+            BtnChooseTo.Content = greek ? "Φάκελος προορισμού…" : "Destination folder…";
+            BtnTransferCheck.Content = greek ? "Έλεγχος πριν από τη μεταφορά" : "Check before transfer";
+            BtnAppsExport.Content = greek ? "Εξαγωγή εγκατεστημένων εφαρμογών (JSON)" : "Export installed apps (JSON)";
+        }
+
+        private static string Translation(string greek, string english) =>
+            LanguageService.Current == "el" ? greek : english;
+
+        private static string? ChooseFolder()
+        {
+            using var picker = new System.Windows.Forms.FolderBrowserDialog { ShowNewFolderButton = false };
+            return picker.ShowDialog() == System.Windows.Forms.DialogResult.OK ? picker.SelectedPath : null;
+        }
+
+        private void ChooseTransferFrom_Click(object sender, RoutedEventArgs e)
+        {
+            if (ChooseFolder() is string path) TxtTransferFrom.Text = path;
+        }
+
+        private void ChooseTransferTo_Click(object sender, RoutedEventArgs e)
+        {
+            if (ChooseFolder() is string path) TxtTransferTo.Text = path;
+        }
+
+        private async void CheckTransfer_Click(object sender, RoutedEventArgs e)
+        {
+            BtnTransferCheck.IsEnabled = false;
+            try
+            {
+                var from = TxtTransferFrom.Text;
+                var to = TxtTransferTo.Text;
+                TxtTransferStatus.Text = Translation("Έλεγχος φακέλων…", "Checking folders…");
+                var result = await System.Threading.Tasks.Task.Run(() => TransferPreflight.Inspect(from, to));
+                TxtTransferStatus.Text = (result.Ready
+                    ? Translation("Έλεγχος ολοκληρώθηκε: ", "Preflight passed: ")
+                    : Translation("Ο έλεγχος δεν ολοκληρώθηκε: ", "Preflight blocked: ")) +
+                    $"{result.FileCount:N0} files, {result.ByteCount:N0} bytes. {result.Message}";
+            }
+            finally { BtnTransferCheck.IsEnabled = true; }
+        }
+
+        private async void ExportApps_Click(object sender, RoutedEventArgs e)
+        {
+            if (ThemedMessageBox.Show(
+                    Translation("Η λίστα περιέχει ονόματα και εκδόσεις εφαρμογών. Συνέχεια;",
+                                "The JSON contains app names and versions. Continue?"),
+                    Translation("Εξαγωγή εφαρμογών", "Export applications"),
+                    MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
+
+            var picker = new Microsoft.Win32.SaveFileDialog
+            {
+                Filter = "JSON (*.json)|*.json",
+                FileName = "gearwin-installed-apps.json",
+                DefaultExt = ".json",
+                AddExtension = true,
+                OverwritePrompt = true,
+            };
+            if (picker.ShowDialog() != true) return;
+
+            BtnAppsExport.IsEnabled = false;
+            try
+            {
+                TxtTransferStatus.Text = Translation("Απογραφή εφαρμογών…", "Reading installed applications…");
+                var inventory = await System.Threading.Tasks.Task.Run(GearWin.Migration.ApplicationDiscovery.InspectHost);
+                var options = new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web)
+                {
+                    WriteIndented = true,
+                    Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter(
+                        System.Text.Json.JsonNamingPolicy.CamelCase, allowIntegerValues: false) },
+                };
+                string json = System.Text.Json.JsonSerializer.Serialize(inventory, options);
+                await File.WriteAllTextAsync(picker.FileName, json);
+                TxtTransferStatus.Text = Translation(
+                    $"Εξήχθησαν {inventory.Applications.Count:N0} εφαρμογές: {picker.FileName}",
+                    $"Exported {inventory.Applications.Count:N0} applications: {picker.FileName}");
+            }
+            catch (System.Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+            {
+                TxtTransferStatus.Text = ex.Message;
+            }
+            finally { BtnAppsExport.IsEnabled = true; }
+        }
+
         public RecoveryCards()
         {
             InitializeComponent();
             ListRestorePoints.ItemsSource = _restorePoints;
             _ = LoadRestorePointsAsync();
             _ = LoadBackupTargetDrivesAsync();
+            TranslateTransferUi();
+            Loaded += (_, _) => { LanguageService.Changed -= TranslateTransferUi; LanguageService.Changed += TranslateTransferUi; };
+            Unloaded += (_, _) => LanguageService.Changed -= TranslateTransferUi;
         }
     }
 }

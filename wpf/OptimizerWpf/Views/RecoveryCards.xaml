@@ -75,5 +75,30 @@
                 </StackPanel>
             </Border>
 
+
+            <!-- 7.0.0: below System Image Backup in System > Tools -->
+            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                <StackPanel>
+                    <TextBlock x:Name="TxtTransferTitle" Style="{StaticResource CardTitleStyle}" Margin="0,0,0,8"/>
+                    <TextBlock x:Name="TxtTransferHelp" Style="{StaticResource SubTextStyle}" TextWrapping="Wrap" Margin="0,0,0,10"/>
+                    <Grid Margin="0,0,0,8">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                        <TextBox x:Name="TxtTransferFrom" Grid.Column="0" IsReadOnly="True" Margin="0,0,8,0" VerticalContentAlignment="Center"/>
+                        <Button x:Name="BtnChooseFrom" Grid.Column="1" Style="{StaticResource FlatButtonStyle}" Padding="12,8" Click="ChooseTransferFrom_Click"/>
+                    </Grid>
+                    <Grid Margin="0,0,0,12">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                        <TextBox x:Name="TxtTransferTo" Grid.Column="0" IsReadOnly="True" Margin="0,0,8,0" VerticalContentAlignment="Center"/>
+                        <Button x:Name="BtnChooseTo" Grid.Column="1" Style="{StaticResource FlatButtonStyle}" Padding="12,8" Click="ChooseTransferTo_Click"/>
+                    </Grid>
+                    <WrapPanel Margin="0,0,0,8">
+                        <Button x:Name="BtnTransferCheck" Style="{StaticResource AccentButtonStyle}" Padding="12,8"
+                                Margin="0,0,8,8" Click="CheckTransfer_Click"/>
+                        <Button x:Name="BtnAppsExport" Style="{StaticResource FlatButtonStyle}" Padding="12,8"
+                                Margin="0,0,0,8" Click="ExportApps_Click"/>
+                    </WrapPanel>
+                    <TextBlock x:Name="TxtTransferStatus" Style="{StaticResource SubTextStyle}" TextWrapping="Wrap"/>
+                </StackPanel>
+            </Border>
     </StackPanel>
 </UserControl>
