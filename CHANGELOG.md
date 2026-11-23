@@ -6,7 +6,7 @@ available inside the app itself, via Help/Instructions → the "Version History"
 
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
-## v7.0.0 — Windows system backup and migration preview
+## Unreleased — Windows system backup and migration preview
 
 - System image backup validates the selected disk and displays the backup catalog for the selected volume.
 - The recovery card links to Windows system image recovery and Clonezilla Live disk-to-disk guides.
