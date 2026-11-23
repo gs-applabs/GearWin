@@ -7,6 +7,11 @@ available inside the app itself, via Help/Instructions → the "Version History"
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased — Windows system backup and migration preview
+- Offline Linux Live expert raw disk cloner `tools/recovery/gearwin_clone.py`: whole-disk identity/space/mount/swap checks, two typed destructive confirmations, full SHA-256 clone verification. GUI exports the recovery kit ZIP and installer includes the script/manual. **Not run on physical devices; virtual disk-file tests only.**
+- Read-only Windows RE status (`reagentc /info`) available in the backup card.
+- Windows system image backup uses `-vssCopy` and queries the selected backup catalog on completion; successful catalog access is not proof of restored system boot.
+- Linux runner safety tests and Windows installer smoke tests verify source and packaged recovery assets. Full SSD host-write and cloned-Windows boot tests still require disposable physical/UEFI VM hardware.
+
 
 - System image backup validates the selected disk and displays the backup catalog for the selected volume.
 - The recovery card links to Windows system image recovery and Clonezilla Live disk-to-disk guides.

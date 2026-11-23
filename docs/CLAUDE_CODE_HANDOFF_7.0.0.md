@@ -87,3 +87,18 @@ Get-FileHash .\GearWin-Setup.exe -Algorithm SHA256
 ## Release decision
 
 The CI-tested candidate can be installed for evaluation. **Do not declare disk cloning or actual Windows image restore complete** without disposable VM/physical validation. Public GitHub Release publication, merge to `master`, and closure of draft PR #2 are separate release-management actions, not implied by the build.
+
+## Offline clone status addendum
+
+The 7.0.0 branch now ships `tools/recovery/gearwin_clone.py` (expert raw disk
+cloning from Linux Live, two confirmations, full raw-byte SHA-256 verification).
+The GUI can export a ZIP and inspect WinRE via `reagentc /info`.
+`tools/recovery/tests/test_clone.py` exercises only temporary synthetic disk
+files and safety-policy inputs. `tools/build-setup-ci.ps1` asserts these
+recovery assets land in the published WPF app; `tools/e2e-installer.ps1`
+asserts they are installed under Program Files.
+
+Real device clone, system-image recovery from WinRE, UEFI replacement-disk
+boot, BitLocker/Storage Spaces and hardware SSD-write measurement are
+**still unsupported as test claims**. Do not label the feature production
+validated until separately tested on an isolated disposable UEFI VM/hardware.
