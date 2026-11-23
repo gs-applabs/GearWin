@@ -63,6 +63,10 @@
                                 Click="BtnWindowsRecoveryGuide_Click"/>
                         <Button Content="Clonezilla Live" Style="{StaticResource FlatButtonStyle}"
                                 Click="BtnDiskCloneGuide_Click"/>
+                        <Button Content="Offline clone kit (expert)" ToolTip="Exports ZIP for independently booted Linux Live, not a Windows clone action"
+                                Style="{StaticResource FlatButtonStyle}" Margin="8,0,0,0" Click="BtnExportOfflineClone_Click"/>
+                        <Button Content="Windows RE status" ToolTip="Read-only recovery environment status"
+                                Style="{StaticResource FlatButtonStyle}" Margin="8,0,0,0" Click="BtnCheckWindowsRe_Click"/>
                     </WrapPanel>
                     <TextBlock x:Name="TxtBackupStatus" Style="{StaticResource SubTextStyle}" TextWrapping="Wrap" Margin="0,0,0,8"/>
                     <ItemsControl x:Name="ListBackupVersions">

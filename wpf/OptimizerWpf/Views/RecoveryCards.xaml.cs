@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.IO;
+using System.IO.Compression;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
@@ -77,6 +78,91 @@ namespace OptimizerWpf.Views
 
         private void BtnDiskCloneGuide_Click(object sender, RoutedEventArgs e) =>
             OpenBackupGuide("https://clonezilla.org/show-live-doc-content.php?topic=clonezilla-live/doc/03_Disk_to_disk_clone");
+
+
+        // Export a self-contained recovery kit. The destructive action never runs inside Windows.
+        private void BtnExportOfflineClone_Click(object sender, RoutedEventArgs e)
+        {
+            string warning = LanguageService.Current == "el"
+                ? "Απαιτεί OFFLINE Linux Live. Η κλωνοποίηση καταστρέφει ΟΛΑ τα δεδομένα του δίσκου προορισμού και γράφει ΟΛΟΥΣ τους τομείς, ακόμη και τον κενό χώρο. Θέλετε να εξαγάγετε το πακέτο;"
+                : "EXPERT: Requires offline Linux Live. Cloning permanently ERASES the entire target disk and writes ALL sectors including unused space. Export recovery kit?";
+            if (ThemedMessageBox.Show(warning, "GearWin — Offline clone",
+                    MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+            var folder = Path.Combine(System.AppContext.BaseDirectory, "Recovery");
+            var script = Path.Combine(folder, "gearwin_clone.py");
+            var guide = Path.Combine(folder, "README.md");
+            if (!File.Exists(script) || !File.Exists(guide))
+            {
+                ThemedMessageBox.Show("Recovery assets are missing from this build.", "GearWin",
+                    MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+            var picker = new Microsoft.Win32.SaveFileDialog
+            {
+                FileName = "GearWin-Offline-Clone-Kit.zip",
+                Filter = "ZIP (*.zip)|*.zip",
+                DefaultExt = ".zip", AddExtension = true, OverwritePrompt = true
+            };
+            if (picker.ShowDialog() != true) return;
+            try
+            {
+                using var stream = new FileStream(picker.FileName, FileMode.Create, FileAccess.Write, FileShare.None);
+                using var archive = new ZipArchive(stream, ZipArchiveMode.Create);
+                archive.CreateEntryFromFile(script, "gearwin_clone.py", CompressionLevel.Optimal);
+                archive.CreateEntryFromFile(guide, "README.md", CompressionLevel.Optimal);
+                TxtBackupStatus.Text = "Offline recovery kit exported: " + picker.FileName +
+                    ". Boot Linux Live separately before attempting the clone.";
+            }
+            catch (System.Exception ex) when (ex is IOException or UnauthorizedAccessException ||
+                                               ex is System.Security.SecurityException)
+            {
+                ThemedMessageBox.Show(ex.Message, "GearWin", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        private async void BtnCheckWindowsRe_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is not Button button) return;
+            button.IsEnabled = false;
+            TxtBackupStatus.Text = "Checking WinRE (read-only)...";
+            try
+            {
+                var output = await System.Threading.Tasks.Task.Run(async () =>
+                {
+                    var start = new System.Diagnostics.ProcessStartInfo(
+                        Path.Combine(System.Environment.SystemDirectory, "reagentc.exe"))
+                    {
+                        UseShellExecute = false, RedirectStandardOutput = true,
+                        RedirectStandardError = true, CreateNoWindow = true
+                    };
+                    start.ArgumentList.Add("/info");
+                    using var process = System.Diagnostics.Process.Start(start);
+                    if (process == null) return "Windows RE status check did not start.";
+                    using var timeout = new System.Threading.CancellationTokenSource(System.TimeSpan.FromSeconds(25));
+                    try
+                    {
+                        var stdout = process.StandardOutput.ReadToEndAsync();
+                        var stderr = process.StandardError.ReadToEndAsync();
+                        await process.WaitForExitAsync(timeout.Token);
+                        string text = (await stdout + await stderr).Trim();
+                        if (text.Length > 4000) text = text[..4000] + "...";
+                        return process.ExitCode == 0 ? text : "WinRE status unavailable: " + text;
+                    }
+                    catch (System.OperationCanceledException)
+                    {
+                        if (!process.HasExited) process.Kill();
+                        return "WinRE status check timed out.";
+                    }
+                });
+                TxtBackupStatus.Text = output;
+            }
+            catch (System.Exception ex) when (ex is IOException or UnauthorizedAccessException
+                                                  or System.ComponentModel.Win32Exception)
+            {
+                TxtBackupStatus.Text = "Unable to check WinRE: " + ex.Message;
+            }
+            finally { button.IsEnabled = true; }
+        }
 
         private void OpenBackupGuide(string address)
         {
