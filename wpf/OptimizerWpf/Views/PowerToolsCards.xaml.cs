@@ -56,6 +56,8 @@ namespace OptimizerWpf.Views
                     row.ImpactColor = new SolidColorBrush(seconds < 2 ? Color.FromRgb(0x4C, 0xAF, 0x50)
                         : seconds < 5 ? Color.FromRgb(0xFF, 0x98, 0x00)
                         : Color.FromRgb(0xE5, 0x39, 0x35));
+                    // Frozen: this runs after an await; without a SynchronizationContext (test host) it may run on a pool thread, and an unfrozen Brush then breaks the template ("Must create DependencySource on same Thread")
+                    row.ImpactColor.Freeze();
                 }
                 _startup.Add(row);
             }
