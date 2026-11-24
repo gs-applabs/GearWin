@@ -1,0 +1,55 @@
+name: recovery-vm
+
+# Tests of the offline clone / Partclone tools and the transfer/backup code on FREE GitHub-hosted, disposable VMs
+# (standard runners only). Linux: unit tests + REAL loop-device tests (never touches a real disk).
+# Windows: the WPF test battery (TransferPreflight with real junctions, BackupCatalog) and the migration tests.
+# NOT covered (a runner cannot): real hardware, UEFI boot of a cloned Windows, BitLocker, SSD wear counters.
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['release/7.0.0-net11']
+
+jobs:
+  linux:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tools (partclone, lvm2, e2fsprogs)
+        run: sudo apt-get update && sudo apt-get install -y partclone lvm2 e2fsprogs
+      - name: Unit tests (no devices)
+        run: python3 -m unittest discover -s tools/recovery/tests -v
+      - name: Real loop-device tests (as root, disposable VM)
+        run: sudo -E env CI=1 python3 tools/recovery/ci_loop_device_test.py
+
+  windows:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 11.0.x
+      - name: WPF + migration tests
+        shell: pwsh
+        run: |
+          dotnet test wpf/OptimizerWpf.Tests -c Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet test migration/GearWin.Migration.Tests -c Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: wbadmin available on this runner (informational)
+        shell: pwsh
+        run: |
+          Get-Command wbadmin -ErrorAction SilentlyContinue | Format-List Name,Source
+          wbadmin get versions 2>&1 | Select-Object -First 5
+          reagentc /info 2>&1 | Select-Object -First 8
+        continue-on-error: true
