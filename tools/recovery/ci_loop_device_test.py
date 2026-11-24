@@ -123,7 +123,8 @@ class LoopDeviceTests(unittest.TestCase):
 
     def test_same_device_is_refused(self):
         src, _ = self.loop(8, fill=True)
-        with self.assertRaises(ValueError):
+        # real kernel: the reader's O_EXCL claim makes the second open fail with EBUSY (ValueError if the identity check runs first)
+        with self.assertRaises((OSError, ValueError)):
             clone.clone(src, src, 8 << 20, exclusive=True)
 
     def test_sysfs_holder_blocks_clone(self):
