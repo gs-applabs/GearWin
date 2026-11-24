@@ -1,0 +1,20 @@
+version: '7.0.0-validation.{build}'
+image: Visual Studio 2022
+branches:
+  only:
+    - release/7.0.0-validation
+build: off
+
+test_script:
+  - ps: |
+      $ErrorActionPreference = 'Stop'
+      dotnet test wpf/OptimizerWpf.Tests -c Release
+      if ($LASTEXITCODE -ne 0) { throw 'Windows desktop tests failed' }
+      dotnet test migration/GearWin.Migration.Tests -c Release
+      if ($LASTEXITCODE -ne 0) { throw 'Migration tests failed' }
+      ./tools/ci-install-inno.ps1
+      ./tools/build-setup-ci.ps1
+      ./tools/e2e-installer.ps1 -Scenario fresh -NewSetup "$PWD/installer/Output/GearWin-Setup.exe" -Repository 'gs-applabs/GearWin' -Out "$PWD/e2e"
+
+artifacts:
+  - path: installer/Output/GearWin-Setup-7.0.0.exe

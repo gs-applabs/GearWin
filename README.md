@@ -69,6 +69,18 @@ _Η τρέχουσα διάταξη (7 καρτέλες, 6.9.x), φωτεινό 
 </tr>
 </table>
 
+### Αντίγραφα συστήματος και offline κλωνοποίηση
+
+Το GearWin διαθέτει Windows system image backup (μέσω `wbadmin -allCritical`) σε
+διαφορετικό φυσικό δίσκο, έλεγχο καταλόγου backup και κατάσταση Windows RE.
+Για **πλήρη κλωνοποίηση δίσκου** περιλαμβάνει εξαγώγιμο ZIP με εργαλείο
+`gearwin_clone.py` για *offline Linux Live*, με διπλή επιβεβαίωση και
+SHA-256 επαλήθευση. Η ωμή κλωνοποίηση γράφει ολόκληρη τη χωρητικότητα,
+ακόμα και τους άδειους τομείς: για απλές μεταφορές SSD προτιμήστε το
+Clonezilla Live. Δεν έχει επαληθευτεί εκκίνηση κλωνοποιημένων Windows σε
+πραγματικό UEFI/φυσικό υλικό, ούτε καταστροφική επαναφορά εικόνας Windows.
+Βλ. `tools/recovery/README.md`, `docs/disk-backup-and-recovery.md`.
+
 ### Εγκατάσταση
 
 Κατεβάστε το τελευταίο `GearWin-Setup-*.exe` από τα [Releases](../../releases) και εκτελέστε το
@@ -124,7 +136,7 @@ The app is organized into 7 tabs (with sub-pages):
 | 🛡 Security & Privacy | Windows Defender, firewall rules and open ports, telemetry blocking, browser password manager, DNS/hosts and network tools |
 | 🎮 Games & Multimedia | Steam/Epic/GOG/Ubisoft/Xbox library with launch, per-game GPU/gaming profiles, launcher-cache cleanup and game-save backup |
 | 🔧 Windows Tweaks | Dozens of interface/performance/privacy tweaks, safely restorable to their original value, with named profiles |
-| 🖥 System & Tools | Information (hardware/OS, displays, audio, camera/microphone, codecs) · Tools (reports, backups and restore points, Windows toolbox, UWP apps, WSL, USB history, fonts) |
+| 🖥 System & Tools | Information (hardware/OS, displays, audio, camera/microphone, codecs) · Tools (reports, [system image backups and disk recovery](docs/disk-backup-and-recovery.md), restore points, Windows toolbox, UWP apps, WSL, USB history, fonts) |
 
 File conversion is no longer part of GearWin: it lives in Opsis Media Player Pro (video/image) and Waveframe (audio) — see "The Opsis family" window.
 

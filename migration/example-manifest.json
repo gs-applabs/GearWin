@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "applications": [
+    {
+      "name": "VLC",
+      "sources": [
+        { "kind": "windowsRegistry", "name": "VLC media player", "publisher": "VideoLAN" },
+        { "kind": "linuxDesktop", "id": "vlc.desktop" },
+        { "kind": "linuxDesktop", "id": "org.videolan.VLC.desktop" },
+        { "kind": "linuxDesktop", "id": "vlc_vlc.desktop" }
+      ],
+      "candidates": [
+        { "manager": "winget", "packageId": "VideoLAN.VLC" },
+        { "manager": "flatpak", "packageId": "org.videolan.VLC", "source": "flathub" },
+        { "manager": "apt", "packageId": "vlc" },
+        { "manager": "dnf", "packageId": "vlc" },
+        { "manager": "pacman", "packageId": "vlc" },
+        { "manager": "nixOs", "packageId": "vlc" },
+        { "manager": "snap", "packageId": "vlc" }
+      ]
+    }
+  ]
+}

@@ -8,7 +8,7 @@ name: installer-e2e
 on:
   workflow_dispatch:
   push:
-    branches: [main, master]
+    branches: [main, master, release/7.0.0-validation]
     paths-ignore: ['docs/**', '**/*.md']
 
 concurrency:
@@ -27,12 +27,54 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 11.0.x
+      - name: Test Windows desktop and migration
+        shell: pwsh
+        run: |
+          dotnet test wpf/OptimizerWpf.Tests -c Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet test migration/GearWin.Migration.Tests -c Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Inno Setup (free)
         shell: pwsh
         run: ./tools/ci-install-inno.ps1
       - name: Build the setup
         shell: pwsh
         run: ./tools/build-setup-ci.ps1
+      - name: Package complete source and all Markdown for code audit
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          git archive --format=zip --output=dist/GearWin-7.0.0-source.zip HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'git archive source failed' }
+          New-Item -ItemType Directory -Force -Path dist/markdown | Out-Null
+          $markdownFiles = @(git ls-files -- '*.md' '*.MD')
+          if ($LASTEXITCODE -ne 0 -or $markdownFiles.Count -eq 0) { throw 'No tracked Markdown files found' }
+          foreach ($relative in $markdownFiles) {
+            $path = Join-Path 'dist/markdown' $relative
+            New-Item -ItemType Directory -Path (Split-Path -Parent $path) -Force | Out-Null
+            Copy-Item -LiteralPath $relative -Destination $path
+          }
+          Compress-Archive -Path dist/markdown/* -DestinationPath dist/GearWin-7.0.0-markdown.zip -CompressionLevel Optimal
+          @(
+            'Version: 7.0.0 candidate',
+            "Git commit: $(git rev-parse HEAD)",
+            'Source is from tracked Git files. No binaries or build outputs are included.',
+            "Markdown count: $($markdownFiles.Count)",
+            'Installer is a separate artifact from the same GitHub Actions run.'
+          ) | Set-Content dist/PACKAGE_PROVENANCE.txt
+          Get-FileHash -Algorithm SHA256 dist/*.zip | ForEach-Object {
+            "$($_.Hash.ToLowerInvariant())  $(Split-Path $_.Path -Leaf)"
+          } | Set-Content dist/SOURCE_SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gearwin-source-7.0.0
+          path: |
+            dist/GearWin-7.0.0-source.zip
+            dist/GearWin-7.0.0-markdown.zip
+            dist/PACKAGE_PROVENANCE.txt
+            dist/SOURCE_SHA256SUMS.txt
+          retention-days: 30
       - uses: actions/upload-artifact@v4
         with:
           name: setup
@@ -40,6 +82,14 @@ jobs:
             installer/Output/GearWin-Setup.exe
             installer/Output/GearWin-Setup.exe.sha256
           retention-days: 7
+
+  offline-clone-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test offline cloning safeguards and virtual disk images (no physical drives)
+        run: python3 -m unittest discover -s tools/recovery/tests -v
 
   e2e:
     needs: build-setup

@@ -14,6 +14,9 @@ Name: GearWin - Complete PC Care (WPF port of the original Optimizer.ps1)
 - 14 supported UI languages, all strings in `Services/LanguageService.cs` (huge file, ~18k lines, one dictionary block per language in fixed order: el, en, de, fr, es, ko, zh, it, ru, ja, pt, tr, ar, hi). New keys must be added to all 14 blocks (use a small Python script to insert by anchor-key line number, descending order, rather than hand-editing).
 - Repo: `gs-applabs/GearWin` (renamed from giorstergiopoulos-design in 6.9.11) on GitHub. `gh release create` works from this environment (has previously needed a retry after an auto-mode permission block).
 
+## Windows system image backup
+- The recovery card confirms the selected backup volume, checks its disk against the Windows and boot disks, and queries the selected volume's image catalog. [Recovery and offline cloning workflow](docs/disk-backup-and-recovery.md). Native backup, replacement-disk boot and SSD measurements are pending.
+
 ## Current Objective
 v6.3.5 (2026-10-06, branch `claude/full-audit` - this is the ACTIVE branch, NOT master; a separate
 cloud session created it, this session verified it builds/runs on Windows for the first time and
@@ -234,3 +237,8 @@ Compile-checked only (Services/* via scratch project on Linux; Views/XAML not bu
 - 6.9.10: ViVeTool exact GitHub host check + SHA-256 digest check, driver catalog GUID check, Help version history without the duplicate 6.9.0 card (newest first).
 - 6.9.11: GitHub account renamed giorstergiopoulos-design -> gs-applabs everywhere (trusted-URL checks accept both names via `SuiteCatalogService.LegacyOwner`); consistency test in `Release6911Tests`.
 - Test isolation: `App()` sets `ShutdownMode.OnExplicitShutdown` under `GEARWIN_TEST_HOST` (the default OnLastWindowClose shut the shared Application down after the first window test closed its last window, so later WelcomeSuiteWindowTests failed with "Cannot set Owner"). Cause inferred from code, confirmed only if the full suite passes.
+
+## 7.0.0 (2026-11-24, branch `v7.0.0`, local only - not pushed/tagged)
+- Integrated the external "GearWin-7.0.0-Integrated" source bundle (based on 6.9.11) via 3-way merge onto the `net11` branch (6.9.12): backup/recovery card, TransferPreflight, wbadmin catalog checks, `migration/` CLI+Core+Tests (net11.0), `tools/recovery/` (gearwin_clone.py raw clone, partclone_adapter.py, now with read-only `verify`).
+- Tests: WPF 392/392, migration 42/42, Python 13 (12 on Windows with a fcntl/O_CLOEXEC shim; the sysfs symlink test and real device paths are Linux-only, covered by the ubuntu CI job).
+- NOT VERIFIED: real disk clone, Partclone images, WinRE restore, UEFI boot of a clone, BitLocker, SSD wear, installer build (Inno Setup not run), CI. Partition RESTORE is intentionally not implemented. New recovery-card button labels remain English-only.

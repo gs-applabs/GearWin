@@ -6,6 +6,25 @@ available inside the app itself, via Help/Instructions → the "Version History"
 
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
+## v7.0.0 — Windows system backup, offline cloning and migration (.NET 11)
+- **Hardened offline cloning**: physical disk `major:minor`, Linux sysfs holders, logical sector and geometry checks; block LVM/RAID/device-mapper; exclusive device handles, no source device aliases; extended Python safety tests.
+- **Partclone used-block imaging adapter**: own `partclone_adapter.py` wrapper for separately installed Partclone on offline Linux Live; supports read-only plan, unmounted-NTFS/ext*/FAT/exFAT/XFS/Btrfs/F2FS partition backup, `partclone.chkimg` verification, SHA-256 manifest, non-overwriting export. **Not a disk restore/boot implementation.**
+- **Windows backup feedback**: compare catalog before/after instead of accepting an old catalog, bound log memory, 90-second metadata query deadline without killing ongoing actual backups.
+
+- Offline Linux Live expert raw disk cloner `tools/recovery/gearwin_clone.py`: whole-disk identity/space/mount/swap checks, two typed destructive confirmations, full SHA-256 clone verification. GUI exports the recovery kit ZIP and installer includes the script/manual. **Not run on physical devices; virtual disk-file tests only.**
+- Read-only Windows RE status (`reagentc /info`) available in the backup card.
+- Windows system image backup uses `-vssCopy` and queries the selected backup catalog on completion; successful catalog access is not proof of restored system boot.
+- Linux runner safety tests and Windows installer smoke tests verify source and packaged recovery assets. Full SSD host-write and cloned-Windows boot tests still require disposable physical/UEFI VM hardware.
+
+
+- System image backup validates the selected disk and displays the backup catalog for the selected volume.
+- The recovery card links to Windows system image recovery and Clonezilla Live disk-to-disk guides.
+- The source includes the Windows/Linux migration CLI for read-only application inventory and package planning.
+- Folder preflight and installed app export now appear immediately below System Image Backup in System > Tools. The folder preflight uses a bounded read-only metadata scan; the JSON app list uses the shared migration core.
+- Installer tests pass on GitHub Windows 2022/2025 VMs, but system image recovery, disk cloning/boot, SSD write benchmarks and real hardware remain unverified; disk-to-disk cloning and file transfer are not performed by GearWin.
+- Includes everything from v6.9.12 (.NET 11 migration, see below).
+- `partclone_adapter.py verify`: read-only integrity check of an image against its manifest (SHA-256 + `partclone.chkimg`). Partition restore remains unimplemented by design.
+
 ## v6.9.12 — Migration to .NET 11
 
 - Target framework is now `net11.0-windows` (SDK pinned via `global.json`, CI `dotnet-version: 11.0.x`); `System.Management` and `Microsoft.Data.Sqlite` 11.0.0. The installer stays self-contained, so no runtime install is needed. WinForms analyzers WFO2000/WFO0003 (not applicable to this WPF app) suppressed.

@@ -78,7 +78,7 @@ namespace OptimizerWpf
         // Εσωτερικές κάρτες των UserControl που είναι ΜΙΑ θέση της ρίζας (@Recovery, @PowerTools).
         private static readonly IReadOnlyDictionary<string, string?[]> NestedSections = new Dictionary<string, string?[]>
         {
-            ["@Recovery"] = new[] { "Backups", "Backups" },
+            ["@Recovery"] = new[] { "Backups", "Backups", "Backups" },
             ["@PowerTools"] = new[] { "Startup", "Startup", "Duplicates", "Security", "Benchmark" },
         };
 

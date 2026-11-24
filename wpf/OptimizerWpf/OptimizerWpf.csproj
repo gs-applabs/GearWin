@@ -43,9 +43,9 @@
          ενημερωμένα OptimizerWpf.dll/.exe - σιωπηλή αποτυχία ενημέρωσης. ΠΡΕΠΕΙ να ενημερώνεται σε
          ΚΑΘΕ έκδοση, μαζί με τα υπόλοιπα 3 σημεία (MainWindow.xaml/SplashWindow.xaml τίτλοι,
          installer/OptimizerWpf.iss's MyAppVersion) - βλ. HANDOFF.md/commit history για το μοτίβο. -->
-    <Version>6.9.12</Version>
-    <AssemblyVersion>6.9.12.0</AssemblyVersion>
-    <FileVersion>6.9.12.0</FileVersion>
+    <Version>7.0.0</Version>
+    <AssemblyVersion>7.0.0.0</AssemblyVersion>
+    <FileVersion>7.0.0.0</FileVersion>
     <Authors>gs-applabs</Authors>
     <Company>gs-applabs</Company>
     <Product>GearWin - Complete PC Care</Product>
@@ -155,6 +155,20 @@
          hand-parseable αξιόπιστα). Το Microsoft.Data.Sqlite είναι η επίσημη, ελαφριά βιβλιοθήκη της
          Microsoft γι' αυτό ακριβώς (φέρνει το δικό της native e_sqlite3, καμία εξωτερική εξάρτηση). -->
     <PackageReference Include="Microsoft.Data.Sqlite" Version="11.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\\..\\migration\\GearWin.Migration.Core\\GearWin.Migration.Core.csproj" />
+  </ItemGroup>
+
+
+  <ItemGroup>
+    <Content Include="..\..\tools\recovery\partclone_adapter.py" Link="Recovery\partclone_adapter.py"
+             CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\..\tools\recovery\gearwin_clone.py" Link="Recovery\gearwin_clone.py"
+             CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\..\tools\recovery\README.md" Link="Recovery\README.md"
+             CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>
