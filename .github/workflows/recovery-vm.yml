@@ -47,6 +47,7 @@ jobs:
           dotnet test migration/GearWin.Migration.Tests -c Release
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: wbadmin available on this runner (informational)
+        timeout-minutes: 3
         shell: pwsh
         run: |
           Get-Command wbadmin -ErrorAction SilentlyContinue | Format-List Name,Source
