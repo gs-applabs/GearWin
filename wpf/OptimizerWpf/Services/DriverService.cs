@@ -335,16 +335,25 @@ namespace OptimizerWpf.Services
             return match.Success ? match.Groups[1].Value : null;
         }
 
+        // 7.0.0 (security review): the catalog download URL may be plain http, so a "Valid" signature from ANY publisher is not enough;
+        // require a valid signature whose signer is Microsoft (Windows Update / WHQL packages).
+        internal static bool IsTrustedMicrosoftSignature(string? output)
+        {
+            var parts = (output ?? "").Trim().Split('|', 2);
+            return parts.Length == 2 && parts[0] == "Valid" &&
+                parts[1].Split(',').Any(p => p.Trim().Equals("O=Microsoft Corporation", StringComparison.OrdinalIgnoreCase));
+        }
+
         private static async Task<bool> VerifyAuthenticodeAsync(string filePath)
         {
             var psi = new ProcessStartInfo("powershell.exe",
-                PowerShellArgs.Command($"(Get-AuthenticodeSignature -LiteralPath '{filePath.Replace("'", "''")}').Status"))
+                PowerShellArgs.Command($"$s = Get-AuthenticodeSignature -LiteralPath '{filePath.Replace("'", "''")}'; \"$($s.Status)|$($s.SignerCertificate.Subject)\""))
             { RedirectStandardOutput = true, UseShellExecute = false, CreateNoWindow = true };
             using var process = Process.Start(psi);
             if (process == null) return false;
             var output = await process.StandardOutput.ReadToEndAsync();
             await process.WaitForExitAsync();
-            return output.Trim() == "Valid";
+            return IsTrustedMicrosoftSignature(output);
         }
         public static async Task<DriverScanResult> ScanAsync()
         {
