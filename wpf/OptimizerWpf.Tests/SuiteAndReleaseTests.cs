@@ -261,6 +261,27 @@ namespace OptimizerWpf.Tests
         }
 
         [Fact]
+        public void OpsisIsDetectedByOpsisExeOnly()
+        {
+            var opsis = App("opsis", "Opsis - Desktop Customization", @"%ProgramFiles%\Opsis - Desktop Customization\Opsis.exe");
+            // a stale/foreign uninstall entry with the exact name but no Opsis.exe next to it is NOT an installation
+            var stale = new FakeProbe();
+            stale.Entries.Add(new UninstallEntry("Opsis - Desktop Customization", "2.6.0", @"C:\Gone\Opsis"));
+            Assert.False(InstalledAppDetector.Detect(opsis, stale).Installed);
+            // the plugin/other Opsis products never count
+            var other = new FakeProbe();
+            other.Entries.Add(new UninstallEntry("Opsis News Crawler", "0.14.3", null));
+            Assert.False(InstalledAppDetector.Detect(opsis, other).Installed);
+            // Opsis.exe at the registered install location counts, and its path is returned
+            var ok = new FakeProbe();
+            ok.Entries.Add(new UninstallEntry("Opsis - Desktop Customization", "2.6.0", @"C:\Program Files\Opsis - Desktop Customization"));
+            ok.Files.Add(@"C:\Program Files\Opsis - Desktop Customization\Opsis.exe");
+            var info = InstalledAppDetector.Detect(opsis, ok);
+            Assert.True(info.Installed);
+            Assert.EndsWith("Opsis.exe", info.ExePath);
+        }
+
+        [Fact]
         public void NothingInstalled() => Assert.False(InstalledAppDetector.Detect(App("x", "X", @"%ProgramFiles%\X\X.exe"), new FakeProbe()).Installed);
 
         [Fact]
