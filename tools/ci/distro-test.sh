@@ -14,6 +14,9 @@ case "$ID" in
   alpine)         apk add --no-cache python3 util-linux lvm2 e2fsprogs partclone curl ca-certificates tar gzip bash procps icu-libs libstdc++ libgcc krb5-libs ;;
   *) echo "unsupported distro $ID"; exit 2 ;;
 esac
+command -v lsblk >/dev/null || { [ "$ID" != "opensuse-tumbleweed" ] || zypper --non-interactive install -y util-linux-systemd; }
+command -v lsblk >/dev/null || { echo "lsblk missing on $ID"; exit 3; }
+export GEARWIN_CONTAINER=1
 python3 --version; lsblk --version | head -1; command -v partclone.ext4 || echo "partclone.ext4 NOT installed (partclone tests will skip)"
 
 echo "=== python unit tests (no devices) ==="
@@ -30,12 +33,17 @@ bash /tmp/dotnet-install.sh --channel 11.0 --install-dir /opt/dotnet >/dev/null
 export PATH="/opt/dotnet:$PATH"
 dotnet --version
 dotnet run --project migration/GearWin.Migration.Cli -c Release -- inspect | tee /tmp/inspect.json
+# Headless containers have no desktop apps: add one known .desktop entry and require the inventory to find exactly it.
+mkdir -p /usr/share/applications
+printf '%s
+' '[Desktop Entry]' 'Type=Application' 'Name=GearWin CI Probe' 'X-AppVersion=1.2.3' > /usr/share/applications/gearwin-ci-probe.desktop
 dotnet run --project migration/GearWin.Migration.Cli -c Release -- inventory > /tmp/inventory.json
 python3 - <<'PY'
 import json
 d = json.load(open('/tmp/inventory.json'))
 apps = d.get('applications') or d.get('Applications') or []
-print('inventory applications:', len(apps))
-assert len(apps) > 0, 'inventory returned no applications on a real distro'
+names = [a.get('name') or a.get('Name') for a in apps]
+print('inventory applications:', names)
+assert 'GearWin CI Probe' in names, 'inventory did not find the probe .desktop entry'
 PY
 echo "=== OK: $PRETTY_NAME ==="

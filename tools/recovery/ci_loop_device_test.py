@@ -133,7 +133,12 @@ class LoopDeviceTests(unittest.TestCase):
         run("pvcreate", "-ff", "-y", dst) if shutil.which("pvcreate") else self.skipTest("lvm2 not installed")
         run("vgcreate", "gwvg", dst)
         try:
-            run("lvcreate", "-y", "-L", "4M", "-n", "gwlv", "gwvg")
+            try:
+                run("lvcreate", "-y", "-L", "4M", "-n", "gwlv", "gwvg")
+            except subprocess.CalledProcessError as exc:
+                if os.environ.get("GEARWIN_CONTAINER"):  # containers have no udev/device-mapper node creation
+                    self.skipTest("device-mapper unavailable inside this container: " + (exc.stderr or "")[:120])
+                raise
             g = clone.get_geometry(os.open(src, os.O_RDONLY))
             with self.assertRaises((OSError, ValueError)):
                 clone.clone(src, dst, g[0], exclusive=True)
