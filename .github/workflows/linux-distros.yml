@@ -1,0 +1,27 @@
+name: linux-distros
+
+# Recovery tools + migration CLI on several Linux distributions, as PRIVILEGED containers on free GitHub-hosted ubuntu VMs
+# (standard runners only). Containers share the runner kernel, so this validates each distro's userland (python, util-linux,
+# lvm2, e2fsprogs, Partclone, its package manager) against real loop devices - NOT distro kernels, bootloaders or real disks.
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['release/7.0.0-net11']
+    paths: ['tools/recovery/**', 'tools/ci/**', 'migration/**', '.github/workflows/linux-distros.yml']
+
+jobs:
+  distro:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ['debian:12', 'debian:13', 'fedora:42', 'archlinux:latest', 'opensuse/tumbleweed:latest', 'alpine:3.21']
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test inside ${{ matrix.image }}
+        run: |
+          docker run --rm --privileged -v /dev:/dev -v "$PWD":/w ${{ matrix.image }} sh /w/tools/ci/distro-test.sh
