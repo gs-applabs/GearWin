@@ -19,8 +19,10 @@ namespace OptimizerWpf.Services
             {
                 string source = Path.TrimEndingDirectorySeparator(Path.GetFullPath(sourcePath));
                 string target = Path.TrimEndingDirectorySeparator(Path.GetFullPath(targetPath));
+                // A drive root ("C:\\") keeps its trailing separator after TrimEndingDirectorySeparator, so do not append a second one.
+                static string WithSeparator(string p) => p.EndsWith(Path.DirectorySeparatorChar) ? p : p + Path.DirectorySeparatorChar;
                 bool Under(string a, string b) => a.Equals(b, StringComparison.OrdinalIgnoreCase) ||
-                    b.StartsWith(a + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+                    b.StartsWith(WithSeparator(a), StringComparison.OrdinalIgnoreCase);
                 if (!Directory.Exists(source) || !Directory.Exists(target))
                     return Fail("The selected folders must exist.");
                 if (Under(source, target) || Under(target, source))

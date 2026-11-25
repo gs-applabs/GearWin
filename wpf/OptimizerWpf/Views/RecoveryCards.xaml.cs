@@ -313,7 +313,7 @@ namespace OptimizerWpf.Views
                     $"Εξήχθησαν {inventory.Applications.Count:N0} εφαρμογές: {picker.FileName}",
                     $"Exported {inventory.Applications.Count:N0} applications: {picker.FileName}");
             }
-            catch (System.Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+            catch (System.Exception ex) when (ex is not System.OperationCanceledException)
             {
                 TxtTransferStatus.Text = ex.Message;
             }

@@ -242,3 +242,7 @@ Compile-checked only (Services/* via scratch project on Linux; Views/XAML not bu
 - Integrated the external "GearWin-7.0.0-Integrated" source bundle (based on 6.9.11) via 3-way merge onto the `net11` branch (6.9.12): backup/recovery card, TransferPreflight, wbadmin catalog checks, `migration/` CLI+Core+Tests (net11.0), `tools/recovery/` (gearwin_clone.py raw clone, partclone_adapter.py, now with read-only `verify`).
 - Tests: WPF 392/392, migration 42/42, Python 13 (12 on Windows with a fcntl/O_CLOEXEC shim; the sysfs symlink test and real device paths are Linux-only, covered by the ubuntu CI job).
 - NOT VERIFIED: real disk clone, Partclone images, WinRE restore, UEFI boot of a clone, BitLocker, SSD wear, installer build (Inno Setup not run), CI. Partition RESTORE is intentionally not implemented. New recovery-card button labels remain English-only.
+
+## 7.0.0 final review (2026-11-25)
+- Security/bug review of recovery tools, BackupService, TransferPreflight, PackageVerification: fixed drive-root overlap bug in TransferPreflight (+test), broadened export handler. Brush `.Freeze()` fix in PowerToolsCards. CI `recovery-vm` green on ubuntu 22.04/24.04 and windows 2022/2025.
+- Release 7.0.0 is the first release on .NET 11 (includes 6.9.12 migration).

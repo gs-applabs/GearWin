@@ -27,5 +27,24 @@ namespace OptimizerWpf.Tests
             }
             finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
         }
+
+        [Fact]
+        public void DriveRootSourceOverlapsAnyFolderOnThatDrive()
+        {
+            // Regression: "C:\\" keeps its trailing separator, so the overlap check used to look for "C:\\\\" and miss it.
+            var root = Path.GetPathRoot(Path.GetTempPath())!;
+            var dst = Path.Combine(Path.GetTempPath(), "gearwin-root-" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                Directory.CreateDirectory(dst);
+                var forward = TransferPreflight.Inspect(root, dst);
+                var backward = TransferPreflight.Inspect(dst, root);
+                Assert.False(forward.Ready);
+                Assert.False(backward.Ready);
+                Assert.Contains("overlap", forward.Message);
+                Assert.Contains("overlap", backward.Message);
+            }
+            finally { if (Directory.Exists(dst)) Directory.Delete(dst, true); }
+        }
     }
 }
