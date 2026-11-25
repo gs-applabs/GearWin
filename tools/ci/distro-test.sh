@@ -10,7 +10,7 @@ case "$ID" in
   debian|ubuntu)  apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3 util-linux lvm2 e2fsprogs partclone curl ca-certificates tar gzip procps ;;
   fedora)         dnf install -y -q python3 util-linux lvm2 e2fsprogs partclone curl ca-certificates tar gzip procps-ng ;;
   arch)           pacman -Sy --noconfirm --needed python util-linux lvm2 e2fsprogs partclone curl ca-certificates tar gzip procps-ng ;;
-  opensuse*)      zypper --non-interactive install -y python3 util-linux lvm2 e2fsprogs partclone curl ca-certificates tar gzip procps ;;
+  opensuse*)      zypper --non-interactive --gpg-auto-import-keys refresh && zypper --non-interactive install -y python3 util-linux lvm2 e2fsprogs partclone curl ca-certificates tar gzip procps ;;
   alpine)         apk add --no-cache python3 util-linux lvm2 e2fsprogs partclone curl ca-certificates tar gzip bash procps icu-libs libstdc++ libgcc krb5-libs ;;
   *) echo "unsupported distro $ID"; exit 2 ;;
 esac

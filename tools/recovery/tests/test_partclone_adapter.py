@@ -66,7 +66,9 @@ class VerifyImageTests(unittest.TestCase):
     def test_verify_accepts_intact_and_rejects_modified_or_missing_manifest(self):
         with tempfile.TemporaryDirectory() as root:
             img = self._make(root)
-            self.assertTrue(m.verify_image(img).startswith("sha256"))
+            # hermetic: the payload is not a real Partclone image, so never let an installed partclone.chkimg judge it
+            with patch.object(m.shutil, "which", return_value=None):
+                self.assertTrue(m.verify_image(img).startswith("sha256"))
             img.write_bytes(b"abc" * 99 + b"abd")
             with self.assertRaises(ValueError):
                 m.verify_image(img)
