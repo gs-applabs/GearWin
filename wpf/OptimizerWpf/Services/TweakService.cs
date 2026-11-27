@@ -178,23 +178,9 @@ namespace OptimizerWpf.Services
             RegSet(Registry.CurrentUser, @"Control Panel\Mouse", "MouseThreshold2", "10", RegistryValueKind.String);
         }
 
-        public static void ApplyOn(RegTweak tweak)
-        {
-            using var key = OpenHive(tweak.Hive).CreateSubKey(tweak.Path, writable: true);
-            var current = key?.GetValue(tweak.Name);
-            if (current != null) TweakBackupService.BackupIfNeeded(tweak.BackupKey, current.ToString()!);
-            key?.SetValue(tweak.Name, tweak.OnValue, tweak.Kind);
-        }
+        public static void ApplyOn(RegTweak tweak) => TweakRegistryJournal.Apply(tweak);
 
-        public static void ApplyOff(RegTweak tweak)
-        {
-            using var key = OpenHive(tweak.Hive).CreateSubKey(tweak.Path, writable: true);
-            var backup = TweakBackupService.GetBackup(tweak.BackupKey);
-            if (backup == null) { key?.DeleteValue(tweak.Name, throwOnMissingValue: false); return; }
-            object value = tweak.Kind == RegistryValueKind.String ? backup : int.Parse(backup);
-            key?.SetValue(tweak.Name, value, tweak.Kind);
-            TweakBackupService.Remove(tweak.BackupKey);
-        }
+        public static void ApplyOff(RegTweak tweak) => TweakRegistryJournal.Restore(tweak);
 
         private static RegistryKey OpenHive(RegistryHive hive) => hive == RegistryHive.LocalMachine ? Registry.LocalMachine : Registry.CurrentUser;
 
@@ -387,7 +373,7 @@ namespace OptimizerWpf.Services
             var reverted = 0;
             foreach (var t in MainTweaks.Concat(AiCopilotTweaks).Concat(PerfRegTweaks))
             {
-                if (TweakBackupService.GetBackup(t.BackupKey) == null) continue;
+                if (!TweakRegistryJournal.CanRestore(t)) continue;
                 try { ApplyOff(t); reverted++; }
                 catch { }
             }
@@ -428,7 +414,7 @@ namespace OptimizerWpf.Services
         {
             var count = 0;
             foreach (var t in MainTweaks.Concat(AiCopilotTweaks).Concat(PerfRegTweaks))
-                if (TweakBackupService.GetBackup(t.BackupKey) != null) count++;
+                if (TweakRegistryJournal.CanRestore(t)) count++;
 
             try
             {
