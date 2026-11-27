@@ -17,15 +17,7 @@ namespace OptimizerWpf.Services
     // (Microsoft.Diagnostics.Tracing.TraceEvent, MIT, dotnet org) είναι η καθιερωμένη βιβλιοθήκη γι'
     // αυτό - καταναλώνει ΑΠΕΥΘΕΙΑΣ τα ίδια kernel events, καμία custom driver/hook.
     //
-    // ΣΗΜΕΙΩΣΗ ΕΙΛΙΚΡΙΝΕΙΑΣ (ίδιο πνεύμα με το FileShredderService's SSD wear-leveling note και το
-    // AdvancedToolsService's autologon plaintext note): το "NT Kernel Logger" είναι ΕΝΑ ΜΟΝΑΔΙΚΟ,
-    // system-wide reserved ETW session name - αν κάποιο ΑΛΛΟ εργαλείο (π.χ. Windows Performance
-    // Recorder, ένας profiler) το χρησιμοποιεί ήδη, το Start() εδώ θα το ΚΛΕΙΣΕΙ και θα το ανοίξει
-    // ξανά δικό του (καθιερωμένη συμπεριφορά του TraceEventSession όταν βρει ήδη ενεργό session με
-    // το ίδιο όνομα) - ΔΕΝ υπάρχει τρόπος να «μοιραστεί» το session με άλλον καταναλωτή. Απαιτεί
-    // Administrator (η εφαρμογή το έχει ήδη, app.manifest). Αν η δημιουργία του session αποτύχει για
-    // οποιονδήποτε λόγο, το IsRunning παραμένει false και το UI δείχνει ρητά "μη διαθέσιμο" αντί να
-    // προσποιείται ότι λειτουργεί.
+    // Never replace a kernel logger owned by another tool. Unavailable tracing is reported.
     public static class NetworkTrafficService
     {
         private sealed class Counter { public long Sent; public long Recv; }
@@ -71,7 +63,26 @@ namespace OptimizerWpf.Services
                     // Το Source.Process() μπλοκάρει μέχρι να σταματήσει το session - ΔΙΚΟ του, μη-
                     // threadpool νήμα (IsBackground ώστε να μην εμποδίζει το κλείσιμο της εφαρμογής
                     // αν το Stop() δεν προλάβει να κληθεί για οποιονδήποτε λόγο).
-                    _thread = new Thread(() => { try { session.Source.Process(); } catch (Exception ex) { LastError = ex.Message; } finally { lock (Lock) { if (ReferenceEquals(_session, session)) { IsRunning = false; try { session.Dispose(); } catch { } _session = null; _thread = null; } } } })
+                    _thread = new Thread(() =>
+                    {
+                        string? error = null;
+                        try { session.Source.Process(); } catch (Exception ex) { error = ex.Message; }
+                        finally
+                        {
+                            ThreadPool.QueueUserWorkItem(_ =>
+                            {
+                                lock (Lock)
+                                {
+                                    if (!ReferenceEquals(_session, session)) return;
+                                    LastError = error ?? "Trace session ended.";
+                                    IsRunning = false;
+                                    try { session.Dispose(); } catch { }
+                                    _session = null;
+                                    _thread = null;
+                                }
+                            });
+                        }
+                    })
                     {
                         IsBackground = true,
                         Name = "NetworkTrafficEtw",
@@ -109,8 +120,11 @@ namespace OptimizerWpf.Services
         private static void AddBytes(ConcurrentDictionary<int, Counter> counters, int pid, int size, bool sent)
         {
             if (size <= 0) return;
-            if (counters.Count >= 8192 && !counters.ContainsKey(pid)) return;
-            var counter = counters.GetOrAdd(pid, _ => new Counter());
+            if (!counters.TryGetValue(pid, out var counter))
+            {
+                if (counters.Count >= 8192) return;
+                counter = counters.GetOrAdd(pid, _ => new Counter());
+            }
             if (sent) Interlocked.Add(ref counter.Sent, size);
             else Interlocked.Add(ref counter.Recv, size);
         }
