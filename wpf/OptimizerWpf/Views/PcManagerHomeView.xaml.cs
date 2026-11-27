@@ -21,7 +21,7 @@ namespace OptimizerWpf.Views
         {
             try
             {
-                var result = await System.Threading.Tasks.Task.Run(HealthScoreService.Compute);
+                var result = await HealthScoreService.ComputeAsync(priority: CorePriority.Background);
                 ShowScore(result);
             }
             catch { TxtHeadline.Text = LanguageService.T("PcmHome_Unknown"); }
