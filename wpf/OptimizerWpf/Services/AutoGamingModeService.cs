@@ -41,7 +41,12 @@ namespace OptimizerWpf.Services
         {
             _timer?.Stop();
             _timer = null;
-            if (_isActive) { try { PowerModeService.DisableGamingMode(restartExplorer: false); } catch { } _isActive = false; }
+            if (_isActive && !AppSettingsService.Current.GamingModeActive && !AppSettingsService.Current.OfficeModeActive)
+            {
+                try { PowerModeService.DisableGamingMode(restartExplorer: false); _isActive = false; }
+                catch (Exception ex) { System.Diagnostics.Trace.TraceError(ex.Message); }
+            }
+            else _isActive = false;
         }
 
         private static void Tick()
@@ -49,9 +54,14 @@ namespace OptimizerWpf.Services
             try
             {
                 // Αν ο χρήστης έχει ενεργοποιήσει χειροκίνητα το Gaming Mode (Βελτιστοποίηση), το αυτόματο δεν το αγγίζει - ούτε το ενεργοποιεί ξανά ούτε το απενεργοποιεί στο τέλος του παιχνιδιού.
-                if (!_isActive && AppSettingsService.Current.GamingModeActive) return;
+                if (AppSettingsService.Current.GamingModeActive || AppSettingsService.Current.OfficeModeActive)
+                {
+                    _isActive = false; // ownership transferred to the manual profile; do not restore it later
+                    _consecutiveFullscreenTicks = _consecutiveNonFullscreenTicks = 0;
+                    return;
+                }
                 var hwnd = GetForegroundWindow();
-                if (hwnd == IntPtr.Zero || !IsFullscreen(hwnd) || IsSelfOrShell(hwnd))
+                if (hwnd == IntPtr.Zero || !IsFullscreen(hwnd) || IsSelfOrShell(hwnd) || !IsConfiguredGame(hwnd))
                 {
                     _consecutiveFullscreenTicks = 0;
                     _consecutiveNonFullscreenTicks++;
@@ -86,6 +96,19 @@ namespace OptimizerWpf.Services
             if (!GetWindowRect(hwnd, out var r)) return false;
             var w = r.Right - r.Left; var h = r.Bottom - r.Top;
             return w == GetSystemMetrics(SM_CXSCREEN) && h == GetSystemMetrics(SM_CYSCREEN);
+        }
+
+        // Fullscreen alone also matches browsers, presentation software and video players.
+        // Until launcher detection is unified, only an explicitly configured game is eligible.
+        private static bool IsConfiguredGame(IntPtr hwnd)
+        {
+            try
+            {
+                GetWindowThreadProcessId(hwnd, out var pid);
+                using var process = Process.GetProcessById(pid);
+                return process.MainModule?.FileName is string path && GameProfileService.HasProfile(path);
+            }
+            catch { return false; }
         }
 
         private static bool IsSelfOrShell(IntPtr hwnd)
