@@ -223,7 +223,7 @@ namespace OptimizerWpf.Services
             lock (ProcessScanGate)
             {
                 if (_processScan is { IsCompleted: false }) return _processScan;
-                return _processScan = GearWinCore.RunAsync(CoreWork.Diagnostics, () => Task.Run(ReadProcesses));
+                return _processScan = GearWinCore.RunAsync(CoreWork.ProcessSnapshot, () => Task.Run(ReadProcesses));
             }
         }
 
