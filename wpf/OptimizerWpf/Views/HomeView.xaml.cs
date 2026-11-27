@@ -278,11 +278,17 @@ namespace OptimizerWpf.Views
         private void BtnOpenSecurityCenter_Click(object sender, RoutedEventArgs e) =>
             new MaintenanceCenterWindow { Owner = Window.GetWindow(this) }.Show();
 
-        private void TogglePinnedTweak_Click(object sender, RoutedEventArgs e)
+        private async void TogglePinnedTweak_Click(object sender, RoutedEventArgs e)
         {
-            if (sender is not ToggleButton { Tag: TweakRowVm row }) return;
-            if (row.IsOn) row.Tweak.OnAction(); else row.Tweak.OffAction();
-            row.RecordChange(row.IsOn);
+            if (sender is not ToggleButton { Tag: TweakRowVm row } button) return;
+            button.IsEnabled = false;
+            try { await row.ApplyRequestedAsync(row.IsOn); }
+            catch
+            {
+                row.IsOn = !row.IsOn;
+                ThemedMessageBox.Show(LanguageService.T("Net_ChangeFailed"), LanguageService.T("Net_ErrorTitle"), MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+            finally { button.IsEnabled = true; }
         }
 
         // ΝΕΟ - ρητό αίτημα χρήστη: "Γρήγορος Καθαρισμός & Έλεγχος Υγείας πρέπει να συγχωνευθούν" - η
