@@ -51,6 +51,9 @@ namespace OptimizerWpf.Services
                         if (probe.FileExists(candidate)) { exe = candidate; break; }
                     }
                 }
+                // Opsis is detected by its Opsis.exe ONLY: an uninstall entry without that file next to it (stale entry, plugin, other
+                // Opsis product) must not report the host as installed.
+                if (exe == null && app.Id == "opsis") return new InstalledInfo(false, null, null);
                 return new InstalledInfo(true, ReleaseVersion.ParseOrNull(entry.DisplayVersion), exe);
             }
             return new InstalledInfo(false, null, null);
