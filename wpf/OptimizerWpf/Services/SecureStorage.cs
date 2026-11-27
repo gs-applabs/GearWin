@@ -25,7 +25,7 @@ namespace OptimizerWpf.Services
         internal static bool IsTrustedWriter(SecurityIdentifier sid) =>
             sid.Equals(Admin) || sid.Equals(SystemSid) || sid.Equals(TrustedInstaller);
 
-        private static bool IsProtected(DirectorySecurity security)
+        private static bool IsProtected(FileSystemSecurity security)
         {
             if (security.GetOwner(typeof(SecurityIdentifier)) is not SecurityIdentifier owner || !IsTrustedWriter(owner)) return false;
             foreach (FileSystemAccessRule rule in security.GetAccessRules(true, true, typeof(SecurityIdentifier)))
@@ -44,6 +44,19 @@ namespace OptimizerWpf.Services
             {
                 return !string.IsNullOrEmpty(dir) && MaintenancePaths.IsOrdinaryLocalPath(dir) &&
                     Directory.Exists(dir) && IsProtected(new DirectoryInfo(dir).GetAccessControl(AccessControlSections.Access | AccessControlSections.Owner));
+            }
+            catch { return false; }
+        }
+
+        internal static bool IsProtectedExecutable(string? path)
+        {
+            try
+            {
+                return !string.IsNullOrEmpty(path) &&
+                    string.Equals(Path.GetExtension(path), ".exe", StringComparison.OrdinalIgnoreCase) &&
+                    MaintenancePaths.IsOrdinaryLocalPath(path) && File.Exists(path) &&
+                    IsDirectoryAdminOnlyWritable(Path.GetDirectoryName(path)) &&
+                    IsProtected(new FileInfo(path).GetAccessControl(AccessControlSections.Access | AccessControlSections.Owner));
             }
             catch { return false; }
         }
@@ -93,7 +106,11 @@ namespace OptimizerWpf.Services
             return dir;
         }
 
-        public static string NewPrivateTempFile(string prefix, string extension) =>
-            Path.Combine(NewPrivateTempDir(prefix), "file" + extension);
+        public static string NewPrivateTempFile(string prefix, string extension)
+        {
+            if (!System.Text.RegularExpressions.Regex.IsMatch(extension ?? "", @"\A\.[A-Za-z0-9]{1,12}\z"))
+                throw new ArgumentException("Invalid extension.", nameof(extension));
+            return Path.Combine(NewPrivateTempDir(prefix), "file" + extension);
+        }
     }
 }
