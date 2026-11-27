@@ -9,7 +9,7 @@ namespace OptimizerWpf.Services;
 // The existing PerformanceProfileService remains the only adaptive governor.
 // This coordinator has no timer, polling thread, or persistent activity log.
 // Leases are acquired at service boundaries, never recursively inside a lease.
-internal enum CoreWork { CleanupScan, Cleanup, Memory, Repair, UpdateScan, Backup, Registry, HardwareScan, HealthScan, SoftwareChange, ProfileChange, NetworkChange, StartupChange, Diagnostics, Benchmark, FileProtection, TransferScan, TweakChange }
+internal enum CoreWork { CleanupScan, Cleanup, Memory, Repair, UpdateScan, Backup, Registry, HardwareScan, HealthScan, SoftwareChange, ProfileChange, NetworkChange, StartupChange, Diagnostics, Benchmark, FileProtection, TransferScan, TweakChange, SystemSnapshot, ProcessSnapshot }
 internal enum CorePriority { Background, User }
 
 internal sealed class OperationCoordinator
@@ -42,13 +42,37 @@ internal sealed class OperationCoordinator
 
     internal static bool IsHeavyMutation(CoreWork kind) => kind is CoreWork.Cleanup or CoreWork.Memory or CoreWork.Repair or CoreWork.Backup or CoreWork.Registry or CoreWork.SoftwareChange or CoreWork.ProfileChange or CoreWork.NetworkChange or CoreWork.StartupChange or CoreWork.Benchmark or CoreWork.FileProtection or CoreWork.TweakChange;
 
-    // Conservative first policy: do not run a heavy mutation alongside another heavy
-    // operation or a competing scan. Hardware alerts retain an independent read-only slot.
+    // These domains only observe running processes or hardware metadata.
+    // Generic Diagnostics can traverse files and is NOT a lightweight snapshot.
+    internal static bool IsSnapshot(CoreWork kind) =>
+        kind is CoreWork.HardwareScan or CoreWork.SystemSnapshot or CoreWork.ProcessSnapshot;
+
     internal static bool Conflicts(CoreWork a, CoreWork b)
     {
         if (a == b) return true;
-        if (a == CoreWork.HardwareScan || b == CoreWork.HardwareScan) return false;
+        // Benchmark integrity requires quiet disk activity, including hardware inventory.
+        if (a == CoreWork.Benchmark || b == CoreWork.Benchmark)
+            return a != CoreWork.ProcessSnapshot && b != CoreWork.ProcessSnapshot;
+        if (IsSnapshot(a) || IsSnapshot(b)) return false;
+        // Keep unknown mutation scopes conservative until resource identities are known.
         return IsHeavyMutation(a) || IsHeavyMutation(b);
+    }
+
+    private bool HasCapacity(CoreWork kind, CorePriority priority)
+    {
+        int automatic = Math.Clamp(_capacity(), 1, 3);
+        if (IsSnapshot(kind))
+        {
+            // Reserve a small independent read-only lane; a user must be able to
+            // inspect progress and processes even during a lengthy mutation.
+            int snapshots = _active.Count(r => IsSnapshot(r.Kind));
+            return snapshots < (priority == CorePriority.User ? 2 : 1);
+        }
+        int regular = _active.Count(r => !IsSnapshot(r.Kind));
+        // Explicit compatible user tools may coexist even in Low tier.
+        // Adaptive budget throttles optional work; never revoke running leases.
+        int limit = priority == CorePriority.User ? Math.Max(2, automatic) : automatic;
+        return regular < limit;
     }
 
     internal bool HasHeavyWork { get { lock (_gate) return _active.Any(r => IsHeavyMutation(r.Kind)); } }
@@ -91,7 +115,7 @@ internal sealed class OperationCoordinator
     {
         lock (_gate)
         {
-            if (_stopping || _active.Count >= Math.Clamp(_capacity(), 1, 3) ||
+            if (_stopping || !HasCapacity(kind, CorePriority.Background) ||
                 _active.Any(a => Conflicts(a.Kind, kind)) ||
                 _pending.Any(p => p.Priority == CorePriority.User || Conflicts(p.Kind, kind))) return null;
             var request = new Request(kind, CorePriority.Background);
@@ -138,14 +162,14 @@ internal sealed class OperationCoordinator
     private void Dispatch()
     {
         if (_stopping) return;
-        var limit = Math.Clamp(_capacity(), 1, 3);
-        while (_active.Count < limit)
+        while (true)
         {
             var next = _pending.FirstOrDefault(r => r.Priority == CorePriority.User &&
-                !_active.Any(a => Conflicts(a.Kind, r.Kind)));
+                HasCapacity(r.Kind, r.Priority) && !_active.Any(a => Conflicts(a.Kind, r.Kind)));
             next ??= _pending.FirstOrDefault(r => r.Priority == CorePriority.Background &&
-                !_active.Any(a => Conflicts(a.Kind, r.Kind)) &&
-                !_pending.Any(p => p.Priority == CorePriority.User && Conflicts(p.Kind, r.Kind)));
+                HasCapacity(r.Kind, r.Priority) && !_active.Any(a => Conflicts(a.Kind, r.Kind)) &&
+                !_pending.Any(p => p.Priority == CorePriority.User &&
+                    (Conflicts(p.Kind, r.Kind) || IsSnapshot(p.Kind) == IsSnapshot(r.Kind))));
             if (next == null) return;
             _pending.Remove(next);
             _active.Add(next);
@@ -204,6 +228,8 @@ internal static class GearWinCore
         CoreWork.NetworkChange => LanguageService.Current == "el" ? "Ρυθμίσεις δικτύου" : "Network changes",
         CoreWork.StartupChange => LanguageService.Current == "el" ? "Ρυθμίσεις εκκίνησης" : "Startup changes",
         CoreWork.Diagnostics => LanguageService.Current == "el" ? "Διαγνωστικός έλεγχος" : "Diagnostics",
+        CoreWork.SystemSnapshot => LanguageService.Current == "el" ? "Πληροφορίες συστήματος" : "System information",
+        CoreWork.ProcessSnapshot => LanguageService.Current == "el" ? "Λίστα διεργασιών" : "Process list",
         CoreWork.Benchmark => LanguageService.Current == "el" ? "Μέτρηση απόδοσης" : "Benchmark",
         CoreWork.FileProtection => LanguageService.Current == "el" ? "Προστασία αρχείων" : "File protection",
         CoreWork.TransferScan => LanguageService.Current == "el" ? "Έλεγχος μεταφοράς" : "Transfer check",
