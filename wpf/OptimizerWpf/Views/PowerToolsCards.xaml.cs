@@ -70,15 +70,19 @@ namespace OptimizerWpf.Views
             center.ShowDialog();
         }
 
-        private void ToggleStartupItem_Click(object sender, RoutedEventArgs e)
+        private async void ToggleStartupItem_Click(object sender, RoutedEventArgs e)
         {
-            if (sender is not ToggleButton { Tag: StartupRow row }) return;
-            var ok = SystemService.SetStartupItemEnabled(row.Item, row.IsEnabled);
+            if (sender is not ToggleButton { Tag: StartupRow row } button) return;
+            button.IsEnabled = false;
+            bool ok = false;
+            try { ok = await SystemService.SetStartupItemEnabledAsync(row.Item, row.IsEnabled); }
+            catch (Exception ex) { System.Diagnostics.Trace.TraceError(ex.Message); }
+            finally { button.IsEnabled = true; }
             // ΔΙΟΡΘΩΣΗ (εξονυχιστικός έλεγχος εντόπισε): καμία ένδειξη επιτυχίας/αποτυχίας - σε αποτυχία
             // ο διακόπτης επαναφέρεται στην πραγματική κατάσταση (ΟΧΙ αυτό που έδειχνε μόλις πατήθηκε).
             if (ok)
             {
-                StatusService.SetIdle(row.IsEnabled ? $"{row.Item.Name}{LanguageService.T("Sys_StartupEnabledSuffix")}" : $"{row.Item.Name}{LanguageService.T("Sys_StartupDisabledSuffix")}");
+                StatusService.Report(row.IsEnabled ? $"{row.Item.Name}{LanguageService.T("Sys_StartupEnabledSuffix")}" : $"{row.Item.Name}{LanguageService.T("Sys_StartupDisabledSuffix")}");
             }
             else
             {
