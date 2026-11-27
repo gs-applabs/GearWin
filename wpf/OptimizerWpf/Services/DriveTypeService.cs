@@ -86,18 +86,21 @@ namespace OptimizerWpf.Services
                 var letter = driveLetter.TrimEnd('\\');
                 using var partSearcher = new ManagementObjectSearcher(
                     new ObjectQuery($"ASSOCIATORS OF {{Win32_LogicalDisk.DeviceID='{letter}'}} WHERE AssocClass=Win32_LogicalDiskToPartition"));
-                var partition = partSearcher.Get().Cast<ManagementObject>().FirstOrDefault();
+                using var partSearcherResults = partSearcher.Get();
+                using var partition = partSearcherResults.Cast<ManagementObject>().FirstOrDefault();
                 if (partition == null) return null;
 
                 using var diskSearcher = new ManagementObjectSearcher(
                     $"ASSOCIATORS OF {{Win32_DiskPartition.DeviceID='{partition["DeviceID"]}'}} WHERE AssocClass=Win32_DiskDriveToDiskPartition");
-                var disk = diskSearcher.Get().Cast<ManagementObject>().FirstOrDefault();
+                using var diskSearcherResults = diskSearcher.Get();
+                using var disk = diskSearcherResults.Cast<ManagementObject>().FirstOrDefault();
                 if (disk?["Index"] == null) return null;
                 var diskIndex = disk["Index"].ToString();
 
                 using var physSearcher = new ManagementObjectSearcher(new ManagementScope(@"root\Microsoft\Windows\Storage"),
                     new ObjectQuery($"SELECT MediaType, BusType FROM MSFT_PhysicalDisk WHERE DeviceId='{diskIndex}'"));
-                var physicalDisk = physSearcher.Get().Cast<ManagementObject>().FirstOrDefault();
+                using var physSearcherResults = physSearcher.Get();
+                using var physicalDisk = physSearcherResults.Cast<ManagementObject>().FirstOrDefault();
                 if (physicalDisk == null) return null;
 
                 return (Convert.ToInt32(physicalDisk["MediaType"]), Convert.ToInt32(physicalDisk["BusType"]));
@@ -138,12 +141,14 @@ namespace OptimizerWpf.Services
                 var deviceId = driveLetter.TrimEnd('\\');
                 using var partitionSearcher = new ManagementObjectSearcher(
                     $"ASSOCIATORS OF {{Win32_LogicalDisk.DeviceID='{deviceId}'}} WHERE AssocClass=Win32_LogicalDiskToPartition");
-                var partition = partitionSearcher.Get().Cast<ManagementBaseObject>().FirstOrDefault();
+                using var partitionSearcherResults = partitionSearcher.Get();
+                using var partition = partitionSearcherResults.Cast<ManagementBaseObject>().FirstOrDefault();
                 if (partition == null) return null;
 
                 using var diskSearcher = new ManagementObjectSearcher(
                     $"ASSOCIATORS OF {{Win32_DiskPartition.DeviceID='{partition["DeviceID"]}'}} WHERE AssocClass=Win32_DiskDriveToDiskPartition");
-                var disk = diskSearcher.Get().Cast<ManagementBaseObject>().FirstOrDefault();
+                using var diskSearcherResults = diskSearcher.Get();
+                using var disk = diskSearcherResults.Cast<ManagementBaseObject>().FirstOrDefault();
                 var model = disk?["Model"]?.ToString();
                 return string.IsNullOrWhiteSpace(model) ? null : model.Trim();
             }
@@ -169,12 +174,14 @@ namespace OptimizerWpf.Services
                 var deviceId = driveLetter.TrimEnd('\\');
                 using var partitionSearcher = new ManagementObjectSearcher(
                     $"ASSOCIATORS OF {{Win32_LogicalDisk.DeviceID='{deviceId}'}} WHERE AssocClass=Win32_LogicalDiskToPartition");
-                var partition = partitionSearcher.Get().Cast<ManagementBaseObject>().FirstOrDefault();
+                using var partitionSearcherResults = partitionSearcher.Get();
+                using var partition = partitionSearcherResults.Cast<ManagementBaseObject>().FirstOrDefault();
                 if (partition == null) return null;
 
                 using var diskSearcher = new ManagementObjectSearcher(
                     $"ASSOCIATORS OF {{Win32_DiskPartition.DeviceID='{partition["DeviceID"]}'}} WHERE AssocClass=Win32_DiskDriveToDiskPartition");
-                var disk = diskSearcher.Get().Cast<ManagementBaseObject>().FirstOrDefault();
+                using var diskSearcherResults = diskSearcher.Get();
+                using var disk = diskSearcherResults.Cast<ManagementBaseObject>().FirstOrDefault();
                 var pnpDeviceId = disk?["PNPDeviceID"]?.ToString();
                 if (string.IsNullOrEmpty(pnpDeviceId)) return GetSmartHealthyViaPhysicalDisk(driveLetter);
 
@@ -184,8 +191,10 @@ namespace OptimizerWpf.Services
                 var scope = new ManagementScope(@"root\WMI");
                 scope.Connect();
                 using var searcher = new ManagementObjectSearcher(scope, new ObjectQuery("SELECT * FROM MSStorageDriver_FailurePredictStatus"));
-                foreach (ManagementBaseObject item in searcher.Get())
+                using var results = searcher.Get();
+                foreach (ManagementBaseObject item in results)
                 {
+                    using var reading = item;
                     var instanceName = item["InstanceName"]?.ToString() ?? "";
                     if (instanceName.StartsWith(pnpDeviceId, StringComparison.OrdinalIgnoreCase))
                         return !(bool)item["PredictFailure"];
@@ -215,18 +224,21 @@ namespace OptimizerWpf.Services
                 var letter = driveLetter.TrimEnd('\\');
                 using var partSearcher = new ManagementObjectSearcher(
                     new ObjectQuery($"ASSOCIATORS OF {{Win32_LogicalDisk.DeviceID='{letter}'}} WHERE AssocClass=Win32_LogicalDiskToPartition"));
-                var partition = partSearcher.Get().Cast<ManagementObject>().FirstOrDefault();
+                using var partSearcherResults = partSearcher.Get();
+                using var partition = partSearcherResults.Cast<ManagementObject>().FirstOrDefault();
                 if (partition == null) return null;
 
                 using var diskSearcher = new ManagementObjectSearcher(
                     $"ASSOCIATORS OF {{Win32_DiskPartition.DeviceID='{partition["DeviceID"]}'}} WHERE AssocClass=Win32_DiskDriveToDiskPartition");
-                var disk = diskSearcher.Get().Cast<ManagementObject>().FirstOrDefault();
+                using var diskSearcherResults = diskSearcher.Get();
+                using var disk = diskSearcherResults.Cast<ManagementObject>().FirstOrDefault();
                 if (disk?["Index"] == null) return null;
                 var diskIndex = disk["Index"].ToString();
 
                 using var physSearcher = new ManagementObjectSearcher(new ManagementScope(@"root\Microsoft\Windows\Storage"),
                     new ObjectQuery($"SELECT HealthStatus FROM MSFT_PhysicalDisk WHERE DeviceId='{diskIndex}'"));
-                var physicalDisk = physSearcher.Get().Cast<ManagementObject>().FirstOrDefault();
+                using var physSearcherResults = physSearcher.Get();
+                using var physicalDisk = physSearcherResults.Cast<ManagementObject>().FirstOrDefault();
                 if (physicalDisk?["HealthStatus"] == null) return null;
 
                 // MSFT_PhysicalDisk.HealthStatus: 0=Healthy, 1=Warning, 2=Unhealthy, 5=Unknown.
