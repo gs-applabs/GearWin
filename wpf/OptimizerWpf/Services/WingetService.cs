@@ -635,6 +635,10 @@ $out | ConvertTo-Json -Compress";
 
         // ===== Κοινές βοηθητικές μέθοδοι =====
 
+        // Caller holds the UpdateScan lease. A single inventory replaces per-package CLI calls.
+        internal static Task<(string Output, int ExitCode, bool Started)> ListInstalledWithinLeaseAsync() =>
+            RunToolAsync("winget.exe", "list --accept-source-agreements --disable-interactivity", TimeSpan.FromSeconds(60));
+
         private static Task<(string Output, int ExitCode, bool Started)> RunToolAsync(string fileName, string arguments) =>
             RunToolAsync(fileName, arguments, TimeSpan.FromSeconds(30));
 
