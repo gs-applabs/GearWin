@@ -27,6 +27,8 @@ namespace OptimizerWpf.Services
 
         private static bool IsProtected(FileSystemSecurity security)
         {
+            // A null DACL grants unrestricted access; an empty rule enumeration is not proof of protection.
+            if (new RawSecurityDescriptor(security.GetSecurityDescriptorBinaryForm(), 0).DiscretionaryAcl == null) return false;
             if (security.GetOwner(typeof(SecurityIdentifier)) is not SecurityIdentifier owner || !IsTrustedWriter(owner)) return false;
             foreach (FileSystemAccessRule rule in security.GetAccessRules(true, true, typeof(SecurityIdentifier)))
             {
