@@ -478,6 +478,7 @@ namespace OptimizerWpf.Views
             if (confirm != MessageBoxResult.Yes) return;
 
             var ok = AppSettingsService.Import(dialog.FileName);
+            if (ok) CoreFeatureLifecycle.Apply();
             ThemedMessageBox.Show(
                 LanguageService.T(ok ? "Appr_BackupImportOk" : "Appr_BackupImportFail"),
                 LanguageService.T("AppearanceSettingsTitle"), MessageBoxButton.OK, ok ? MessageBoxImage.Information : MessageBoxImage.Error);
