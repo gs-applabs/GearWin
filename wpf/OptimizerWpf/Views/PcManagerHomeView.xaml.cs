@@ -29,11 +29,11 @@ namespace OptimizerWpf.Views
 
         private void ShowScore(HealthResult result)
         {
-            TxtScore.Text = result.Score.ToString();
-            ScoreArc.Data = BuildArc(result.Score / 100.0, 100, 93);
+            TxtScore.Text = result.DisplayScore;
+            ScoreArc.Data = BuildArc(result.IsComplete ? result.Score / 100.0 : 0, 100, 93);
             ScoreArc.Stroke = result.Score >= 80 ? (Brush)FindResource("AccentBrush")
                 : new SolidColorBrush(result.Score >= 60 ? Color.FromRgb(0xF5, 0x9E, 0x0B) : Color.FromRgb(0xE5, 0x39, 0x35));
-            TxtHeadline.Text = LanguageService.T(result.Issues.Count == 0 ? "PcmHome_Healthy" : "PcmHome_NeedsAttention");
+            TxtHeadline.Text = LanguageService.T(!result.IsComplete ? "PcmHome_Unknown" : result.Issues.Count == 0 ? "PcmHome_Healthy" : "PcmHome_NeedsAttention");
             TxtDetail.Text = result.Issues.Count == 0
                 ? LanguageService.T("PcmHome_HealthyDetail")
                 : string.Join("  •  ", result.Issues.Take(3).Select(i => i.Title));
