@@ -14,6 +14,7 @@ internal static class RecommendedInventoryService
     private static Task<IReadOnlyDictionary<string, bool?>>? _active;
     private static IReadOnlyDictionary<string, bool?>? _cached;
     private static long _cachedAt;
+    private static long _cachedSoftwareEpoch;
     private static int _generation;
 
     internal static void Invalidate()
@@ -26,7 +27,7 @@ internal static class RecommendedInventoryService
         lock (Gate)
         {
             if (_active is { IsCompleted: false }) return _active;
-            if (!refresh && _cached != null && Environment.TickCount64 - _cachedAt < 120000)
+            if (!refresh && _cached != null && _cachedSoftwareEpoch == GearWinCore.SoftwareEpoch && Environment.TickCount64 - _cachedAt < 120000)
                 return Task.FromResult(_cached);
             return _active = ReadAsync(_generation);
         }
@@ -35,6 +36,7 @@ internal static class RecommendedInventoryService
     private static async Task<IReadOnlyDictionary<string, bool?>> ReadAsync(int generation)
     {
         using var lease = await GearWinCore.EnterAsync(CoreWork.UpdateScan).ConfigureAwait(false);
+        var epoch = GearWinCore.SoftwareEpoch;
         var (output, exitCode, started) = await WingetService.ListInstalledWithinLeaseAsync().ConfigureAwait(false);
         var (ids, complete) = ParseInventory(output, started && exitCode == 0);
         // Read uninstall titles once. Registry matches are positive corroboration only.
@@ -44,7 +46,7 @@ internal static class RecommendedInventoryService
                 ? (bool?)true : complete ? false : null, StringComparer.OrdinalIgnoreCase);
         lock (Gate)
         {
-            if (generation == _generation) { _cached = result; _cachedAt = Environment.TickCount64; }
+            if (generation == _generation) { _cached = result; _cachedAt = Environment.TickCount64; _cachedSoftwareEpoch = epoch; }
         }
         return result;
     }
@@ -67,8 +69,10 @@ internal static class RecommendedInventoryService
                     try
                     {
                         using var sub = uninstall.OpenSubKey(name);
-                        if (sub?.GetValue("DisplayName") is string title &&
-                            !string.IsNullOrWhiteSpace(title)) titles.Add(title);
+                        if (sub?.GetValue("DisplayName") is not string title ||
+                            string.IsNullOrWhiteSpace(title) || sub.GetValue("DisplayIcon") is not string icon) continue;
+                        var path = Environment.ExpandEnvironmentVariables(Regex.Replace(icon.Trim(), @",\s*-?\d+$", "").Trim('"'));
+                        if (System.IO.Path.IsPathFullyQualified(path) && System.IO.File.Exists(path)) titles.Add(title);
                     }
                     catch { }
                 }
