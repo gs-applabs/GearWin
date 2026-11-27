@@ -274,11 +274,10 @@ namespace OptimizerWpf.Views
         private async void BtnFreeMemory_Click(object sender, RoutedEventArgs e)
         {
             if (ThemedMessageBox.Show(LanguageService.T("Sys_FreeMemoryConfirm"), LanguageService.T("Sys_ConfirmTitle"), MessageBoxButton.YesNo, MessageBoxImage.Information) != MessageBoxResult.Yes) return;
-            StatusService.SetBusy(LanguageService.T("Sys_FreeingMemory"));
-            var (count, freedMb) = await SystemService.FreeBackgroundMemoryAsync();
-            StatusService.SetIdle(LanguageService.T("Ready"));
+            using var busy = StatusService.BeginScope(LanguageService.T("Sys_FreeingMemory"));
+            var result = await MemoryCleanerService.CleanAsync();
             await LoadProcessesAsync();
-            ThemedMessageBox.Show($"{LanguageService.T("Sys_FreeMemoryDonePrefix")}{count}{LanguageService.T("Sys_FreeMemoryDoneMid")}{freedMb} MB{LanguageService.T("Sys_FreeMemoryDoneSuffix")}",
+            ThemedMessageBox.Show(MemoryCleanerService.Describe(result),
                 LanguageService.T("Sys_ConfirmTitle"), MessageBoxButton.OK, MessageBoxImage.Information);
         }
 
