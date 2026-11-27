@@ -170,6 +170,7 @@ namespace OptimizerWpf.Views
             if (share && !s.ShareAppearanceWithMotionDesk) ThemeManager.PublishSharedAppearance();
             s.ShareAppearanceWithMotionDesk = share;
             AppSettingsService.Save();
+            CoreFeatureLifecycle.Apply();
         }
 
         private void BtnCheckAlertsNow_Click(object sender, RoutedEventArgs e) => AlertService.CheckNow();
