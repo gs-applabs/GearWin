@@ -58,6 +58,9 @@ namespace OptimizerWpf.Services
         internal static (string Source, string Destination) StartupMovePaths(bool enabled) =>
             enabled ? (DisabledStartupKeyPath, RunKeyPath) : (RunKeyPath, DisabledStartupKeyPath);
 
+        internal static bool CanResumeStartupMove(string raw, RegistryValueKind kind, object? staged, RegistryValueKind stagedKind) =>
+            staged is string value && string.Equals(raw, value, StringComparison.Ordinal) && kind == stagedKind;
+
         public static bool SetStartupItemEnabled(StartupItem item, bool enabled)
         {
             if (item.Location is not ("HKCU" or "HKLM") || string.IsNullOrEmpty(item.Name)) return false;
@@ -72,9 +75,16 @@ namespace OptimizerWpf.Services
                 var kind = source.GetValueKind(item.Name);
                 if (kind is not (RegistryValueKind.String or RegistryValueKind.ExpandString)) return false;
                 using var destination = hive.CreateSubKey(destinationPath);
-                if (destination == null || destination.GetValue(item.Name, null, RegistryValueOptions.DoNotExpandEnvironmentNames) != null) return false;
-                destination.SetValue(item.Name, command, kind);
-                destination.Flush();
+                if (destination == null) return false;
+                var staged = destination.GetValue(item.Name, null, RegistryValueOptions.DoNotExpandEnvironmentNames);
+                if (staged == null)
+                {
+                    destination.SetValue(item.Name, command, kind);
+                    destination.Flush();
+                }
+                else if (!CanResumeStartupMove(command, kind, staged, destination.GetValueKind(item.Name))) return false;
+                // An explicit retry may finish an interrupted move only when both
+                // registrations still contain exactly the same raw value and type.
                 if (!Equals(destination.GetValue(item.Name, null, RegistryValueOptions.DoNotExpandEnvironmentNames), raw) ||
                     destination.GetValueKind(item.Name) != kind) return false;
                 // Do not remove a changed source. Retain the staged value on uncertain failure
