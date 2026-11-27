@@ -73,4 +73,11 @@ try {
         $sheet.Save((Join-Path $ReportDir 'icon-contact-sheet.png'),[System.Drawing.Imaging.ImageFormat]::Png)
     } finally { $font.Dispose(); $g.Dispose() }
 } finally { $sheet.Dispose() }
+# Include the normalized PNGs with the CI evidence so an offline source bundle can reuse them.
+$packed = Join-Path $ReportDir 'normalized'
+New-Item -ItemType Directory -Force $packed | Out-Null
+foreach ($row in $rows) {
+    $filename = $row.id.ToLowerInvariant() + '.png'
+    Copy-Item -LiteralPath (Join-Path $out $filename) -Destination (Join-Path $packed $filename) -Force
+}
 Write-Host "ICON CATALOG: $($rows.Count)/$($catalog.Count) assets validated and normalized."
