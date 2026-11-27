@@ -54,17 +54,19 @@ namespace OptimizerWpf.Views
             }
         }
 
-        private void ToggleTweak_Click(object sender, RoutedEventArgs e)
+        private async void ToggleTweak_Click(object sender, RoutedEventArgs e)
         {
-            if (sender is not ToggleButton { Tag: TweakRowVm row }) return;
+            if (sender is not ToggleButton { Tag: TweakRowVm row } button) return;
+            button.IsEnabled = false;
             // Μια εξαίρεση (π.χ. μπλοκάρισμα registry από πολιτική/antivirus) άφηνε τον διακόπτη να δείχνει κατάσταση που
             // ΔΕΝ εφαρμόστηκε και έσκαγε στον global handler. Επαναφέρουμε τον διακόπτη και ενημερώνουμε τον χρήστη.
-            try { if (row.IsOn) row.Tweak.OnAction(); else row.Tweak.OffAction(); row.RecordChange(row.IsOn); }
+            try { await row.ApplyRequestedAsync(row.IsOn); }
             catch
             {
                 row.IsOn = !row.IsOn;
                 ThemedMessageBox.Show(LanguageService.T("Net_ChangeFailed"), LanguageService.T("Net_ErrorTitle"), MessageBoxButton.OK, MessageBoxImage.Warning);
             }
+            finally { button.IsEnabled = true; }
         }
 
         // ΝΕΟ - roadmap "Καρφιτσωμένες συντομεύσεις" - καρφίτσωμα/ξεκαρφίτσωμα ενός tweak για γρήγορη
@@ -189,13 +191,13 @@ namespace OptimizerWpf.Views
 
         // Επιστρέφει πόσα tweaks πραγματικά άλλαξαν κατάσταση - καλείται ΚΑΙ από το αρχείο-βασισμένο
         // import ΚΑΙ από τη φόρτωση ονομασμένου προφίλ παρακάτω.
-        private int ApplyProfile(FullProfileData full)
+        private async System.Threading.Tasks.Task<int> ApplyProfileAsync(FullProfileData full)
         {
             var applied = 0;
-            foreach (var row in AllTweakRows())
+            foreach (var row in AllTweakRows().ToList())
             {
-                if (!(full.Tweaks.TryGetValue(row.PinKey, out var desired) || full.Tweaks.TryGetValue(row.LegacyPinKey, out desired)) || row.IsOn == desired) continue;
-                try { if (desired) row.Tweak.OnAction(); else row.Tweak.OffAction(); row.RecordChange(desired); applied++; }
+                if (!(full.Tweaks.TryGetValue(row.PinKey, out var desired) || full.Tweaks.TryGetValue(row.LegacyPinKey, out desired))) continue;
+                try { if (await row.ApplyRequestedAsync(desired)) applied++; }
                 catch { /* ένα μεμονωμένο tweak μπορεί να αποτύχει (π.χ. δεν υποστηρίζεται σε αυτό το build) - τα υπόλοιπα συνεχίζουν */ }
             }
 
@@ -237,16 +239,17 @@ namespace OptimizerWpf.Views
 
         // Μαζική αλλαγή ρυθμίσεων => πρώτα εξασφαλίζουμε πρόσφατο σημείο επαναφοράς (RestoreGuardService).
         // Η αποτυχία ΔΕΝ μπλοκάρει την εισαγωγή - ο χρήστης απλώς ενημερώνεται στο status.
-        private async System.Threading.Tasks.Task EnsureRestorePointAsync()
+        private async System.Threading.Tasks.Task<bool> EnsureRestorePointAsync()
         {
             TxtTweakProfileStatus.Text = LanguageService.T("Sys_CreatingRestorePoint");
             var result = await RestoreGuardService.EnsureRecentAsync();
             TxtTweakProfileStatus.Text = result switch
             {
                 RestoreGuardResult.Created => LanguageService.T("Sys_RestorePointCreated"),
-                RestoreGuardResult.Failed => LanguageService.T("Guard_PointFailedContinue"),
+                RestoreGuardResult.Failed => LanguageService.Current == "el" ? "Αποτυχία σημείου επαναφοράς. Δεν εφαρμόστηκε το προφίλ." : "Restore point failed. Profile not applied.",
                 _ => "",
             };
+            return result != RestoreGuardResult.Failed;
         }
 
         private async void BtnImportTweakProfile_Click(object sender, RoutedEventArgs e)
@@ -273,8 +276,8 @@ namespace OptimizerWpf.Views
             catch { ThemedMessageBox.Show(LanguageService.T("Tweaks_ProfileImportFailed"), LanguageService.T("Adv_ErrorTitle"), MessageBoxButton.OK, MessageBoxImage.Warning); return; }
             if (full == null) return;
 
-            await EnsureRestorePointAsync();
-            var applied = ApplyProfile(full);
+            if (!await EnsureRestorePointAsync()) return;
+            var applied = await ApplyProfileAsync(full);
             TxtTweakProfileStatus.Text = string.Format(LanguageService.T("Tweaks_ProfileImportDone"), applied);
         }
 
@@ -314,8 +317,8 @@ namespace OptimizerWpf.Views
             var full = NamedProfileService.Load(name);
             if (full == null) { TxtTweakProfileStatus.Text = LanguageService.T("Tweaks_ProfileImportFailed"); return; }
 
-            await EnsureRestorePointAsync();
-            var applied = ApplyProfile(full);
+            if (!await EnsureRestorePointAsync()) return;
+            var applied = await ApplyProfileAsync(full);
             TxtTweakProfileStatus.Text = string.Format(LanguageService.T("Tweaks_ProfileImportDone"), applied);
         }
 
@@ -360,10 +363,12 @@ namespace OptimizerWpf.Views
 
         public static async System.Threading.Tasks.Task DetectAllAsync(IReadOnlyList<TweakRowVm> rows)
         {
-            var states = await System.Threading.Tasks.Task.Run(() => rows.Select(r =>
+            List<bool?> states;
+            try { states = await GearWinCore.RunAsync(CoreWork.Diagnostics, () => System.Threading.Tasks.Task.Run(() => rows.Select(r =>
             {
                 try { return r.Tweak.DetectState?.Invoke(); } catch { return (bool?)null; }
-            }).ToList());
+            }).ToList())); }
+            catch (Exception) { return; }
             for (var i = 0; i < rows.Count; i++)
                 if (states[i] is bool b) rows[i].ApplyDetected(b);
         }
@@ -382,20 +387,39 @@ namespace OptimizerWpf.Views
         public System.Windows.Visibility AdminBadgeVisibility => Tweak.RequiresAdmin ? System.Windows.Visibility.Visible : System.Windows.Visibility.Collapsed;
         public string AdminBadgeTip => LanguageService.T("Tweak_RequiresAdminTip");
 
+        internal async System.Threading.Tasks.Task<bool> ApplyRequestedAsync(bool desired)
+        {
+            var changed = await GearWinCore.RunAsync(CoreWork.TweakChange, () => System.Threading.Tasks.Task.Run(() =>
+            {
+                var before = Tweak.DetectState?.Invoke();
+                if (before == desired) return false;
+                if (before == null) throw new InvalidOperationException("Current tweak state is unknown.");
+                if (desired) Tweak.OnAction(); else Tweak.OffAction();
+                if (Tweak.DetectState?.Invoke() != desired)
+                    throw new InvalidOperationException("Tweak outcome could not be verified.");
+                return true;
+            }));
+            IsOn = desired;
+            if (changed) RecordChange(desired);
+            return changed;
+        }
+
         public void RecordChange(bool turnedOn) =>
             ChangeJournalService.Record(
                 $"{Tweak.Label}: {LanguageService.T(turnedOn ? "Journal_On" : "Journal_Off")}",
-                () =>
+                (System.Func<System.Threading.Tasks.Task>)(async () =>
                 {
-                    if (turnedOn) Tweak.OffAction(); else Tweak.OnAction();
+                    await GearWinCore.RunAsync(CoreWork.TweakChange, () => System.Threading.Tasks.Task.Run(() =>
+                    {
+                        if (Tweak.DetectState?.Invoke() != turnedOn)
+                            throw new InvalidOperationException("Tweak was changed after this journal entry.");
+                        if (turnedOn) Tweak.OffAction(); else Tweak.OnAction();
+                        if (Tweak.DetectState?.Invoke() != !turnedOn)
+                            throw new InvalidOperationException("Undo outcome could not be verified.");
+                    }));
                     IsOn = !turnedOn;
-                });
+                }));
 
-        // ΔΙΟΡΘΩΣΗ (γνωστό κενό #01 του roadmap: "οι διακόπτες δεν διαβάζουν την πραγματική τρέχουσα
-        // τιμή - ξεκινούν πάντα ανενεργοί") - το DetectState (αν υπάρχει για αυτό το tweak) διαβάζει
-        // την πραγματική κατάσταση του μητρώου/powercfg στην κατασκευή της γραμμής, αντί ο διακόπτης
-        // να ξεκινά πάντα false. Σφάλμα κατά την ανίχνευση (π.χ. μη αναμενόμενη τιμή μητρώου) υποβαθμίζει
-        // σε false αντί να ρίξει την κάρτα - καλύτερα ένας λάθος-ανενεργός διακόπτης παρά κρασάρισμα.
         public TweakRowVm(SimpleTweak tweak, string listKey, bool detectNow = true)
         {
             Tweak = tweak;
