@@ -9,15 +9,18 @@ namespace OptimizerWpf.Services;
 // defense in depth, not a handle-based guarantee against concurrent reparse-point substitution.
 internal static class MaintenancePaths
 {
-    internal static bool IsOrdinaryLocalPath(string path)
+    internal static bool IsOrdinaryLocalPath(string path) => IsOrdinaryLocalPath(path, allowRemovable: false);
+
+    internal static bool IsOrdinaryLocalPath(string path, bool allowRemovable)
     {
         try
         {
+            if (!Path.IsPathFullyQualified(path)) return false;
             var full = Path.GetFullPath(path);
             if (!System.Text.RegularExpressions.Regex.IsMatch(full, @"^[A-Za-z]:\\")) return false;
             var root = Path.GetPathRoot(full)!;
             var drive = new DriveInfo(root);
-            if (!drive.IsReady || drive.DriveType != DriveType.Fixed) return false;
+            if (!drive.IsReady || (drive.DriveType != DriveType.Fixed && !(allowRemovable && drive.DriveType == DriveType.Removable))) return false;
             if ((File.GetAttributes(root) & FileAttributes.ReparsePoint) != 0) return false;
             var current = root;
             foreach (var part in full[root.Length..].Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries))
@@ -33,7 +36,8 @@ internal static class MaintenancePaths
 
     internal static bool IsWithin(string root, string candidate)
     {
-        var prefix = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root)) + Path.DirectorySeparatorChar;
+        var fullRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
+        var prefix = Path.EndsInDirectorySeparator(fullRoot) ? fullRoot : fullRoot + Path.DirectorySeparatorChar;
         return Path.GetFullPath(candidate).StartsWith(prefix, StringComparison.OrdinalIgnoreCase);
     }
 
