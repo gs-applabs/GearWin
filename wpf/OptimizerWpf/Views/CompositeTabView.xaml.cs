@@ -12,10 +12,18 @@ namespace OptimizerWpf.Views
     {
         private readonly string _tag;
         private readonly IReadOnlyList<TabSubPage> _pages;
-        private readonly Dictionary<int, List<UserControl>> _pageViews = new();
         private int _current = -1;
 
         public int CurrentPage => _current;
+        internal string TabTag => _tag;
+
+        internal void SelectPage(int index)
+        {
+            index = Math.Clamp(index, 0, _pages.Count - 1);
+            ShowPage(index);
+            if (SubStrip.Children.Count > index && SubStrip.Children[index] is RadioButton chip)
+                chip.IsChecked = true;
+        }
 
         public CompositeTabView(string tag, int startPage = 0)
         {
@@ -52,11 +60,9 @@ namespace OptimizerWpf.Views
             PageHost.Children.Clear();
             PageScroll.ScrollToTop();
 
-            if (!_pageViews.TryGetValue(index, out var views))
-            {
-                views = BuildViews(_pages[index]);
-                _pageViews[index] = views;
-            }
+            // Unloaded live views may have permanently detached subscriptions/counters.
+            // Retain only the current page; reconstruct on a genuine page change.
+            var views = BuildViews(_pages[index]);
             for (var i = 0; i < views.Count; i++)
             {
                 views[i].Margin = new Thickness(0, i == 0 ? 0 : 16, 0, 0);   // ίδιο κενό 16 px και ανάμεσα στις προβολές μιας σελίδας
