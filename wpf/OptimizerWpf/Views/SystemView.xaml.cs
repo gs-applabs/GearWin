@@ -247,10 +247,12 @@ namespace OptimizerWpf.Views
         // ΝΕΟ - βλ. σχόλιο στο MyDeviceService.ClearCache() και στο κουμπί στο SystemView.xaml -
         // ρητή διέξοδος για πραγματικά φρέσκια σάρωση, αφού η cache δεν ανιχνεύει μόνη της αλλαγές
         // υλικού που έγιναν εκτός εφαρμογής μέσα στο ίδιο session.
-        private void BtnRefreshDevice_Click(object sender, RoutedEventArgs e)
+        private async void BtnRefreshDevice_Click(object sender, RoutedEventArgs e)
         {
-            MyDeviceService.ClearCache();
-            _ = LoadMyDeviceAsync();
+            if (_deviceLoading || _viewLifetime == null) return;
+            if (sender is Button button) button.IsEnabled = false;
+            try { MyDeviceService.ClearCache(); await LoadMyDeviceAsync(); }
+            finally { if (sender is Button b) b.IsEnabled = true; }
         }
 
         // ΔΙΟΡΘΩΣΗ - ρητό αίτημα χρήστη: "η εξαγωγή των πληροφοριών συστήματος να γίνεται σε αρχείο
