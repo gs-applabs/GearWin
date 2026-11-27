@@ -205,7 +205,7 @@ namespace OptimizerWpf.Views
         private async Task RefreshHealthAsync()
         {
             var result = await Task.Run(HealthScoreService.Compute);
-            TxtScore.Text = result.Score.ToString();
+            TxtScore.Text = result.DisplayScore;
             var good = (Brush)FindResource("AccentBrush");
             var warn = new SolidColorBrush(Color.FromRgb(0xF5, 0x9E, 0x0B));
             var bad = new SolidColorBrush(Color.FromRgb(0xE5, 0x39, 0x35));
