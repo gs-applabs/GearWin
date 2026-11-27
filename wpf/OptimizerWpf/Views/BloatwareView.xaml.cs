@@ -226,44 +226,95 @@ namespace OptimizerWpf.Views
         // εμφανίζεται με ελαφρώς διαφορετικό όνομα στο Uninstall registry έναντι στο Run key).
         private async void BtnRefreshInstalledApps_Click(object sender, RoutedEventArgs e)
         {
-            StatusService.SetBusy(LanguageService.T("Bloatware_LoadingInstalled"));
-            _installedApps.Clear();
-            var startupItems = await SystemService.LoadStartupItemsAsync();
-            foreach (var app in await BloatwareService.LoadInstalledAppsAsync())
+            if (_deepUninstallBusy) return;
+            _deepUninstallBusy = true;
+            if (sender is Button button) button.IsEnabled = false;
+            using var busy = StatusService.BeginScope(LanguageService.T("Bloatware_LoadingInstalled"));
+            try
             {
-                var alsoAtStartup = app.DisplayName.Length >= 4 && startupItems.Any(s =>
-                    s.Name.Length >= 4 &&
-                    (app.DisplayName.Contains(s.Name, System.StringComparison.CurrentCultureIgnoreCase) ||
-                     s.Name.Contains(app.DisplayName, System.StringComparison.CurrentCultureIgnoreCase)));
-                _installedApps.Add(new DeepUninstallRow(app, alsoAtStartup));
+                var startupItems = await SystemService.LoadStartupItemsAsync();
+                var apps = await BloatwareService.LoadInstalledAppsAsync();
+                _installedApps.Clear();
+                foreach (var app in apps)
+                {
+                    var alsoAtStartup = app.DisplayName.Length >= 4 && startupItems.Any(s =>
+                        s.Name.Length >= 4 &&
+                        (app.DisplayName.Contains(s.Name, System.StringComparison.CurrentCultureIgnoreCase) ||
+                         s.Name.Contains(app.DisplayName, System.StringComparison.CurrentCultureIgnoreCase)));
+                    _installedApps.Add(new DeepUninstallRow(app, alsoAtStartup));
+                }
             }
-            StatusService.SetIdle(LanguageService.T("Ready"));
+            catch (Exception ex) { busy.End(ex.Message); }
+            finally
+            {
+                if (sender is Button b) b.IsEnabled = true;
+                _deepUninstallBusy = false;
+            }
         }
+
+        private bool _deepUninstallBusy;
 
         private async void BtnDeepUninstall_Click(object sender, RoutedEventArgs e)
         {
-            if (sender is not Button { Tag: DeepUninstallRow row }) return;
-            if (ThemedMessageBox.Show($"{LanguageService.T("Bloatware_UninstallConfirmPrefix")}{row.App.DisplayName}{LanguageService.T("Bloatware_UninstallConfirmSuffix")}",
-                    LanguageService.T("Bloatware_ConfirmTitle"), MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+            if (sender is not Button { Tag: DeepUninstallRow row } button || _deepUninstallBusy) return;
+            bool greek = LanguageService.Current == "el";
+            var question = $"{LanguageService.T("Bloatware_UninstallConfirmPrefix")}{row.App.DisplayName}{LanguageService.T("Bloatware_UninstallConfirmSuffix")}";
+            if (row.App.MachineProductCode == null)
+                question += greek ? "\n\nΗ απεγκατάσταση θα γίνει από τις Ρυθμίσεις των Windows." :
+                    "\n\nUninstall will be performed from Windows Settings.";
+            if (ThemedMessageBox.Show(question, LanguageService.T("Bloatware_ConfirmTitle"),
+                    MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
 
-            StatusService.SetBusy(LanguageService.T("Sys_CreatingRestorePoint"));
-            await RestoreGuardService.EnsureRecentAsync(); // ΝΕΟ (6.1.0) - ασφάλεια πριν από απεγκατάσταση
-            StatusService.SetBusy($"{LanguageService.T("Bloatware_Uninstall")} {row.App.DisplayName}...");
-            int exitCode;
-            try { exitCode = await BloatwareService.UninstallAppAsync(row.App.UninstallString); }
-            catch { exitCode = -1; }
-            StatusService.SetIdle(LanguageService.T("Ready"));
-            // Μόνο αν η απεγκατάσταση ΟΛΟΚΛΗΡΩΘΗΚΕ (0 ή 3010 = χρειάζεται επανεκκίνηση). Πριν, ακόμη κι αν ο χρήστης
-            // ΑΚΥΡΩΝΕ τον uninstaller, η εφαρμογή αφαιρούνταν από τη λίστα και η εφαρμογή πρότεινε διαγραφή των
-            // φακέλων δεδομένων της ΕΝΩ ΕΙΝΑΙ ΑΚΟΜΑ ΕΓΚΑΤΕΣΤΗΜΕΝΗ.
-            if (exitCode != 0 && exitCode != 3010) return;
-            _installedApps.Remove(row);
+            _deepUninstallBusy = true;
+            button.IsEnabled = false;
+            using var busy = StatusService.BeginScope(LanguageService.T("Sys_CreatingRestorePoint"));
+            try
+            {
+                if (row.App.MachineProductCode != null &&
+                    await RestoreGuardService.EnsureRecentAsync() == RestoreGuardResult.Failed)
+                {
+                    ThemedMessageBox.Show(greek ? "Δεν δημιουργήθηκε σημείο επαναφοράς. Η απεγκατάσταση δεν ξεκίνησε." :
+                        "Restore point failed. Uninstall was not started.", "GearWin", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return;
+                }
+                busy.Update($"{LanguageService.T("Bloatware_Uninstall")} {row.App.DisplayName}...");
+                var result = await SafeUninstallService.UninstallAsync(row.App);
+                RecommendedInventoryService.Invalidate();
+                if (result.State != SafeUninstallService.Outcome.Removed)
+                {
+                    string message = result.State switch
+                    {
+                        SafeUninstallService.Outcome.WindowsSettingsOpened => greek
+                            ? "Ολοκληρώστε την απεγκατάσταση στις Ρυθμίσεις και ανανεώστε τη λίστα."
+                            : "Complete uninstall in Windows Settings and refresh the list.",
+                        SafeUninstallService.Outcome.RestartRequired => greek
+                            ? "Απαιτείται επανεκκίνηση. Δεν αφαιρέθηκαν φάκελοι δεδομένων."
+                            : "Restart required. No data folders were removed.",
+                        SafeUninstallService.Outcome.NotVerified => greek
+                            ? "Η αφαίρεση δεν επιβεβαιώθηκε. Η καταχώρηση διατηρείται."
+                            : "Removal could not be verified. The entry is retained.",
+                        _ => (greek ? "Η απεγκατάσταση απέτυχε ή δεν ολοκληρώθηκε." :
+                            "Uninstall failed or did not complete.") + (result.ExitCode is int code ? $" ({code})" : "")
+                    };
+                    busy.End(message);
+                    ThemedMessageBox.Show(message, "GearWin", MessageBoxButton.OK, MessageBoxImage.Information);
+                    return;
+                }
 
-            var residuals = BloatwareService.FindResidualFolders(row.App.DisplayName);
-            if (residuals.Count == 0) return;
-            var msg = LanguageService.T("Bloatware_ResidualFoldersFoundPrefix") + string.Join("\n", residuals) + LanguageService.T("Bloatware_ResidualFoldersFoundSuffix");
-            if (ThemedMessageBox.Show(msg, LanguageService.T("Bloatware_ResidualFilesTitle"), MessageBoxButton.YesNo, MessageBoxImage.Information) != MessageBoxResult.Yes) return;
-            foreach (var r in residuals) BloatwareService.DeleteResidualFolder(r);
+                _installedApps.Remove(row);
+                var residuals = await System.Threading.Tasks.Task.Run(() => BloatwareService.FindResidualFolders(row.App.DisplayName));
+                if (residuals.Count > 0)
+                {
+                    var note = greek
+                        ? "Πιθανοί φάκελοι για χειροκίνητο έλεγχο. Μπορεί να περιέχουν προσωπικά ή κοινόχρηστα δεδομένα. Δεν διαγράφηκε τίποτα."
+                        : "Possible folders for manual review. They may contain personal or shared data. Nothing was deleted.";
+                    ThemedMessageBox.Show(note + "\n\n" + string.Join("\n", residuals),
+                        LanguageService.T("Bloatware_ResidualFilesTitle"), MessageBoxButton.OK, MessageBoxImage.Information);
+                }
+                busy.End(greek ? "Η απεγκατάσταση επιβεβαιώθηκε." : "Uninstall verified.");
+            }
+            catch (Exception ex) { busy.End(ex.Message); }
+            finally { button.IsEnabled = true; _deepUninstallBusy = false; }
         }
 
         // ===== Πρόσθετες Λειτουργίες Windows (ενοποιημένη λίστα - βλ. σχόλιο στο XAML) =====
