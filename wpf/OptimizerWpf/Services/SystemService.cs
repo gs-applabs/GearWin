@@ -661,47 +661,60 @@ namespace OptimizerWpf.Services
 
         // ===== Δοκιμή Ταχύτητας Δίσκου =====
 
+        internal static string BenchmarkRoot(string driveLetter)
+        {
+            if (string.IsNullOrEmpty(driveLetter) || driveLetter.Length > 3 ||
+                !((driveLetter[0] >= 'A' && driveLetter[0] <= 'Z') || (driveLetter[0] >= 'a' && driveLetter[0] <= 'z')) ||
+                (driveLetter.Length >= 2 && driveLetter[1] != ':') ||
+                (driveLetter.Length == 3 && driveLetter[2] != '\\'))
+                throw new ArgumentException("Select a local drive letter.");
+            return char.ToUpperInvariant(driveLetter[0]) + @":\";
+        }
+
+        // Keep one exclusive handle from creation to readback and deletion.
+        // Never truncate an existing path or delete by name in a finally block.
+        internal static FileStream OpenBenchmarkFile(string path, int bufferSize) =>
+            new(path, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None, bufferSize,
+                FileOptions.WriteThrough | FileOptions.DeleteOnClose);
+
         public static Task<BenchmarkResult> RunBenchmarkAsync(string driveLetter) => GearWinCore.RunAsync(CoreWork.Benchmark, () => Task.Run(() =>
         {
-            var testFile = Path.Combine(driveLetter.TrimEnd('\\') + "\\", "OptimizerWpfBenchTest_TEMP.bin");
             try
             {
-                var drive = new DriveInfo(driveLetter.TrimEnd('\\') + "\\");
+                var root = BenchmarkRoot(driveLetter);
+                if (!MaintenancePaths.IsOrdinaryLocalPath(root, allowRemovable: true))
+                    throw new IOException("Benchmark requires a ready ordinary local drive.");
+                var drive = new DriveInfo(root);
                 if (drive.AvailableFreeSpace < 1024L * 1024 * 1024) return new BenchmarkResult(0, 0, LanguageService.T("SysSvc_InsufficientSpace"));
 
-                // 6.9.8: ίδιος όγκος δεδομένων (256 MiB) αλλά γραμμένος σε κομμάτια των 4 MiB από ΕΝΑ επαναχρησιμοποιούμενο buffer (όχι δέσμευση 256 MiB στη RAM)
                 const int size = 256 * 1024 * 1024;
                 const int chunk = 4 * 1024 * 1024;
                 var buffer = new byte[chunk];
                 new Random().NextBytes(buffer);
+                var testFile = Path.Combine(root, "GearWin-benchmark-" + Guid.NewGuid().ToString("N") + ".bin");
 
+                using var fs = OpenBenchmarkFile(testFile, chunk);
                 var sw = Stopwatch.StartNew();
-                using (var fs = new FileStream(testFile, FileMode.Create, FileAccess.Write, FileShare.None, chunk, FileOptions.WriteThrough))
-                {
-                    for (var written = 0; written < size; written += chunk) fs.Write(buffer, 0, chunk);
-                    fs.Flush(true);
-                }
+                for (var written = 0; written < size; written += chunk) fs.Write(buffer, 0, chunk);
+                fs.Flush(true);
                 sw.Stop();
-                var writeMbps = size / 1024.0 / 1024.0 / sw.Elapsed.TotalSeconds;
+                var writeMbps = size / 1024.0 / 1024.0 / Math.Max(sw.Elapsed.TotalSeconds, 0.000001);
 
+                // Reuse the buffer and the owned handle. Readback can benefit from
+                // the OS cache; it is not a certified raw physical-device benchmark.
+                fs.Position = 0;
+                long readTotal = 0;
                 sw.Restart();
-                using (var fs = new FileStream(testFile, FileMode.Open, FileAccess.Read, FileShare.None, 4 * 1024 * 1024, FileOptions.SequentialScan))
-                {
-                    var readBuf = new byte[4 * 1024 * 1024];
-                    while (fs.Read(readBuf, 0, readBuf.Length) > 0) { }
-                }
+                int read;
+                while ((read = fs.Read(buffer, 0, buffer.Length)) > 0) readTotal += read;
                 sw.Stop();
-                var readMbps = size / 1024.0 / 1024.0 / sw.Elapsed.TotalSeconds;
-
+                if (readTotal != size) throw new IOException("Incomplete benchmark readback.");
+                var readMbps = readTotal / 1024.0 / 1024.0 / Math.Max(sw.Elapsed.TotalSeconds, 0.000001);
                 return new BenchmarkResult(Math.Round(writeMbps, 1), Math.Round(readMbps, 1), null);
             }
             catch (Exception ex)
             {
                 return new BenchmarkResult(0, 0, ex.Message);
-            }
-            finally
-            {
-                try { File.Delete(testFile); } catch { }
             }
         }));
 
