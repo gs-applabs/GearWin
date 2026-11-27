@@ -10,10 +10,10 @@ Baseline: `0d36ba06ffd5b1f90676d546d8abdfafe1062fbf`; review branch `release/7.1
 | UMP02 safety, batches 1–8 | 69 safety/correctness findings | 69 addressed at least in part in source | 0 operation-level certifications | open |
 | UMP03 core/resources, batches 1–5 | 40 findings | 40 addressed at least in part in source | 0 | open |
 | UMP04 unified maintenance, batches 1–2 | 24 findings | 24 addressed at least in part in source | 0 | open |
-| UMP05 central operation core, batches 1–4 | 24 findings | 24 addressed at least in part in source | 0 | open |
-| UMP06 early status fix | 2 findings | 2 addressed at least in part in source | 0 | open |
+| UMP05 central operation core, batches 1–5 | 25 findings | 25 addressed at least in part in source | 0 | open |
+| UMP06 status and navigation, batch 1 | 9 findings | 9 addressed at least in part in source | 0 | open |
 | UMP07 early artwork fix | 8 distinct icon/UI findings | 8 addressed at least in part in source | 0 visual certifications | open |
-| Total | 170 | 168 at least partly addressed | 0 operation-level certifications | open |
+| Total | 178 | 176 at least partly addressed | 0 operation-level certifications | open |
 
 The earlier manual review also identified deferred issues in profiles, resources, backups and navigation. These will be assigned stable IDs in their owning passes; do not inflate totals by counting them again. Full tracked-source lexical inventory completed; manual semantic review remains pending. The 7.0.0 baseline Windows build reported 391 desktop + 42 migration tests on 2026-11-27; the Linux job logs available are from 2026-11-23 (5 synthetic clone tests). Six CI jobs reported success in the run; an opt-in test can report pass without doing clicks. Baseline success is not a new branch test result.
 
@@ -369,3 +369,25 @@ CoreProcessLease: one kernel mutex per SID across sessions; no idle thread, new 
 R40: per-file large buffer allocation during game-save/vault compression produced unnecessary allocations/GC pressure — reuse one buffer per archive. No measured impact yet.
 
 Six additional regression cases (3 conflict pairs, mutex contention/release, cancellation, separate Windows child process exit). 102 cumulative authored cases, 96 included in previous successful stages. Current changes through 1cf160a923364afb3a898b54df0207a08f28ca90 need fresh compile/tests. New tweak pathway intentionally refuses unknown state; existing simple tweaks with localized powercfg detection and asymmetric Off behavior need compatibility review. Legacy direct tweaks (visual presets, custom context menus, low resource bundle, reset on uninstall, gaming tweaks and hosts), direct restore-point calls, automatic profile stop, native driver detached operations, offline clone kit export and actual offline clone remain outside full coordination. Precise typed durable tweak snapshots, rollback on partial mutation, original vault lock semantics, file-shred TOCTOU and backup consistency remain open. No user-facing feature added, no merge or release.
+
+## Intermediate verification
+
+Run 45999348910: 494 desktop + 42 migration tests passed (536 total). Includes all six previous recovery/core cases, including real separate Windows process mutex contention and release after child exit. 31/31 icon assets validated. Installer canceled by later commits. The mutex test uses an isolated Local name, so production Global name/default ACL across Windows sessions/elevation is still not certified. No new resource samples.
+
+## UMP06 — first status and navigation batch (7 new findings)
+
+| ID | Finding | Source mitigation |
+|---|---|---|
+| N03 | Legacy FIFO SetIdle could remove a different active operation, including a scoped entry | AsyncLocal legacy identity stack; explicit scopes independent; health BusyScope wrapper uses actual scoped identity |
+| N04 | Three-hour age pruning could remove a valid long-running scoped backup | expire legacy entries only, never active explicit scopes |
+| N05 | Worker-thread status events could be delivered out of order and queue redundant dispatcher updates | MainWindow coalesces dispatch and rereads latest StatusService snapshot |
+| N06 | Faulting status subscriber could prevent other subscribers and operation lifecycle from completing | isolate individual subscribers and trace errors |
+| N07 | Core queued work and actual admission were not reflected directly in status bar | each awaited core lease owns a waiting/running scope through release or exception |
+| N08 | Empty final scoped status could leave the shell blank instead of Ready | translated Ready fallback at rendering |
+| N09 | Ctrl+3 and Ctrl+8 matched composite subpage IDs as literal radio tags | route all numeric shortcuts via shared SelectTab resolver, preserve existing destinations |
+
+## UMP05 — fifth core batch (1 new finding)
+
+C25: ordinary tray/menu Exit called Shutdown even during an active heavy operation. Refuse normal exit while active heavy lease exists; atomically close coordinator admission when safe and cancel pending work. Existing close-to-tray semantics unchanged. Windows session ending, forced process termination, external process orphaning, detached/native unconnected work and asynchronous read-only work are not protected by this gate. A queued request not yet admitted may be canceled on deliberate exit. No claim of global OS shutdown protection.
+
+Twelve additional authored fixtures (five lifecycle cases, seven numeric shortcut mappings); 114 cumulative new tests, 102 included in prior verified stages. Current changes through f402c6007935ef8ef25c23230a653c987b327c7b need compile and real UI checks. Legacy async-flow pairing is a compatibility bridge, not a proof all old calls are correctly paired; inherited execution contexts, nested operations and unmatched legacy notifications require migration to explicit scopes. Language fallback for core work labels is Greek/English, existing scope messages still may be in previous language until refreshed. Nonqueued optional background work does not create status scopes; duplicate legacy + core labels and long text need per-skin visual review. Numeric shortcut fixtures prove destination mapping, not actual key event delivery under all skins/focused controls. No merge or release.
