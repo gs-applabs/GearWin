@@ -40,4 +40,16 @@ public class SafeUninstallTests
     [InlineData("", "Microsoft", false)]
     public void ResidualReviewRejectsPartialNames(string app, string folder, bool expected)
         => Assert.Equal(expected, BloatwareService.IsResidualNameMatch(app, folder));
+
+    [Theory]
+    [InlineData("Microsoft.WindowsCalculator_11.2405.1.0_x64__8wekyb3d8bbwe", true)]
+    [InlineData("Microsoft.WindowsCalculator_11.2405.1.0_neutral__8wekyb3d8bbwe", true)]
+    [InlineData("Example_1.2.3.4_arm64__abcdefghijklm", true)]
+    [InlineData("Microsoft.*", false)]
+    [InlineData("Example_1.2.3.4_x64__abcdefghijklm' ; exit", false)]
+    [InlineData("Example_1.2.3_x64__abcdefghijklm", false)]
+    [InlineData("Example_1.2.3.4_x64__short", false)]
+    [InlineData("Example_1.2.3.4_x64__abcdefghijklm\n", false)]
+    public void StorePackageRemovalRequiresAnExactIdentity(string package, bool expected)
+        => Assert.Equal(expected, BloatwareService.IsValidUwpPackageIdentity(package));
 }
