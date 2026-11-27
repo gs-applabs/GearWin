@@ -33,6 +33,7 @@ namespace OptimizerWpf.Services
 
         public static async Task<bool> ApplyDelayAsync(StartupItem item, int seconds)
         {
+            using var lease = await GearWinCore.EnterAsync(CoreWork.StartupChange);
             var task = BuildTaskName(item.Name);
             var (exe, args) = TaskSchedulerService.SplitCommand(item.Command);
             if (exe.Length == 0) return false;
@@ -52,7 +53,8 @@ namespace OptimizerWpf.Services
 
         public static async Task<bool> RemoveDelayAsync(StartupItem item)
         {
-            await TaskSchedulerService.DeleteAsync(BuildTaskName(item.Name));
+            using var lease = await GearWinCore.EnterAsync(CoreWork.StartupChange);
+            if (!await TaskSchedulerService.DeleteAsync(BuildTaskName(item.Name))) return false;
             var ok = SystemService.SetStartupItemEnabled(item, true);
             if (ok)
             {
