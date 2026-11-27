@@ -168,7 +168,7 @@ namespace OptimizerWpf.Views
 
         private void BuildResults()
         {
-            var anyIssue = _spaceFreeableBytes > 1024 * 1024 || _tracesCount > 0 || _restorableCount > 0;
+            var anyIssue = _spaceFreeableBytes > 1024 * 1024 || _tracesCount > 0;
             TxtResultHeadline.Text = LanguageService.T(anyIssue ? "HealthCheck_HeadlineIssues" : "HealthCheck_HeadlineGood");
 
             var score = _scoreResult?.Score ?? 100;
@@ -181,12 +181,12 @@ namespace OptimizerWpf.Views
                 actionLabel: null));
 
             _results.Add(new ResultCardVm("Traces", $"{_tracesCount} {LanguageService.T("HealthCheck_CardTracesTitleSuffix")}",
-                LanguageService.T("HealthCheck_CardTracesDesc"), _tracesCount > 0, canSelect: true, isSelected: _tracesCount > 0,
-                actionLabel: null));
+                LanguageService.T("HealthCheck_CardTracesDesc"), _tracesCount > 0, canSelect: false, isSelected: false,
+                actionLabel: LanguageService.T("HealthCheck_CardScoreAction")));
 
             _results.Add(new ResultCardVm("Restore", $"{_restorableCount} {LanguageService.T("HealthCheck_CardRestoreTitleSuffix")}",
-                LanguageService.T("HealthCheck_CardRestoreDesc"), _restorableCount > 0, canSelect: true, isSelected: _restorableCount > 0,
-                actionLabel: null));
+                LanguageService.T("HealthCheck_CardRestoreDesc"), false, canSelect: false, isSelected: false,
+                actionLabel: LanguageService.T("HealthCheck_CardScoreAction")));
 
             _results.Add(new ResultCardVm("Apps", $"{_appsCount} {LanguageService.T("HealthCheck_CardAppsTitleSuffix")}",
                 LanguageService.T("HealthCheck_CardAppsDesc"), false, canSelect: false, isSelected: false,
@@ -264,7 +264,7 @@ namespace OptimizerWpf.Views
         {
             // ΝΕΟ (6.1.0) - dry-run/προεπισκόπηση: πριν αλλάξει οτιδήποτε, ο χρήστης βλέπει ακριβώς τι θα
             // γίνει (επιλεγμένες κάρτες + μεγέθη/πλήθη από την ήδη ολοκληρωμένη σάρωση) και επιβεβαιώνει.
-            var planned = _results.Where(r => r.IsSelected && (r.Key == "Space" || r.Key == "Traces" || r.Key == "Restore")).ToList();
+            var planned = _results.Where(r => r.IsSelected && r.Key == "Space").ToList();
             if (planned.Count > 0)
             {
                 var preview = new System.Text.StringBuilder(LanguageService.T("DryRun_Intro")).AppendLine().AppendLine();
@@ -279,14 +279,9 @@ namespace OptimizerWpf.Views
 
             try
             {
-            // Σημείο επαναφοράς ΜΟΝΟ όταν αλλάζουν registry/tweaks (όχι για καθαρισμό χώρου).
-            if (_results.Any(r => r.IsSelected && (r.Key == "Traces" || r.Key == "Restore")))
-                await RestoreGuardService.EnsureRecentAsync();
-
+            // UMP02: this entry point must never mutate registry/tweaks. Dedicated tools retain explicit review.
             var summary = new List<string>();
             var spaceCleaned = false;
-            var tracesCleaned = false;
-            var restoreCleaned = false;
 
             var spaceCard = _results.FirstOrDefault(r => r.Key == "Space");
             if (spaceCard is { IsSelected: true })
@@ -304,30 +299,6 @@ namespace OptimizerWpf.Views
                 spaceCleaned = true;
             }
 
-            var tracesCard = _results.FirstOrDefault(r => r.Key == "Traces");
-            if (tracesCard is { IsSelected: true } && _traceFindings.Count > 0)
-            {
-                var backupDir = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "OptimizerWpf", "RegistryBackups");
-                System.IO.Directory.CreateDirectory(backupDir);
-                // ΔΙΟΡΘΩΣΗ - το DeleteFindingsAsync() ΕΠΙΣΤΡΕΦΕΙ bool επιτυχίας (ψευδές αν π.χ. reg.exe
-                // export ή DeleteSubKeyTree αποτύχει λόγω δικαιωμάτων) - πριν αγνοούνταν εντελώς, οπότε
-                // η περίληψη έλεγε ΠΑΝΤΑ "καθαρίστηκαν N καταχωρήσεις" ακόμα κι αν η διαγραφή απέτυχε
-                // σιωπηλά. Τώρα ελέγχεται και αναφέρεται ειλικρινά αν κάτι πήγε στραβά.
-                var tracesOk = await HealthCleanupService.DeleteFindingsAsync(_traceFindings, backupDir);
-                summary.Add(tracesOk
-                    ? string.Format(LanguageService.T("HealthCheck_SummaryTraces"), _traceFindings.Count)
-                    : LanguageService.T("HealthCheck_SummaryTracesFailed"));
-                tracesCleaned = true;
-            }
-
-            var restoreCard = _results.FirstOrDefault(r => r.Key == "Restore");
-            if (restoreCard is { IsSelected: true })
-            {
-                var reverted = await Task.Run(TweakService.RestoreAllTrackedTweaks);
-                summary.Add(string.Format(LanguageService.T("HealthCheck_SummaryRestore"), reverted));
-                restoreCleaned = true;
-            }
-
             // ΝΕΟ - ρητό αίτημα χρήστη: "όταν ελευθερώνονται τα στοιχεία να ενημερώνονται αυτόματα τα
             // πλακίδια με τα νέα αποτελέσματα" - πριν, οι κάρτες αποτελεσμάτων (_results) χτίζονταν ΜΙΑ
             // φορά στο BuildResults() μετά την αρχική σάρωση και ΠΟΤΕ δεν ξαναχτίζονταν - το πραγματικό
@@ -337,11 +308,9 @@ namespace OptimizerWpf.Views
             // όλες οι κάρτες (καθαρό _results.Clear() + BuildResults(), ίδιο helper με την αρχική
             // σάρωση - καμία διπλή υλοποίηση) ώστε τα πλακίδια να δείχνουν τα φρέσκα, μετά-τον-καθαρισμό
             // αποτελέσματα (π.χ. "0 καταχωρήσεις registry" αντί για το παλιό "19").
-            if (spaceCleaned || tracesCleaned || restoreCleaned)
+            if (spaceCleaned)
             {
                 if (spaceCleaned) await ScanSpaceAsync();
-                if (tracesCleaned) await ScanTracesAsync();
-                if (restoreCleaned) await ScanRestoreAsync();
                 _scoreResult = await Task.Run(HealthScoreService.Compute);
                 _results.Clear();
                 BuildResults();
@@ -364,9 +333,16 @@ namespace OptimizerWpf.Views
         private void ResultCardAction_Click(object sender, RoutedEventArgs e)
         {
             if (sender is not System.Windows.Controls.Button { Tag: string tag }) return;
-            if (Owner is not MainWindow mw) return;
+            if ((Owner as MainWindow ?? Application.Current.MainWindow as MainWindow) is not MainWindow mw) return;
+            if (tag is "Traces" or "Restore") { Close(); mw.Show(); mw.Activate(); }
             switch (tag)
             {
+                case "Traces":
+                    mw.SelectTab("Health#2");
+                    break;
+                case "Restore":
+                    mw.SelectTab("Tweaks");
+                    break;
                 case "Apps":
                     // "App Uninstall" ΔΕΝ απεγκαθιστά αυτόματα (μη αναστρέψιμη ενέργεια) - ανοίγει την
                     // καρτέλα Εφαρμογές & Bloat για έλεγχο/επιβεβαίωση από τον χρήστη, ίδιο πνεύμα
