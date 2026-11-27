@@ -104,7 +104,7 @@ namespace OptimizerWpf.Services
         public static bool IsAutostartLocationSafe()
         {
             var exePath = Environment.ProcessPath ?? System.Reflection.Assembly.GetExecutingAssembly().Location;
-            return SecureStorage.IsDirectoryAdminOnlyWritable(System.IO.Path.GetDirectoryName(exePath));
+            return SecureStorage.IsProtectedExecutable(exePath);
         }
 
         public static async System.Threading.Tasks.Task<bool> SetLaunchWithWindowsToTrayAsync(bool enabled)
