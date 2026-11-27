@@ -50,7 +50,7 @@ namespace OptimizerWpf.Services
                     if (sub.GetValue("SystemComponent") != null || sub.GetValue("WindowsInstaller") != null || sub.GetValue("NoRemove") != null) continue;
 
                     var exePath = GetExePath(uninstallString);
-                    if (exePath == null || IsProtected(exePath, protectedPaths) || Exists(exePath)) continue;
+                    if (exePath == null || IsProtected(exePath, protectedPaths) || !IsConfirmedMissingLocalPath(exePath)) continue;
 
                     var fullRegPath = $"{HiveName(hive)}\\{subPath}\\{name}";
                     findings.Add(new RegistryFinding("MissingUninstaller", displayName, fullRegPath, null));
@@ -66,7 +66,7 @@ namespace OptimizerWpf.Services
                     if (valueName.StartsWith("PS", StringComparison.Ordinal)) continue;
                     var cleanPath = System.Text.RegularExpressions.Regex.Replace(valueName, @"\.(FriendlyAppName|ApplicationCompany)$", "");
                     if (!System.Text.RegularExpressions.Regex.IsMatch(cleanPath, @"^[a-zA-Z]:\\")) continue;
-                    if (Exists(cleanPath)) continue;
+                    if (!IsConfirmedMissingLocalPath(cleanPath)) continue;
                     findings.Add(new RegistryFinding("ObsoleteMuiCache", cleanPath, $"HKCU\\{muiKey}", valueName));
                 }
             }
@@ -89,7 +89,7 @@ namespace OptimizerWpf.Services
                 {
                     using var sub = appPathsKey.OpenSubKey(name);
                     var exePath = sub?.GetValue(null) as string;
-                    if (string.IsNullOrWhiteSpace(exePath) || IsProtected(exePath, protectedPaths) || Exists(exePath)) continue;
+                    if (string.IsNullOrWhiteSpace(exePath) || IsProtected(exePath, protectedPaths) || !IsConfirmedMissingLocalPath(exePath)) continue;
                     findings.Add(new RegistryFinding("OrphanedAppPath", exePath, $"{HiveName(hive)}\\{subPath}\\{name}", null));
                 }
             }
@@ -110,7 +110,7 @@ namespace OptimizerWpf.Services
                     var command = runKey.GetValue(valueName) as string;
                     if (string.IsNullOrWhiteSpace(command)) continue;
                     var exePath = GetExePath(command);
-                    if (exePath == null || IsProtected(exePath, protectedPaths) || Exists(exePath)) continue;
+                    if (exePath == null || IsProtected(exePath, protectedPaths) || !IsConfirmedMissingLocalPath(exePath)) continue;
                     findings.Add(new RegistryFinding("OrphanedStartupEntry", valueName, $"{HiveName(hive)}\\{subPath}", valueName));
                 }
             }
@@ -126,7 +126,7 @@ namespace OptimizerWpf.Services
                 {
                     foreach (var valueName in sharedDlls.GetValueNames())
                     {
-                        if (string.IsNullOrWhiteSpace(valueName) || IsProtected(valueName, protectedPaths) || Exists(valueName)) continue;
+                        if (string.IsNullOrWhiteSpace(valueName) || IsProtected(valueName, protectedPaths) || !IsConfirmedMissingLocalPath(valueName)) continue;
                         findings.Add(new RegistryFinding("OrphanedSharedDll", valueName,
                             @"HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\SharedDLLs", valueName));
                     }
@@ -170,10 +170,14 @@ namespace OptimizerWpf.Services
                 // με ίδιο Display έγραφαν στο ίδιο .reg με /y και το πρώτο backup χανόταν· (2) αν το export ΑΠΟΤΥΧΕΙ δεν
                 // διαγράφουμε ΤΙΠΟΤΑ (πριν το αποτέλεσμα του export αγνοούνταν και η διαγραφή προχωρούσε χωρίς backup).
                 Directory.CreateDirectory(backupPath); // το reg export αποτυγχάνει αν ο φάκελος δεν υπάρχει — τώρα αυτό ακυρώνει τη διαγραφή
+                // Reject stale findings before writing any registry backup or deleting anything.
+                var current = ScanRegistry().ToHashSet();
+                if (findings.Any(f => !current.Contains(f))) return false;
+                string session = Guid.NewGuid().ToString("N");
                 int exportIndex = 0;
                 foreach (var finding in findings)
                 {
-                    var backupFile = Path.Combine(backupPath, $"{++exportIndex:D4}_{SafeFileName(finding.Display)}.reg");
+                    var backupFile = Path.Combine(backupPath, $"{session}_{++exportIndex:D4}_{SafeFileName(finding.Display)}.reg");
                     var exportArgs = $"export \"{finding.RegPath}\" \"{backupFile}\" /y";
                     if (RunAndWait("reg.exe", exportArgs) != 0) return false;
                 }
@@ -181,18 +185,20 @@ namespace OptimizerWpf.Services
                 foreach (var finding in findings)
                 {
                     var (hive, subKey) = SplitRegPath(finding.RegPath);
-                    if (hive == null) continue;
+                    if (hive == null) return false;
                     if (finding.ValueName != null)
                     {
                         using var key = hive.OpenSubKey(subKey, writable: true);
-                        key?.DeleteValue(finding.ValueName, throwOnMissingValue: false);
+                        if (key == null) return false;
+                        key.DeleteValue(finding.ValueName, throwOnMissingValue: true);
                     }
                     else
                     {
                         var parent = Path.GetDirectoryName(subKey)?.Replace('/', '\\') ?? "";
                         var leaf = Path.GetFileName(subKey);
                         using var parentKey = hive.OpenSubKey(parent, writable: true);
-                        parentKey?.DeleteSubKeyTree(leaf, throwOnMissingSubKey: false);
+                        if (parentKey == null) return false;
+                        parentKey.DeleteSubKeyTree(leaf, throwOnMissingSubKey: true);
                     }
                 }
                 return true;
@@ -416,11 +422,15 @@ $searchPaths = @(""$env:USERPROFILE\Desktop"", ""$env:APPDATA\Microsoft\Windows\
 $brokenCount = 0
 Get-ChildItem -Path $searchPaths -Recurse -Include *.lnk -ErrorAction SilentlyContinue | ForEach-Object {
     try {
-        $target = $shellCom.CreateShortcut($_.FullName).TargetPath
-        if ($target -and -not (Test-Path $target)) {
-            Remove-Item -Path $_.FullName -Force -ErrorAction SilentlyContinue
-            $brokenCount++
-        }
+        $shortcut = $shellCom.CreateShortcut($_.FullName)
+        # Never delete a keyboard shortcut; uncertain targets are not proof of a broken link.
+        if ($shortcut.Hotkey) { return }
+        $target = $shortcut.TargetPath
+        if ($target -notmatch '^[A-Za-z]:\\' -or ($target -match '%')) { return }
+        $drive = [IO.DriveInfo]::new($target.Substring(0,3))
+        if (-not $drive.IsReady -or $drive.DriveType -ne [IO.DriveType]::Fixed) { return }
+        # Until a per-item preview and restore flow is available, this tool is read-only.
+        if (-not (Test-Path -LiteralPath $target -ErrorAction Stop)) { $brokenCount++ }
     } catch {}
 }
 Write-Output $brokenCount
@@ -446,23 +456,54 @@ Write-Output $brokenCount
 
         // ===== helpers =====
 
-        private static string? GetExePath(string uninstallString)
+        internal static string? GetExePath(string uninstallString)
         {
-            var s = uninstallString.Trim();
+            var s = Environment.ExpandEnvironmentVariables(uninstallString.Trim());
             if (s.StartsWith('"'))
             {
                 var endQuote = s.IndexOf('"', 1);
-                if (endQuote > 0) return s[1..endQuote];
+                if (endQuote <= 1) return null;
+                s = s[1..endQuote];
             }
-            return s.Split(' ', 2)[0];
+            else
+            {
+                // An unquoted command with spaces is ambiguous: do not infer a missing executable.
+                var match = System.Text.RegularExpressions.Regex.Match(s, @"^([A-Za-z]:\\[^\s""]+\.exe)(?:\s|$)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                if (!match.Success) return null;
+                s = match.Groups[1].Value;
+            }
+            return s.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? s : null;
         }
 
         private static bool IsProtected(string path, string[] protectedPaths) =>
             protectedPaths.Any(p => path.StartsWith(p, StringComparison.OrdinalIgnoreCase));
 
-        private static bool Exists(string path)
+        internal static bool IsConfirmedMissingLocalPath(string path)
         {
-            try { return File.Exists(Environment.ExpandEnvironmentVariables(path)) || Directory.Exists(Environment.ExpandEnvironmentVariables(path)); }
+            try
+            {
+                var expanded = Environment.ExpandEnvironmentVariables(path);
+                if (!System.Text.RegularExpressions.Regex.IsMatch(expanded, @"^[A-Za-z]:\\") || expanded.Contains('%')) return false;
+                var full = Path.GetFullPath(expanded);
+                var root = Path.GetPathRoot(full);
+                if (root == null || root.Equals(full, StringComparison.OrdinalIgnoreCase)) return false;
+                var drive = new DriveInfo(root);
+                if (!drive.IsReady || drive.DriveType != DriveType.Fixed) return false;
+                // Walk ancestors before checking the final path. Never classify inaccessible or redirected paths as missing.
+                var relative = full[root.Length..].Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries);
+                var current = root;
+                foreach (var part in relative)
+                {
+                    current = Path.Combine(current, part);
+                    try
+                    {
+                        if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0) return false;
+                    }
+                    catch (FileNotFoundException) { return true; }
+                    catch (DirectoryNotFoundException) { return true; }
+                }
+                return false;
+            }
             catch { return false; }
         }
 
