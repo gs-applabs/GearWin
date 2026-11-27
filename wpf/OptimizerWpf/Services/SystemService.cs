@@ -326,7 +326,7 @@ namespace OptimizerWpf.Services
         // που δεν υπάρχει, επαναχρησιμοποιούνται τα ΗΔΗ υπάρχοντα εργαλεία εύρεσης διπλότυπων/μεγάλων
         // αρχείων, με πεδίο σάρωσης τον τοπικό φάκελο συγχρονισμού του καθενός - ο χρήστης βλέπει τι
         // πιάνει χώρο και το διαγράφει ο ίδιος (η διαγραφή συγχρονίζεται φυσιολογικά στο cloud μετά).
-        private static Task<IReadOnlyList<(string Path, double SizeMb, DateTime LastWriteTime)>> FindDuplicatesInAsync(IEnumerable<string> roots) => Task.Run(() =>
+        private static Task<IReadOnlyList<(string Path, double SizeMb, DateTime LastWriteTime)>> FindDuplicatesInAsync(IEnumerable<string> roots) => GearWinCore.RunAsync(CoreWork.Diagnostics, () => Task.Run(() =>
         {
             var files = roots.SelectMany(SafeEnumerateFiles)
                 .Select(f => new FileInfo(f))
@@ -349,9 +349,9 @@ namespace OptimizerWpf.Services
                 }
             }
             return (IReadOnlyList<(string, double, DateTime)>)results;
-        });
+        }));
 
-        private static Task<IReadOnlyList<(string Path, double SizeMb, DateTime LastWriteTime)>> FindLargeFilesInAsync(IEnumerable<string> roots) => Task.Run(() =>
+        private static Task<IReadOnlyList<(string Path, double SizeMb, DateTime LastWriteTime)>> FindLargeFilesInAsync(IEnumerable<string> roots) => GearWinCore.RunAsync(CoreWork.Diagnostics, () => Task.Run(() =>
         {
             // 6.9.8: streaming - κρατά μόνο τα 50 μεγαλύτερα (όχι λίστα όλων των διαδρομών/FileInfo + πλήρης ταξινόμηση)
             var top = new List<FileInfo>(51);
@@ -366,7 +366,7 @@ namespace OptimizerWpf.Services
             }
             var results = top.Select(fi => (fi.FullName, Math.Round(fi.Length / 1024.0 / 1024.0, 2), fi.LastWriteTime)).ToList();
             return (IReadOnlyList<(string, double, DateTime)>)results;
-        });
+        }));
 
         // Επίσημα τεκμηριωμένος τρόπος εντοπισμού του τοπικού φακέλου Dropbox - το ίδιο το Dropbox
         // γράφει info.json με το πραγματικό μονοπάτι (μπορεί να έχει μετακινηθεί από τον χρήστη).
@@ -625,7 +625,7 @@ namespace OptimizerWpf.Services
 
         // ===== Δοκιμή Ταχύτητας Δίσκου =====
 
-        public static Task<BenchmarkResult> RunBenchmarkAsync(string driveLetter) => Task.Run(() =>
+        public static Task<BenchmarkResult> RunBenchmarkAsync(string driveLetter) => GearWinCore.RunAsync(CoreWork.Benchmark, () => Task.Run(() =>
         {
             var testFile = Path.Combine(driveLetter.TrimEnd('\\') + "\\", "OptimizerWpfBenchTest_TEMP.bin");
             try
@@ -667,7 +667,7 @@ namespace OptimizerWpf.Services
             {
                 try { File.Delete(testFile); } catch { }
             }
-        });
+        }));
 
         // ===== κοινά PowerShell helpers =====
 
