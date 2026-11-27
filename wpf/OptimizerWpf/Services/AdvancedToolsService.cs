@@ -360,7 +360,7 @@ namespace OptimizerWpf.Services
             log.AppendLine($"=== OptimizerWpf scheduled maintenance - {DateTime.Now:yyyy-MM-dd HH:mm} ===");
             try
             {
-                var result = HealthScoreService.Compute();
+                var result = HealthScoreService.ComputeAsync(priority: CorePriority.Background).GetAwaiter().GetResult();
                 log.AppendLine($"Health score before: {result.DisplayScore}");
                 if (result.Issues.Any(issue => issue.FixType == "Storage"))
                 {
