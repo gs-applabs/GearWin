@@ -356,12 +356,14 @@ namespace OptimizerWpf.Services
         // με απλό αρχείο καταγραφής αφού δεν υπάρχει UI να δείξει τι έγινε.
         public static void RunScheduledMaintenance()
         {
+            if (!AppSettingsService.Current.ScheduledMaintenanceEnabled) return;
             var log = new System.Text.StringBuilder();
             log.AppendLine($"=== OptimizerWpf scheduled maintenance - {DateTime.Now:yyyy-MM-dd HH:mm} ===");
             try
             {
                 var result = HealthScoreService.ComputeAsync(priority: CorePriority.Background).GetAwaiter().GetResult();
                 log.AppendLine($"Health score before: {result.DisplayScore}");
+                if (!AppSettingsService.Current.ScheduledMaintenanceEnabled) return;
                 if (result.Issues.Any(issue => issue.FixType == "Storage"))
                 {
                     if (MaintenancePaths.VerifiedUserTemp() is string temp)
