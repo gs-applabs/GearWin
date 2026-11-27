@@ -1,0 +1,188 @@
+[
+  {
+    "id": "Google.Chrome",
+    "name": "Google Chrome",
+    "url": "https://raw.githubusercontent.com/memstechtips/package-icons/afa5f634bf291edbc4c1fc678b70070945043ccf/icons/external/google.chrome.png",
+    "sha256": "71a6147d4e0709cc70622b170383fd082d61e58b2eac90892614004013ad59fe"
+  },
+  {
+    "id": "Mozilla.Firefox",
+    "name": "Mozilla Firefox",
+    "url": "https://raw.githubusercontent.com/memstechtips/package-icons/afa5f634bf291edbc4c1fc678b70070945043ccf/icons/external/mozilla.firefox.png",
+    "sha256": "d25cecceafc0dcb575deb29b976083d768437de9c16866f360ad21bd74548f76"
+  },
+  {
+    "id": "Opera.Opera",
+    "name": "Opera",
+    "url": "https://raw.githubusercontent.com/memstechtips/package-icons/afa5f634bf291edbc4c1fc678b70070945043ccf/icons/external/opera.opera.png",
+    "sha256": "cf8bd453352099dbf0ae2fc40ac06ccfc740df36d4f34dd0ee398612473af44b"
+  },
+  {
+    "id": "Microsoft.Edge",
+    "name": "Microsoft Edge",
+    "url": "https://raw.githubusercontent.com/memstechtips/package-icons/afa5f634bf291edbc4c1fc678b70070945043ccf/icons/windows/microsoft.microsoftedge.stable.png",
+    "sha256": "b228b0337b1a34287b92d8bc3df91ba817a358d07ffc610e452244873b0b317c"
+  },
+  {
+    "id": "BraveSoftware.BraveBrowser",
+    "name": "Brave",
+    "url": "https://raw.githubusercontent.com/memstechtips/package-icons/afa5f634bf291edbc4c1fc678b70070945043ccf/icons/external/brave.brave.png",
+    "sha256": "052a5b9c4baa7e812c943b3bbb9fb279c860dc336aa8fc52ef66a7a53650a27e"
+  },
+  {
+    "id": "7zip.7zip",
+    "name": "7-Zip",
+    "url": "https://raw.githubusercontent.com/memstechtips/package-icons/afa5f634bf291edbc4c1fc678b70070945043ccf/icons/external/7zip.7zip.png",
+    "sha256": "7606362fe8c478e9c2daaef4f1f8596e1a4b3c4dbef3fa79fef35fdab80dfa96"
+  },
+  {
+    "id": "RARLab.WinRAR",
+    "name": "WinRAR",
+    "url": "https://raw.githubusercontent.com/memstechtips/package-icons/afa5f634bf291edbc4c1fc678b70070945043ccf/icons/external/rarlab.winrar.png",
+    "sha256": "0736af85ccbc0928eb3b16c6a2f4f0efeb35e27196db6ae0829d70aba7530a98"
+  },
+  {
+    "id": "VideoLAN.VLC",
+    "name": "VLC",
+    "url": "https://raw.githubusercontent.com/memstechtips/package-icons/afa5f634bf291edbc4c1fc678b70070945043ccf/icons/external/videolan.vlc.png",
+    "sha256": "3505e4bfbeb7cbfdf782901e715353051aec6e06b005e7fd4096a071a4af0bc4"
+  },
+  {
+    "id": "Spotify.Spotify",
+    "name": "Spotify",
+    "url": "https://raw.githubusercontent.com/memstechtips/package-icons/afa5f634bf291edbc4c1fc678b70070945043ccf/icons/external/spotify.spotify.png",
+    "sha256": "b99976697d8ad7eb166de333d6e17e8a379d3e9de9cd6780b24043f2d6a5e254"
+  },
+  {
+    "id": "GOMLab.GOMPlayer",
+    "name": "GOM Player",
+    "url": "https://raw.githubusercontent.com/memstechtips/package-icons/afa5f634bf291edbc4c1fc678b70070945043ccf/icons/external/gomlab.gomplayer.png",
+    "sha256": "c2df67642ec7689f90aa15c3d6dd6ebf0c156563127ada6be0fb369b39beb657"
+  },
+  {
+    "id": "Winamp.Winamp",
+    "name": "Winamp",
+    "url": "https://raw.githubusercontent.com/chocolatey/chocolatey-coreteampackages/fd66d6390d7a1521a22aa1235dabff5eff38147b/icons/winamp.png",
+    "sha256": null
+  },
+  {
+    "id": "CodecGuide.K-LiteCodecPack.Mega",
+    "name": "K-Lite Codec Pack",
+    "url": "https://raw.githubusercontent.com/memstechtips/package-icons/afa5f634bf291edbc4c1fc678b70070945043ccf/icons/external/codecguide.k-litecodecpack.mega.png",
+    "sha256": "86271478ae0e221939daa382c5e586d71b66033379d4ed75b1670ec3ee0de73d"
+  },
+  {
+    "id": "OBSProject.OBSStudio",
+    "name": "OBS Studio",
+    "url": "https://raw.githubusercontent.com/memstechtips/package-icons/afa5f634bf291edbc4c1fc678b70070945043ccf/icons/external/obsproject.obsstudio.png",
+    "sha256": "26b6916848b141561ae5fa1998dba23501f9c2d33dc4a23b4127ca45f3be669f"
+  },
+  {
+    "id": "Zoom.Zoom",
+    "name": "Zoom",
+    "url": "https://raw.githubusercontent.com/memstechtips/package-icons/afa5f634bf291edbc4c1fc678b70070945043ccf/icons/external/zoom.zoom.png",
+    "sha256": "4c1dd4dc46d1b7c6aee2f25d8977733670f80920180c220ac04440958120ceb0"
+  },
+  {
+    "id": "Discord.Discord",
+    "name": "Discord",
+    "url": "https://raw.githubusercontent.com/memstechtips/package-icons/afa5f634bf291edbc4c1fc678b70070945043ccf/icons/external/discord.discord.png",
+    "sha256": "40160b15802f2798447b80807108845507be88663128f9d1c7593139e2b05e15"
+  },
+  {
+    "id": "Microsoft.Teams",
+    "name": "Microsoft Teams",
+    "url": "https://raw.githubusercontent.com/memstechtips/package-icons/afa5f634bf291edbc4c1fc678b70070945043ccf/icons/windows/msteams.png",
+    "sha256": "f4b50f343fa3728856e13d645913272f857dab8e28532f8465d94b3f3df1b6bf"
+  },
+  {
+    "id": "Rakuten.Viber",
+    "name": "Viber",
+    "url": "https://raw.githubusercontent.com/mkevenaar/chocolatey-packages/3a055dbd4509673290e55aa9de2c53c9a4b6b7ed/icons/viber.png",
+    "sha256": null
+  },
+  {
+    "id": "Telegram.TelegramDesktop",
+    "name": "Telegram Desktop",
+    "url": "https://raw.githubusercontent.com/memstechtips/package-icons/afa5f634bf291edbc4c1fc678b70070945043ccf/icons/external/telegram.telegramdesktop.png",
+    "sha256": "233f3ab6fde9844bd98e16a090eb9a1524dcde75acdfb5e1cb9d43e05ea92dfd"
+  },
+  {
+    "id": "AnyDeskSoftwareGmbH.AnyDesk",
+    "name": "AnyDesk",
+    "url": "https://raw.githubusercontent.com/memstechtips/package-icons/afa5f634bf291edbc4c1fc678b70070945043ccf/icons/external/anydesk.anydesk.png",
+    "sha256": "eefa7cdc23680177ecf9ac007d4ddaacbc66ac5b86340f7ccf02fa65d5bbc260"
+  },
+  {
+    "id": "TeamViewer.TeamViewer",
+    "name": "TeamViewer",
+    "url": "https://raw.githubusercontent.com/memstechtips/package-icons/afa5f634bf291edbc4c1fc678b70070945043ccf/icons/external/teamviewer.teamviewer.png",
+    "sha256": "2915e0e69b5cef9c332ba765f109bdecf3000a4ac35b9fafeb2124cfcb93f350"
+  },
+  {
+    "id": "Microsoft.PowerToys",
+    "name": "PowerToys",
+    "url": "https://raw.githubusercontent.com/memstechtips/package-icons/afa5f634bf291edbc4c1fc678b70070945043ccf/icons/external/microsoft.powertoys.png",
+    "sha256": "f65fd258d9b50926837fb40466494f165a8ba6b524c067d944971699b931d194"
+  },
+  {
+    "id": "voidtools.Everything",
+    "name": "Everything",
+    "url": "https://raw.githubusercontent.com/memstechtips/package-icons/afa5f634bf291edbc4c1fc678b70070945043ccf/icons/external/voidtools.everything.png",
+    "sha256": "a61660f9dade9b20816e169d7cde67bb19e56bcfc942e8ecc47437f12e79bb2c"
+  },
+  {
+    "id": "ShareX.ShareX",
+    "name": "ShareX",
+    "url": "https://raw.githubusercontent.com/memstechtips/package-icons/afa5f634bf291edbc4c1fc678b70070945043ccf/icons/external/sharex.sharex.png",
+    "sha256": "faa91d52d89fe439ace5976d199eed7112a5c2fa97dc2b015fa5bc3d98bded6c"
+  },
+  {
+    "id": "Apache.OpenOffice",
+    "name": "OpenOffice",
+    "url": "https://raw.githubusercontent.com/memstechtips/package-icons/afa5f634bf291edbc4c1fc678b70070945043ccf/icons/external/apache.openoffice.png",
+    "sha256": "12460e590b44d00a0f17f2b549e317060307c39b4eac59b02f56c47fc01b2bf8"
+  },
+  {
+    "id": "TheDocumentFoundation.LibreOffice",
+    "name": "LibreOffice",
+    "url": "https://raw.githubusercontent.com/memstechtips/package-icons/afa5f634bf291edbc4c1fc678b70070945043ccf/icons/external/thedocumentfoundation.libreoffice.png",
+    "sha256": "ec6db866230846de2de6df65165f624c5e3e51ee0a7007b0fa986b97e7b44b4a"
+  },
+  {
+    "id": "Adobe.Acrobat.Reader.64-bit",
+    "name": "Adobe Acrobat Reader",
+    "url": "https://raw.githubusercontent.com/memstechtips/package-icons/afa5f634bf291edbc4c1fc678b70070945043ccf/icons/external/adobereader.png",
+    "sha256": "a0646a16839d583aaae0af28a67a9d674e246602ade9b3c45470eab1f1e44349"
+  },
+  {
+    "id": "Microsoft.DotNet.DesktopRuntime.8",
+    "name": ".NET Desktop Runtime 8",
+    "url": "https://raw.githubusercontent.com/dotnetcore-chocolatey/dotnetcore-chocolateypackages/5a90ffc61572e8403cb88c325f88cf6989de8c79/icons/dotnetcore.png",
+    "sha256": null
+  },
+  {
+    "id": "Microsoft.DirectX",
+    "name": "DirectX Runtime",
+    "url": "https://raw.githubusercontent.com/memstechtips/package-icons/afa5f634bf291edbc4c1fc678b70070945043ccf/icons/external/microsoft.directx.png",
+    "sha256": "d071ba99e044d43c9267d7b138022cf988444265035b6ff4119f93001342dfd6"
+  },
+  {
+    "id": "Microsoft.VCRedist.2015+.x64",
+    "name": "Visual C++ Redistributable x64",
+    "url": "https://raw.githubusercontent.com/chocolatey-community/chocolatey-packages/d8a28da83b3b9bf058e1fbbeed5ce74329b73245/icons/vcredist140.png",
+    "sha256": null
+  },
+  {
+    "id": "Opera.OperaGX",
+    "name": "Opera GX",
+    "url": "https://raw.githubusercontent.com/memstechtips/package-icons/afa5f634bf291edbc4c1fc678b70070945043ccf/icons/external/opera.operagx.png",
+    "sha256": "f3682e1893ae0eeb88bf08eab433f5be06134ead019444fa747c85934bdd6e87"
+  },
+  {
+    "id": "VivaldiTechnologies.Vivaldi",
+    "name": "Vivaldi",
+    "url": "https://raw.githubusercontent.com/memstechtips/package-icons/afa5f634bf291edbc4c1fc678b70070945043ccf/icons/external/vivaldi.vivaldi.png",
+    "sha256": "8c557989ef8766fde1c9248c70f93519a554e7013530c43afe6bd96c9b31baae"
+  }
+]
