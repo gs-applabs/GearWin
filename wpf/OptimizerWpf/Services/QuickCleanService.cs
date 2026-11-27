@@ -48,7 +48,7 @@ namespace OptimizerWpf.Services
 
         public static Task<IReadOnlyList<QuickCleanItem>> ScanAsync() => ScanCoreAsync(false);
         internal static Task<IReadOnlyList<QuickCleanItem>> ScanRecommendedAsync() => ScanCoreAsync(true);
-        private static Task<IReadOnlyList<QuickCleanItem>> ScanCoreAsync(bool recommendedOnly) => Task.Run(() =>
+        private static Task<IReadOnlyList<QuickCleanItem>> ScanCoreAsync(bool recommendedOnly) => GearWinCore.RunAsync(CoreWork.CleanupScan, () => Task.Run(() =>
         {
             var items = new List<QuickCleanItem>
             {
@@ -66,11 +66,11 @@ namespace OptimizerWpf.Services
                 new("BrowserCache", LanguageService.T("QuickClean_BrowserCache"), HealthCleanupService.DetectBrowsers().Sum(BrowserCacheSize), false),
             });
             return (IReadOnlyList<QuickCleanItem>)items;
-        });
+        }));
 
         // The weekly task bypasses the GUI's single-instance mutex. Use a user-specific
         // mutex spanning processes in the interactive session. Acquire/release on the same thread.
-        internal static Task<long> RunExclusiveAsync(Func<long> action) => Task.Run(() =>
+        internal static Task<long> RunExclusiveAsync(Func<long> action, CorePriority priority = CorePriority.User) => GearWinCore.RunAsync(CoreWork.Cleanup, () => Task.Run(() =>
         {
             using var identity = System.Security.Principal.WindowsIdentity.GetCurrent();
             var sid = identity.User?.Value ?? throw new IOException("Cannot identify maintenance owner.");
@@ -87,7 +87,7 @@ namespace OptimizerWpf.Services
             {
                 if (acquired) { HealthScoreService.Invalidate(); mutex.ReleaseMutex(); }
             }
-        });
+        }), priority);
 
         public static Task<long> CleanAsync(IReadOnlyList<string> keys)
         {
