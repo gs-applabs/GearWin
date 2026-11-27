@@ -13,6 +13,7 @@ namespace OptimizerWpf.Views
         private readonly string _tag;
         private readonly IReadOnlyList<TabSubPage> _pages;
         private int _current = -1;
+        private System.Windows.Threading.DispatcherOperation? _accessibilityRefresh;
 
         public int CurrentPage => _current;
         internal string TabTag => _tag;
@@ -49,6 +50,8 @@ namespace OptimizerWpf.Views
                 }
             }
 
+            Loaded += (_, _) => ScheduleAccessibilityRefresh();
+            Unloaded += (_, _) => { _accessibilityRefresh?.Abort(); _accessibilityRefresh = null; };
             ShowPage(Math.Clamp(startPage, 0, _pages.Count - 1));
             if (SubStrip.Children.Count > _current) ((RadioButton)SubStrip.Children[_current]).IsChecked = true;
         }
@@ -68,7 +71,18 @@ namespace OptimizerWpf.Views
                 views[i].Margin = new Thickness(0, i == 0 ? 0 : 16, 0, 0);   // ίδιο κενό 16 px και ανάμεσα στις προβολές μιας σελίδας
                 PageHost.Children.Add(views[i]);
             }
-            Dispatcher.BeginInvoke(new Action(() => App.NameUnlabelledToggles(PageHost)), System.Windows.Threading.DispatcherPriority.ApplicationIdle);
+            ScheduleAccessibilityRefresh();
+        }
+
+        private void ScheduleAccessibilityRefresh()
+        {
+            if (!IsLoaded || Dispatcher.HasShutdownStarted) return;
+            if (_accessibilityRefresh?.Status == System.Windows.Threading.DispatcherOperationStatus.Pending) return;
+            _accessibilityRefresh = Dispatcher.BeginInvoke(new Action(() =>
+            {
+                _accessibilityRefresh = null;
+                if (IsLoaded) App.NameUnlabelledToggles(PageHost);
+            }), System.Windows.Threading.DispatcherPriority.ApplicationIdle);
         }
 
         // Μία παρουσία ανά προβολή (με την ένωση των ενοτήτων που ζητούν τα τμήματα της σελίδας), με τη σειρά πρώτης εμφάνισης.
