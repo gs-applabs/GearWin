@@ -70,7 +70,10 @@ namespace OptimizerWpf.Services
                     if (_isActive && _consecutiveNonFullscreenTicks >= 2)
                     {
                         // Χωρίς επανεκκίνηση του Explorer: το αυτόματο mode δεν πρέπει να κλείνει τα ανοιχτά παράθυρα του χρήστη κάθε φορά που τελειώνει ένα παιχνίδι.
-                        PowerModeService.DisableGamingMode(restartExplorer: false);
+                        using var lease = GearWinCore.TryEnterBackground(CoreWork.ProfileChange);
+                        if (lease == null) return;
+                        if (!AppSettingsService.Current.GamingModeActive && !AppSettingsService.Current.OfficeModeActive)
+                            PowerModeService.DisableGamingMode(restartExplorer: false);
                         _isActive = false;
                     }
                     return;
@@ -84,6 +87,8 @@ namespace OptimizerWpf.Services
                 // αποφεύγει ψευδές θετικό από σύντομη fullscreen προβολή (π.χ. video player splash).
                 if (!_isActive && _consecutiveFullscreenTicks >= 2)
                 {
+                    using var lease = GearWinCore.TryEnterBackground(CoreWork.ProfileChange);
+                    if (lease == null || AppSettingsService.Current.GamingModeActive || AppSettingsService.Current.OfficeModeActive) return;
                     PowerModeService.SetGamingMode();
                     _isActive = true;
                 }
