@@ -102,4 +102,15 @@ public class StatusLifecycleTests
         Assert.True(core.TryStopWhenSafe());
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => core.AcquireAsync(CoreWork.Repair, CorePriority.User));
     }
+
+    [Theory]
+    [InlineData(System.Windows.Input.Key.D3, "Health#1")]
+    [InlineData(System.Windows.Input.Key.NumPad3, "Health#1")]
+    [InlineData(System.Windows.Input.Key.D8, "System#1")]
+    [InlineData(System.Windows.Input.Key.NumPad8, "System#1")]
+    [InlineData(System.Windows.Input.Key.D1, "Home")]
+    [InlineData(System.Windows.Input.Key.D9, "System")]
+    [InlineData(System.Windows.Input.Key.F12, null)]
+    public void NumericShortcutResolvesExistingDestination(System.Windows.Input.Key key, string? expected)
+        => Assert.Equal(expected, OptimizerWpf.MainWindow.ShortcutDestination(key));
 }
