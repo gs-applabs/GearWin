@@ -53,6 +53,7 @@ namespace OptimizerWpf.Views
             // ρητά, ΚΑΙ θα εμπόδιζε την επόμενη Έναρξη (το ίδιο session name δεν μπορεί να ανοίξει
             // δύο φορές).
             Unloaded += (_, _) => StopTrafficMonitoring();
+            IsVisibleChanged += (_, _) => { if (!IsVisible && _trafficTimer != null) StopTrafficMonitoring(); };
         }
 
         // ΝΕΟ - roadmap "Ανίχνευση δημόσιου Wi-Fi".
@@ -338,6 +339,13 @@ namespace OptimizerWpf.Views
 
         private void RefreshTrafficRows()
         {
+            if (!NetworkTrafficService.IsRunning)
+            {
+                var error = NetworkTrafficService.LastError;
+                StopTrafficMonitoring();
+                TxtTrafficStatus.Text = $"{LanguageService.T("Network_TrafficUnavailable")}{error}";
+                return;
+            }
             var usage = NetworkTrafficService.SampleAndReset(1.0);
             _trafficRows.Clear();
             // Cap στα top 30 - ίδιο σκεπτικό με το ήδη υπάρχον cap 50 στα αποτελέσματα αναζήτησης
