@@ -51,13 +51,14 @@ namespace OptimizerWpf.Services
                 var counters = instances
                     .Select(n =>
                     {
+                        PerformanceCounter? c = null;
                         try
                         {
-                            var c = new PerformanceCounter("GPU Engine", "Utilization Percentage", n, true);
+                            c = new PerformanceCounter("GPU Engine", "Utilization Percentage", n, true);
                             c.NextValue(); // πρώτη κλήση πάντα 0 - προθέρμανση
                             return c;
                         }
-                        catch { return null; }
+                        catch { c?.Dispose(); return null; }
                     })
                     .Where(c => c != null)
                     .Cast<PerformanceCounter>()
