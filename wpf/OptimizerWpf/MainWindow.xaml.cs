@@ -95,8 +95,7 @@ public partial class MainWindow : Window
 
         StatusService.Changed += OnStatusChanged;
         Closed += (_, _) => StatusService.Changed -= OnStatusChanged;
-        StatusService.SetBusy(LanguageService.T("Main_Starting"));
-        StatusService.SetIdle(LanguageService.T("Ready"));
+        StatusService.Report(LanguageService.T("Ready"));
 
         ThemeManager.AttachBackground(AppBackground);
         ThemeManager.Changed += ApplyPcManagerSkinLayout;
@@ -117,19 +116,42 @@ public partial class MainWindow : Window
         // τίτλου έχει ΔΙΚΟ ΤΟΥ, ανεξάρτητο DoubleAnimation με RepeatBehavior=Forever (βλ.
         // ThreeGearIcon.StartSpin) - ίδια λογική εδώ, ίδιος λόγος (δεν έχει νόημα να περιστρέφεται
         // κάτι που δεν είναι καν ορατό).
-        Deactivated += (_, _) => TitleGear.StopSpin();
-        Activated += (_, _) => TitleGear.StartSpin();
-        StateChanged += (_, _) =>
+        void RefreshMotion()
         {
-            if (WindowState == WindowState.Minimized) TitleGear.StopSpin();
-            else if (IsActive) TitleGear.StartSpin();
+            if (CanAnimateChrome()) TitleGear.StartSpin(); else TitleGear.StopSpin();
+            RefreshStatusMotion();
+            RefreshHealthMotion();
+        }
+        Deactivated += (_, _) => RefreshMotion();
+        Activated += (_, _) => RefreshMotion();
+        StateChanged += (_, _) => RefreshMotion();
+        IsVisibleChanged += (_, _) => RefreshMotion();
+        Action profileChanged = () => Dispatcher.BeginInvoke(new Action(RefreshMotion));
+        PerformanceProfileService.Changed += profileChanged;
+        Closed += (_, _) =>
+        {
+            PerformanceProfileService.Changed -= profileChanged;
+            _toastTimer?.Stop();
+            TitleGear.StopSpin();
+            _spinnerStoryboard.Stop(this);
+            ((Storyboard)Resources["PulseAttentionDotStoryboard"]).Stop(this);
         };
 
         FitWidthToTabs();
         SizeChanged += (_, _) => AdaptTabStripToWidth();
         Loaded += (_, _) => { AdaptTabStripToWidth(); NameTabButtonsForAutomation(); };
 
-        _ = CheckHealthAttentionAsync();
+        // A hidden tray shell must not trigger a device/health scan.
+        bool initialAttentionRequested = false;
+        void RequestInitialAttention()
+        {
+            if (initialAttentionRequested || !IsLoaded || !IsVisible || WindowState == WindowState.Minimized) return;
+            initialAttentionRequested = true;
+            _ = CheckHealthAttentionAsync();
+        }
+        Loaded += (_, _) => RequestInitialAttention();
+        IsVisibleChanged += (_, _) => RequestInitialAttention();
+        StateChanged += (_, _) => RequestInitialAttention();
     }
 
     private static readonly (string Key, Func<MainWindow, TextBlock> Label)[] TabLabels =
@@ -222,12 +244,10 @@ public partial class MainWindow : Window
     {
         try
         {
-            var result = await System.Threading.Tasks.Task.Run(Services.HealthScoreService.Compute);
-            var needsAttention = result.Score < 70;
+            var result = await Services.HealthScoreService.ComputeAsync(priority: Services.CorePriority.Background);
+            var needsAttention = !result.IsComplete || result.Score < 70;
             DotHealthAttention.Visibility = needsAttention ? Visibility.Visible : Visibility.Collapsed;
-            var pulse = (System.Windows.Media.Animation.Storyboard)Resources["PulseAttentionDotStoryboard"];
-            if (needsAttention) pulse.Begin(this, true);
-            else pulse.Stop(this);
+            RefreshHealthMotion();
         }
         catch { }
     }
@@ -317,7 +337,7 @@ public partial class MainWindow : Window
         // (business event, όχι language event) - βλ. σχόλιο στο _statusIsIdle παραπάνω. Ξαναστέλνει
         // ένα φρέσκο "Έτοιμο" ΜΟΝΟ αν η γραμμή είναι αυτή τη στιγμή σε ανάπαυση (δεν πειράζει ένα
         // πραγματικά ενεργό busy-μήνυμα άλλης καρτέλας).
-        if (_statusIsIdle) StatusService.SetIdle(LanguageService.T("Ready"));
+        if (_statusIsIdle) StatusService.Report(LanguageService.T("Ready"));
 
         RefreshThemeToggleLabel();
     }
@@ -517,22 +537,57 @@ public partial class MainWindow : Window
     // επουλώνεται μόλις γίνει η επόμενη πραγματική ενέργεια, ίδιο πνεύμα με άλλες μικρές μεταβατικές
     // περιπτώσεις σε αυτή την εφαρμογή.
     private bool _statusIsIdle = true;
+    private bool _spinnerRunning;
+    private bool _healthPulseRunning;
+
+    private bool CanAnimateChrome() => IsVisible && IsActive && WindowState != WindowState.Minimized && PerformanceProfileService.Current.AnimationsEnabled;
+
+    private void RefreshStatusMotion()
+    {
+        bool animate = !_statusIsIdle && CanAnimateChrome();
+        if (animate == _spinnerRunning) return;
+        _spinnerRunning = animate;
+        if (animate) _spinnerStoryboard.Begin(this, true);
+        else _spinnerStoryboard.Stop(this);
+    }
+
+    private void RefreshHealthMotion()
+    {
+        bool animate = DotHealthAttention.Visibility == Visibility.Visible && CanAnimateChrome();
+        if (animate == _healthPulseRunning) return;
+        _healthPulseRunning = animate;
+        var pulse = (Storyboard)Resources["PulseAttentionDotStoryboard"];
+        if (animate) pulse.Begin(this, true); else pulse.Stop(this);
+    }
+
+    private int _statusRefreshQueued;
 
     private void OnStatusChanged(string message, bool busy)
     {
-        if (!Dispatcher.CheckAccess()) { Dispatcher.BeginInvoke(() => OnStatusChanged(message, busy)); return; }
+        // Coalesce bursts. Read current state on the dispatcher rather than replaying
+        // stale messages that arrived from separate worker threads out of order.
+        if (Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished) return;
+        if (!Dispatcher.CheckAccess())
+        {
+            if (System.Threading.Interlocked.Exchange(ref _statusRefreshQueued, 1) == 0)
+                Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    System.Threading.Interlocked.Exchange(ref _statusRefreshQueued, 0);
+                    RefreshStatusSnapshot();
+                }));
+            return;
+        }
+        RefreshStatusSnapshot();
+    }
+
+    private void RefreshStatusSnapshot()
+    {
+        var (message, busy) = StatusService.Snapshot();
         _statusIsIdle = !busy;
+        if (!busy && string.IsNullOrWhiteSpace(message)) message = LanguageService.T("Ready");
         TxtStatus.Text = $"{LanguageService.T("StatusPrefix")}{message}";
-        if (busy)
-        {
-            ActivitySpinner.Visibility = Visibility.Visible;
-            _spinnerStoryboard.Begin(this, true);
-        }
-        else
-        {
-            _spinnerStoryboard.Stop(this);
-            ActivitySpinner.Visibility = Visibility.Collapsed;
-        }
+        ActivitySpinner.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
+        RefreshStatusMotion();
     }
 
     // Ctrl+1..6 (εναλλαγή καρτέλας) + Ctrl+M (εμφάνιση/απόκρυψη κλασικού μενού) - ρητό αίτημα
@@ -585,27 +640,26 @@ public partial class MainWindow : Window
             return;
         }
 
-        var tag = e.Key switch
-        {
-            Key.D1 or Key.NumPad1 => "Home",
-            Key.D2 or Key.NumPad2 => "Bloatware",
-            Key.D3 or Key.NumPad3 => "Health#1",
-            Key.D4 or Key.NumPad4 => "Health",
-            Key.D5 or Key.NumPad5 => "Network",
-            Key.D6 or Key.NumPad6 => "GamesMedia",
-            Key.D7 or Key.NumPad7 => "Tweaks",
-            Key.D8 or Key.NumPad8 => "System#1",
-            Key.D9 or Key.NumPad9 => "System",
-            _ => null,
-        };
+        var tag = ShortcutDestination(e.Key);
         if (tag == null) return;
-
-        foreach (var child in TabStrip.Children)
-        {
-            if (child is RadioButton rb && rb.Tag as string == tag) { rb.IsChecked = true; break; }
-        }
+        SelectTab(tag);
         e.Handled = true;
     }
+
+    // Route to the shared tab/subpage resolver in all navigation skins.
+    internal static string? ShortcutDestination(Key key) => key switch
+    {
+        Key.D1 or Key.NumPad1 => "Home",
+        Key.D2 or Key.NumPad2 => "Bloatware",
+        Key.D3 or Key.NumPad3 => "Health#1",
+        Key.D4 or Key.NumPad4 => "Health",
+        Key.D5 or Key.NumPad5 => "Network",
+        Key.D6 or Key.NumPad6 => "GamesMedia",
+        Key.D7 or Key.NumPad7 => "Tweaks",
+        Key.D8 or Key.NumPad8 => "System#1",
+        Key.D9 or Key.NumPad9 => "System",
+        _ => null,
+    };
 
     // ΔΙΟΡΘΩΣΗ (χρήστης ανέφερε: "όταν κλείνω το παράθυρο κλείνει και το tray") - δεν υπήρχε ΚΑΝΕΝΑΣ
     // Closing handler εδώ, οπότε το X του παραθύρου έκλεινε το MainWindow κανονικά, και επειδή το
@@ -687,6 +741,12 @@ public partial class MainWindow : Window
         _currentTabTag = tag;
         var subPage = _pendingSubPage;
         _pendingSubPage = 0;
+        if (ContentHost.Content is CompositeTabView current && current.TabTag == tag)
+        {
+            current.SelectPage(subPage);
+            SyncRailSelection();
+            return;
+        }
         // Only the Home/Optimization tabs are fully ported so far - every other tab shows a labeled
         // placeholder until it's ported in a later session (see the staged migration plan).
         // 6.5.0: οι καρτέλες που ανασυντέθηκαν (βλ. TabLayout.cs) χτίζονται από κάρτες υπαρχουσών προβολών, με υπο-σελίδες (chips).
@@ -700,10 +760,12 @@ public partial class MainWindow : Window
 
         // ΝΕΟ (roadmap: "ομαλή μετάβαση καρτελών") - απαλό fade-in αντί για ακαριαία εναλλαγή
         // περιεχομένου· μικρή διάρκεια (180ms) ώστε να μην καθυστερεί αισθητά την πλοήγηση.
+        ContentHost.BeginAnimation(OpacityProperty, null);
         if (Services.PerformanceProfileService.Current.TabFadeEnabled) {
         ContentHost.Opacity = 0;
         ContentHost.BeginAnimation(OpacityProperty, new System.Windows.Media.Animation.DoubleAnimation(0, 1,
-            new Duration(TimeSpan.FromMilliseconds(180))) { EasingFunction = new System.Windows.Media.Animation.QuadraticEase() });
+            new Duration(TimeSpan.FromMilliseconds(180))) { EasingFunction = new System.Windows.Media.Animation.QuadraticEase(), FillBehavior = FillBehavior.Stop });
+        ContentHost.Opacity = 1;
         } else ContentHost.Opacity = 1;
         SyncRailSelection();
         AdaptTabStripToWidth();

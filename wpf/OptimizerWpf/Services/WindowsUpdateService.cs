@@ -29,7 +29,12 @@ namespace OptimizerWpf.Services
         public static Task<(bool Success, IReadOnlyList<WindowsUpdateItem> Updates, string? Error)> ScanAsync() =>
             ScanDetailedAsync().ContinueWith(t => (t.Result.Success, t.Result.Updates, t.Result.Error));
 
-        public static Task<WindowsUpdateScanResult> ScanDetailedAsync() => Task.Run(() =>
+        public static Task<WindowsUpdateScanResult> ScanDetailedAsync() => ScanCoordinatedAsync(CorePriority.User);
+        internal static Task<WindowsUpdateScanResult> ScanCoordinatedAsync(CorePriority priority) =>
+            GearWinCore.RunAsync(CoreWork.UpdateScan, ScanWithinLeaseAsync, priority);
+
+        // Only called by a caller that owns the UpdateScan lease or by the public wrapper.
+        internal static Task<WindowsUpdateScanResult> ScanWithinLeaseAsync() => Task.Run(() =>
         {
             try
             {
@@ -140,7 +145,12 @@ namespace OptimizerWpf.Services
 
         // Port του Invoke-WmtWindowsUpdateInstall: εύρεση της ενημέρωσης με το ίδιο UpdateID|Revision, αποδοχή EULA, λήψη, εγκατάσταση.
         // ResultCode WUA: 2 = επιτυχία, 3 = επιτυχία με σφάλματα. Εκτελείται ΜΟΝΟ μετά από ρητή επιλογή του χρήστη.
-        public static Task<(bool Ok, bool RebootRequired, string? Error)> InstallAsync(string rowId) => Task.Run<(bool Ok, bool RebootRequired, string? Error)>(() =>
+        public static Task<(bool Ok, bool RebootRequired, string? Error)> InstallAsync(string rowId) => InstallCoordinatedAsync(rowId, CorePriority.User);
+
+        internal static Task<(bool Ok, bool RebootRequired, string? Error)> InstallCoordinatedAsync(string rowId, CorePriority priority) =>
+            GearWinCore.RunAsync(CoreWork.SoftwareChange, () => InstallCoreAsync(rowId), priority);
+
+        private static Task<(bool Ok, bool RebootRequired, string? Error)> InstallCoreAsync(string rowId) => Task.Run<(bool Ok, bool RebootRequired, string? Error)>(() =>
         {
             try
             {
@@ -186,7 +196,8 @@ namespace OptimizerWpf.Services
                 int code = (int)ires.ResultCode;
                 var reboot = false;
                 try { reboot = (bool)ires.RebootRequired; } catch { }
-                if (code == 2 || code == 3) return (true, reboot, null);
+                if (code == 2) return (true, reboot, null);
+                if (code == 3) return (false, reboot, "Installation completed with errors; recheck Windows Update.");
                 return (false, reboot, $"Install failed (code {code}, 0x{(int)ires.HResult:X8})");
             }
             catch (Exception ex)

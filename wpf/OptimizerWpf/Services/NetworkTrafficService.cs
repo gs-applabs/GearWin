@@ -17,21 +17,14 @@ namespace OptimizerWpf.Services
     // (Microsoft.Diagnostics.Tracing.TraceEvent, MIT, dotnet org) είναι η καθιερωμένη βιβλιοθήκη γι'
     // αυτό - καταναλώνει ΑΠΕΥΘΕΙΑΣ τα ίδια kernel events, καμία custom driver/hook.
     //
-    // ΣΗΜΕΙΩΣΗ ΕΙΛΙΚΡΙΝΕΙΑΣ (ίδιο πνεύμα με το FileShredderService's SSD wear-leveling note και το
-    // AdvancedToolsService's autologon plaintext note): το "NT Kernel Logger" είναι ΕΝΑ ΜΟΝΑΔΙΚΟ,
-    // system-wide reserved ETW session name - αν κάποιο ΑΛΛΟ εργαλείο (π.χ. Windows Performance
-    // Recorder, ένας profiler) το χρησιμοποιεί ήδη, το Start() εδώ θα το ΚΛΕΙΣΕΙ και θα το ανοίξει
-    // ξανά δικό του (καθιερωμένη συμπεριφορά του TraceEventSession όταν βρει ήδη ενεργό session με
-    // το ίδιο όνομα) - ΔΕΝ υπάρχει τρόπος να «μοιραστεί» το session με άλλον καταναλωτή. Απαιτεί
-    // Administrator (η εφαρμογή το έχει ήδη, app.manifest). Αν η δημιουργία του session αποτύχει για
-    // οποιονδήποτε λόγο, το IsRunning παραμένει false και το UI δείχνει ρητά "μη διαθέσιμο" αντί να
-    // προσποιείται ότι λειτουργεί.
+    // Never replace a kernel logger owned by another tool. Unavailable tracing is reported.
     public static class NetworkTrafficService
     {
         private sealed class Counter { public long Sent; public long Recv; }
 
         private static readonly object Lock = new();
-        private static readonly ConcurrentDictionary<int, Counter> Accum = new();
+        private static ConcurrentDictionary<int, Counter> Accum = new();
+        private static long _sampleAt;
         private static TraceEventSession? _session;
         private static Thread? _thread;
 
@@ -43,37 +36,60 @@ namespace OptimizerWpf.Services
             lock (Lock)
             {
                 if (IsRunning) return true;
-                Accum.Clear();
+                Accum = new ConcurrentDictionary<int, Counter>();
+                var counters = Accum;
+                _sampleAt = Environment.TickCount64;
                 try
                 {
-                    var session = new TraceEventSession(KernelTraceEventParser.KernelSessionName, TraceEventSessionOptions.Create)
+                    if (TraceEventSession.GetActiveSessionNames().Contains(KernelTraceEventParser.KernelSessionName, StringComparer.OrdinalIgnoreCase))
+                        throw new InvalidOperationException("The kernel trace session is already owned by another tool.");
+                    var session = new TraceEventSession(KernelTraceEventParser.KernelSessionName, TraceEventSessionOptions.Create | TraceEventSessionOptions.NoRestartOnCreate)
                     {
                         StopOnDispose = true,
                     };
+                    _session = session;
                     session.EnableKernelProvider(KernelTraceEventParser.Keywords.NetworkTCPIP, KernelTraceEventParser.Keywords.None);
 
-                    session.Source.Kernel.TcpIpSend += d => AddBytes(d.ProcessID, d.size, sent: true);
-                    session.Source.Kernel.TcpIpRecv += d => AddBytes(d.ProcessID, d.size, sent: false);
-                    session.Source.Kernel.TcpIpSendIPV6 += d => AddBytes(d.ProcessID, d.size, sent: true);
-                    session.Source.Kernel.TcpIpRecvIPV6 += d => AddBytes(d.ProcessID, d.size, sent: false);
-                    session.Source.Kernel.UdpIpSend += d => AddBytes(d.ProcessID, d.size, sent: true);
-                    session.Source.Kernel.UdpIpRecv += d => AddBytes(d.ProcessID, d.size, sent: false);
-                    session.Source.Kernel.UdpIpSendIPV6 += d => AddBytes(d.ProcessID, d.size, sent: true);
-                    session.Source.Kernel.UdpIpRecvIPV6 += d => AddBytes(d.ProcessID, d.size, sent: false);
+                    session.Source.Kernel.TcpIpSend += d => AddBytes(counters, d.ProcessID, d.size, sent: true);
+                    session.Source.Kernel.TcpIpRecv += d => AddBytes(counters, d.ProcessID, d.size, sent: false);
+                    session.Source.Kernel.TcpIpSendIPV6 += d => AddBytes(counters, d.ProcessID, d.size, sent: true);
+                    session.Source.Kernel.TcpIpRecvIPV6 += d => AddBytes(counters, d.ProcessID, d.size, sent: false);
+                    session.Source.Kernel.UdpIpSend += d => AddBytes(counters, d.ProcessID, d.size, sent: true);
+                    session.Source.Kernel.UdpIpRecv += d => AddBytes(counters, d.ProcessID, d.size, sent: false);
+                    session.Source.Kernel.UdpIpSendIPV6 += d => AddBytes(counters, d.ProcessID, d.size, sent: true);
+                    session.Source.Kernel.UdpIpRecvIPV6 += d => AddBytes(counters, d.ProcessID, d.size, sent: false);
 
                     _session = session;
                     // Το Source.Process() μπλοκάρει μέχρι να σταματήσει το session - ΔΙΚΟ του, μη-
                     // threadpool νήμα (IsBackground ώστε να μην εμποδίζει το κλείσιμο της εφαρμογής
                     // αν το Stop() δεν προλάβει να κληθεί για οποιονδήποτε λόγο).
-                    _thread = new Thread(() => { try { session.Source.Process(); } catch { } })
+                    _thread = new Thread(() =>
+                    {
+                        string? error = null;
+                        try { session.Source.Process(); } catch (Exception ex) { error = ex.Message; }
+                        finally
+                        {
+                            ThreadPool.QueueUserWorkItem(_ =>
+                            {
+                                lock (Lock)
+                                {
+                                    if (!ReferenceEquals(_session, session)) return;
+                                    LastError = error ?? "Trace session ended.";
+                                    IsRunning = false;
+                                    try { session.Dispose(); } catch { }
+                                    _session = null;
+                                    _thread = null;
+                                }
+                            });
+                        }
+                    })
                     {
                         IsBackground = true,
                         Name = "NetworkTrafficEtw",
                     };
-                    _thread.Start();
-
                     IsRunning = true;
                     LastError = null;
+                    _thread.Start();
                     return true;
                 }
                 catch (Exception ex)
@@ -101,10 +117,14 @@ namespace OptimizerWpf.Services
             }
         }
 
-        private static void AddBytes(int pid, int size, bool sent)
+        private static void AddBytes(ConcurrentDictionary<int, Counter> counters, int pid, int size, bool sent)
         {
             if (size <= 0) return;
-            var counter = Accum.GetOrAdd(pid, _ => new Counter());
+            if (!counters.TryGetValue(pid, out var counter))
+            {
+                if (counters.Count >= 8192) return;
+                counter = counters.GetOrAdd(pid, _ => new Counter());
+            }
             if (sent) Interlocked.Add(ref counter.Sent, size);
             else Interlocked.Add(ref counter.Recv, size);
         }
@@ -115,7 +135,10 @@ namespace OptimizerWpf.Services
         public static System.Collections.Generic.IReadOnlyList<ProcessNetworkUsage> SampleAndReset(double windowSeconds)
         {
             var result = new System.Collections.Generic.List<ProcessNetworkUsage>();
-            if (windowSeconds <= 0) return result;
+            var now = Environment.TickCount64;
+            var previous = Interlocked.Exchange(ref _sampleAt, now);
+            windowSeconds = ElapsedWindowSeconds(now, previous);
+            if (previous == 0 || windowSeconds <= 0) return result;
 
             foreach (var pid in Accum.Keys.ToArray())
             {
@@ -130,6 +153,8 @@ namespace OptimizerWpf.Services
             return result.OrderByDescending(r => r.DownloadKBps + r.UploadKBps).ToList();
         }
 
+        internal static double ElapsedWindowSeconds(long now, long previous) => previous == 0 || now <= previous ? 0 : (now - previous) / 1000.0;
+
         // Καθαρή, testable μαθηματική λογική - ξεχωρισμένη από το I/O (process lookup) παραπάνω.
         internal static double BytesToKBps(long bytes, double windowSeconds) =>
             windowSeconds <= 0 ? 0 : bytes / 1024.0 / windowSeconds;
@@ -137,7 +162,7 @@ namespace OptimizerWpf.Services
         private static string ResolveProcessName(int pid)
         {
             if (pid == 0) return "System Idle Process";
-            try { return Process.GetProcessById(pid).ProcessName; }
+            try { using var process = Process.GetProcessById(pid); return process.ProcessName; }
             catch { return $"PID {pid}"; } // η διεργασία μπορεί να έχει ήδη τερματίσει
         }
     }

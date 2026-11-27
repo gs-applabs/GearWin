@@ -185,6 +185,7 @@ namespace OptimizerWpf.Views
         {
             AppSettingsService.Current.SelfUpdateCheckEnabled = ChkSelfUpdateCheck.IsChecked == true;
             AppSettingsService.Save();
+            CoreFeatureLifecycle.Apply();
         }
 
         private async void BtnSelfUpdateCheck_Click(object sender, RoutedEventArgs e)
@@ -275,6 +276,7 @@ namespace OptimizerWpf.Views
             if (_loading) return;
             AppSettingsService.Current.UpdateNotificationsEnabled = ChkUpdateNotifications.IsChecked == true;
             AppSettingsService.Save();
+            CoreFeatureLifecycle.Apply();
         }
 
         private void ComboUpdateInterval_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -308,6 +310,7 @@ namespace OptimizerWpf.Views
             if (_loading) return;
             AppSettingsService.Current.LowDiskNotificationsEnabled = ChkLowDiskNotifications.IsChecked == true;
             AppSettingsService.Save();
+            CoreFeatureLifecycle.Apply();
         }
 
         private void ComboLowDiskThreshold_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -352,7 +355,7 @@ namespace OptimizerWpf.Views
             var enabled = ChkDesktopWidget.IsChecked == true;
             AppSettingsService.Current.DesktopWidgetEnabled = enabled;
             AppSettingsService.Save();
-            try { if (enabled) DesktopWidgetService.Start(); else DesktopWidgetService.Stop(); }
+            try { CoreFeatureLifecycle.Apply(); }
             catch (Exception ex) { ThemedMessageBox.Show(ex.Message, LanguageService.T("AppearanceSettingsTitle"), MessageBoxButton.OK, MessageBoxImage.Warning); }
         }
 
@@ -475,6 +478,7 @@ namespace OptimizerWpf.Views
             if (confirm != MessageBoxResult.Yes) return;
 
             var ok = AppSettingsService.Import(dialog.FileName);
+            if (ok) CoreFeatureLifecycle.Apply();
             ThemedMessageBox.Show(
                 LanguageService.T(ok ? "Appr_BackupImportOk" : "Appr_BackupImportFail"),
                 LanguageService.T("AppearanceSettingsTitle"), MessageBoxButton.OK, ok ? MessageBoxImage.Information : MessageBoxImage.Error);

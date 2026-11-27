@@ -73,7 +73,7 @@ namespace OptimizerWpf.Services
                 if (w != monW || h != monH) return null;
 
                 GetWindowThreadProcessId(hwnd, out var pid);
-                var proc = System.Diagnostics.Process.GetProcessById(pid);
+                using var proc = System.Diagnostics.Process.GetProcessById(pid);
                 if (proc.ProcessName is "explorer" or "dwm" or "GearWin" or "dotnet") return null;
                 return (pid, proc.ProcessName);
             }
@@ -94,42 +94,43 @@ namespace OptimizerWpf.Services
 
                 try
                 {
-                    // ΔΙΟΡΘΩΣΗ (bug εντοπίστηκε - χρήστης ανέφερε: "δεν υπάρχει η πληροφορία για τα
-                    // FPS") - αν η εφαρμογή είχε τερματιστεί προηγουμένως ενώ αυτό το session ήταν
-                    // ενεργό (crash/Task kill, χωρίς να περάσει από Stop()/Dispose()), το named
-                    // real-time ETW session παραμένει "ορφανό" σε επίπεδο ΛΣ ΑΚΟΜΑ και μετά το κλείσιμο
-                    // της εφαρμογής - τα named ETW sessions ΔΕΝ συνδέονται με τη ζωή της διεργασίας που
-                    // τα δημιούργησε. Το TraceEventSessionOptions.Create απαιτεί ΝΕΟ, ανύπαρκτο όνομα -
-                    // πετάει exception αν βρει ήδη ενεργό ορφανό session με το ίδιο όνομα, πράγμα που
-                    // έκανε το Start() να αποτυγχάνει ΜΟΝΙΜΑ και σιωπηλά (το LastError δεν εμφανιζόταν
-                    // πουθενά στο UI) σε ΚΑΘΕ επόμενη εκκίνηση της εφαρμογής, μέχρι επανεκκίνηση των
-                    // Windows. Σταματά ρητά οποιοδήποτε προϋπάρχον session με το ίδιο όνομα πρώτα, ώστε
-                    // το Create να πετυχαίνει πάντα.
-                    if (TraceEventSession.GetActiveSessionNames().Contains(SessionName))
-                    {
-                        try { using var stale = new TraceEventSession(SessionName, TraceEventSessionOptions.Attach); stale.Stop(); } catch { }
-                    }
-
-                    var session = new TraceEventSession(SessionName, TraceEventSessionOptions.Create) { StopOnDispose = true };
+                    // Do not stop a session that could be owned by another process.
+                    var session = new TraceEventSession(SessionName, TraceEventSessionOptions.Create | TraceEventSessionOptions.NoRestartOnCreate) { StopOnDispose = true };
+                    _session = session;
                     session.EnableProvider(DxgiProviderName);
                     session.Source.Dynamic.All += OnEvent;
 
                     _session = session;
-                    _thread = new Thread(() => { try { session.Source.Process(); } catch { } })
+                    _thread = new Thread(() =>
+                    {
+                        string? error = null;
+                        try { session.Source.Process(); } catch (Exception ex) { error = ex.Message; }
+                        finally
+                        {
+                            ThreadPool.QueueUserWorkItem(_ =>
+                            {
+                                lock (Lock)
+                                {
+                                    if (!ReferenceEquals(_session, session)) return;
+                                    LastError = error ?? "Trace session ended.";
+                                    StopInternal();
+                                }
+                            });
+                        }
+                    })
                     {
                         IsBackground = true,
                         Name = "GameOverlayDxgiEtw",
                     };
-                    _thread.Start();
-
                     IsRunning = true;
                     LastError = null;
+                    _thread.Start();
                     return true;
                 }
                 catch (Exception ex)
                 {
                     LastError = ex.Message;
-                    IsRunning = false;
+                    StopInternal();
                     return false;
                 }
             }
@@ -162,7 +163,7 @@ namespace OptimizerWpf.Services
             if (elapsed < 0.5) return LastFps;
             var count = Interlocked.Exchange(ref _frameCount, 0);
             _windowStart = now;
-            LastFps = elapsed > 0 ? (int)Math.Round(count / elapsed) : null;
+            LastFps = elapsed > 0 && count > 0 ? (int)Math.Round(count / elapsed) : null;
             return LastFps;
         }
 

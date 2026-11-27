@@ -10,6 +10,16 @@ namespace OptimizerWpf.Services
 
     public static class TransferPreflight
     {
+        internal static System.Threading.Tasks.Task<TransferCheck> InspectAsync(string sourcePath, string targetPath) =>
+            GearWinCore.RunAsync(CoreWork.TransferScan, () => System.Threading.Tasks.Task.Run(() => Inspect(sourcePath, targetPath)));
+
+        private static bool HasUnredirectedAncestors(string path)
+        {
+            for (DirectoryInfo? directory = new DirectoryInfo(path); directory != null; directory = directory.Parent)
+                if ((File.GetAttributes(directory.FullName) & FileAttributes.ReparsePoint) != 0) return false;
+            return true;
+        }
+
         public static TransferCheck Inspect(string sourcePath, string targetPath, int maxEntries = 100000)
         {
             static TransferCheck Fail(string reason) => new(false, 0, 0, 0, reason);
@@ -17,17 +27,18 @@ namespace OptimizerWpf.Services
                 return Fail("Select source and destination folders.");
             try
             {
+                if (!Path.IsPathFullyQualified(sourcePath) || !Path.IsPathFullyQualified(targetPath))
+                    return Fail("Select absolute folder paths.");
                 string source = Path.TrimEndingDirectorySeparator(Path.GetFullPath(sourcePath));
                 string target = Path.TrimEndingDirectorySeparator(Path.GetFullPath(targetPath));
                 bool Under(string a, string b) => a.Equals(b, StringComparison.OrdinalIgnoreCase) ||
-                    b.StartsWith(a + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+                    MaintenancePaths.IsWithin(a, b);
                 if (!Directory.Exists(source) || !Directory.Exists(target))
                     return Fail("The selected folders must exist.");
                 if (Under(source, target) || Under(target, source))
                     return Fail("Source and destination must not overlap.");
-                if ((File.GetAttributes(source) & FileAttributes.ReparsePoint) != 0 ||
-                    (File.GetAttributes(target) & FileAttributes.ReparsePoint) != 0)
-                    return Fail("Linked folder roots are not permitted.");
+                if (!HasUnredirectedAncestors(source) || !HasUnredirectedAncestors(target))
+                    return Fail("Linked folder roots or ancestors are not permitted.");
 
                 var stack = new Stack<string>();
                 stack.Push(source);
@@ -35,7 +46,9 @@ namespace OptimizerWpf.Services
                 int entries = 0, skipped = 0;
                 while (stack.Count > 0)
                 {
-                    foreach (string path in Directory.EnumerateFileSystemEntries(stack.Pop()))
+                    string directory = stack.Pop();
+                    if (!HasUnredirectedAncestors(directory)) return new(false, files, bytes, skipped, "Folder changed or redirected during scan.");
+                    foreach (string path in Directory.EnumerateFileSystemEntries(directory))
                     {
                         if (++entries > maxEntries)
                             return new(false, files, bytes, skipped, "Scan limit reached. Inspect the folder manually.");

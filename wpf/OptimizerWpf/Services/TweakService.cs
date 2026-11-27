@@ -73,23 +73,15 @@ namespace OptimizerWpf.Services
 
         public static IReadOnlyList<SimpleTweak> PerfPowercfgTweaks => new[]
         {
-            new SimpleTweak(LanguageService.T("Tweak_P0Label"), LanguageService.T("Tweak_P0Desc"),
-                () => RunPowercfg("/setdcvalueindex SCHEME_CURRENT SUB_ENERGYSAVER ESBATTTHRESHOLD 0", "/S SCHEME_CURRENT"),
-                () => RunPowercfg("/setdcvalueindex SCHEME_CURRENT SUB_ENERGYSAVER ESBATTTHRESHOLD 20", "/S SCHEME_CURRENT"),
-                Id: "PowerSaverThreshold", DetectState: () => GetPowercfgIndex("SUB_ENERGYSAVER", "ESBATTTHRESHOLD", ac: false) is int i0 ? i0 == 0 : null),
-            new SimpleTweak(LanguageService.T("Tweak_P1Label"), LanguageService.T("Tweak_P1Desc"),
-                () => RunPowercfg("/setacvalueindex SCHEME_CURRENT 2a737441-1930-4402-8d77-b2bebba308a3 48e6b7a6-50f5-4782-a5d4-53bb8f07e226 0",
-                                   "/setdcvalueindex SCHEME_CURRENT 2a737441-1930-4402-8d77-b2bebba308a3 48e6b7a6-50f5-4782-a5d4-53bb8f07e226 0", "/S SCHEME_CURRENT"),
-                () => RunPowercfg("/setacvalueindex SCHEME_CURRENT 2a737441-1930-4402-8d77-b2bebba308a3 48e6b7a6-50f5-4782-a5d4-53bb8f07e226 1",
-                                   "/setdcvalueindex SCHEME_CURRENT 2a737441-1930-4402-8d77-b2bebba308a3 48e6b7a6-50f5-4782-a5d4-53bb8f07e226 1", "/S SCHEME_CURRENT"),
-                Id: "PowerThrottling", DetectState: () => GetPowercfgIndex("2a737441-1930-4402-8d77-b2bebba308a3", "48e6b7a6-50f5-4782-a5d4-53bb8f07e226", ac: true) is int i1 ? i1 == 0 : null),
-            new SimpleTweak(LanguageService.T("Tweak_P2Label"), LanguageService.T("Tweak_P2Desc"),
-                () => RunPowercfg("/setacvalueindex SCHEME_CURRENT 501a4d13-42af-4429-9fd1-a8218c268e20 ee12f906-d277-404b-b6da-e5fa1a576df5 0",
-                                   "/setdcvalueindex SCHEME_CURRENT 501a4d13-42af-4429-9fd1-a8218c268e20 ee12f906-d277-404b-b6da-e5fa1a576df5 0", "/S SCHEME_CURRENT"),
-                () => RunPowercfg("/setacvalueindex SCHEME_CURRENT 501a4d13-42af-4429-9fd1-a8218c268e20 ee12f906-d277-404b-b6da-e5fa1a576df5 1",
-                                   "/setdcvalueindex SCHEME_CURRENT 501a4d13-42af-4429-9fd1-a8218c268e20 ee12f906-d277-404b-b6da-e5fa1a576df5 1", "/S SCHEME_CURRENT"),
-                Id: "PowerPerfBoost", DetectState: () => GetPowercfgIndex("501a4d13-42af-4429-9fd1-a8218c268e20", "ee12f906-d277-404b-b6da-e5fa1a576df5", ac: true) is int i2 ? i2 == 0 : null),
+            PowerTweak(PowerIndexSpec.Threshold, "Tweak_P0Label", "Tweak_P0Desc"),
+            PowerTweak(PowerIndexSpec.Usb, "Tweak_P1Label", "Tweak_P1Desc"),
+            PowerTweak(PowerIndexSpec.Pcie, "Tweak_P2Label", "Tweak_P2Desc"),
         };
+
+        private static SimpleTweak PowerTweak(PowerIndexSpec spec, string label, string description) =>
+            new(LanguageService.T(label), LanguageService.T(description),
+                () => PowerIndexJournal.Change(spec, true), () => PowerIndexJournal.Change(spec, false),
+                DetectState: () => PowerIndexJournal.IsOn(spec), Id: spec.Id, RequiresAdmin: true);
 
         // Ενιαία λίστα των 14 κύριων tweaks σε μια μορφή (RegTweak + ειδικές περιπτώσεις μαζί) -
         // απλοποιεί το UI σε ένα ItemsControl αντί για ανάμειξη δύο τύπων record.
@@ -133,17 +125,6 @@ namespace OptimizerWpf.Services
             return Convert.ToInt64(current) == Convert.ToInt64(t.OnValue);
         }
 
-        // ΔΙΟΡΘΩΣΗ (γνωστό κενό #01) - διαβάζει το τρέχον AC/DC Power Setting Index ενός powercfg
-        // υπο-ρύθμισης (π.χ. USB Selective Suspend, PCIe Power Saving) μέσω "powercfg /q", για τα 3
-        // tweaks που δεν έχουν καθόλου registry-based αναπαράσταση. null αν το parsing αποτύχει.
-        private static int? GetPowercfgIndex(string subgroup, string setting, bool ac)
-        {
-            var output = RunProcessCapture("powercfg.exe", $"/q SCHEME_CURRENT {subgroup} {setting}");
-            var pattern = ac ? @"Current AC Power Setting Index:\s*0x([0-9a-fA-F]+)" : @"Current DC Power Setting Index:\s*0x([0-9a-fA-F]+)";
-            var match = System.Text.RegularExpressions.Regex.Match(output, pattern);
-            return match.Success ? Convert.ToInt32(match.Groups[1].Value, 16) : (int?)null;
-        }
-
         public static IReadOnlyList<SimpleTweak> AiCopilotTweaksSimple() => AiCopilotTweaks.Select(ToSimple).ToList();
 
         // ΝΕΟ - ρητό αίτημα χρήστη ("ενσωμάτωσε τα... ελαφρύτερα Windows") - 2 tweaks που ελαφρώνουν
@@ -178,23 +159,9 @@ namespace OptimizerWpf.Services
             RegSet(Registry.CurrentUser, @"Control Panel\Mouse", "MouseThreshold2", "10", RegistryValueKind.String);
         }
 
-        public static void ApplyOn(RegTweak tweak)
-        {
-            using var key = OpenHive(tweak.Hive).CreateSubKey(tweak.Path, writable: true);
-            var current = key?.GetValue(tweak.Name);
-            if (current != null) TweakBackupService.BackupIfNeeded(tweak.BackupKey, current.ToString()!);
-            key?.SetValue(tweak.Name, tweak.OnValue, tweak.Kind);
-        }
+        public static void ApplyOn(RegTweak tweak) => TweakRegistryJournal.Apply(tweak);
 
-        public static void ApplyOff(RegTweak tweak)
-        {
-            using var key = OpenHive(tweak.Hive).CreateSubKey(tweak.Path, writable: true);
-            var backup = TweakBackupService.GetBackup(tweak.BackupKey);
-            if (backup == null) { key?.DeleteValue(tweak.Name, throwOnMissingValue: false); return; }
-            object value = tweak.Kind == RegistryValueKind.String ? backup : int.Parse(backup);
-            key?.SetValue(tweak.Name, value, tweak.Kind);
-            TweakBackupService.Remove(tweak.BackupKey);
-        }
+        public static void ApplyOff(RegTweak tweak) => TweakRegistryJournal.Restore(tweak);
 
         private static RegistryKey OpenHive(RegistryHive hive) => hive == RegistryHive.LocalMachine ? Registry.LocalMachine : Registry.CurrentUser;
 
@@ -225,59 +192,11 @@ namespace OptimizerWpf.Services
         // feedback_correct_tab_placement). Η ανίχνευση κατάστασης εξήχθη εδώ σε δική της μέθοδο (πριν
         // ήταν ανώνυμο lambda μέσα στο AllMainTweaks) ώστε να τη χρησιμοποιεί απευθείας το
         // OptimizationView.xaml.cs χωρίς να περνάει πια από το SimpleTweak/AllMainTweaks μονοπάτι.
-        private const string UltimateTemplateGuid = "e9a42b02-d5df-448d-aa00-03f14749eb61";
-        private static readonly System.Text.RegularExpressions.Regex GuidRegex =
-            new(@"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}");
+        public static bool IsUltimatePerformanceActive() => UltimatePlanJournal.IsActive();
 
-        // ΔΙΟΡΘΩΣΗ: το "powercfg -duplicatescheme <template>" φτιάχνει ΝΕΟ σχέδιο με ΤΥΧΑΙΟ GUID (όχι το e9a42b02…) —
-        // η παλιά ανίχνευση (αναζήτηση του template GUID στο /list) δεν το έβρισκε ποτέ, το σχέδιο δεν ΕΝΕΡΓΟΠΟΙΟΥΝΤΑΝ
-        // (καμία /setactive), και κάθε νέο "On" δημιουργούσε ένα ακόμη διπλότυπο. Το Off έβρισκε το σχέδιο μόνο με το
-        // αγγλικό όνομα "Ultimate Performance" (αποτυχία σε ελληνικά/άλλα Windows). Τώρα αποθηκεύουμε το GUID που
-        // δημιουργήσαμε και το προηγούμενο ενεργό σχέδιο, και ανιχνεύουμε/επαναφέρουμε με βάση αυτά.
-        private const string UltimateCreatedKey = "UP_CREATED_SCHEME";
-        private const string UltimatePreviousKey = "UP_PREVIOUS_SCHEME";
+        public static void UltimatePerformanceOn() => UltimatePlanJournal.Enable();
 
-        public static bool IsUltimatePerformanceActive()
-        {
-            var active = GuidRegex.Match(RunProcessCapture("powercfg.exe", "/getactivescheme")).Value;
-            if (string.IsNullOrEmpty(active)) return false;
-            if (active.Equals(UltimateTemplateGuid, StringComparison.OrdinalIgnoreCase)) return true;
-            var created = TweakBackupService.GetBackup(UltimateCreatedKey);
-            return created != null && active.Equals(created, StringComparison.OrdinalIgnoreCase);
-        }
-
-        public static void UltimatePerformanceOn()
-        {
-            if (IsUltimatePerformanceActive()) return;
-            var previous = GuidRegex.Match(RunProcessCapture("powercfg.exe", "/getactivescheme")).Value;
-            // Ξαναχρησιμοποιούμε ήδη δημιουργημένο σχέδιο αν υπάρχει ακόμα (όχι διπλότυπα σε κάθε ενεργοποίηση).
-            var list = RunProcessCapture("powercfg.exe", "/list");
-            var created = TweakBackupService.GetBackup(UltimateCreatedKey);
-            if (created == null || !list.Contains(created, StringComparison.OrdinalIgnoreCase))
-            {
-                created = GuidRegex.Match(RunProcessCapture("powercfg.exe", $"-duplicatescheme {UltimateTemplateGuid}")).Value;
-                if (string.IsNullOrEmpty(created)) return; // το template δεν υπάρχει σε αυτό το Windows build
-                TweakBackupService.Remove(UltimateCreatedKey);
-                TweakBackupService.BackupIfNeeded(UltimateCreatedKey, created);
-            }
-            if (!string.IsNullOrEmpty(previous) && !previous.Equals(created, StringComparison.OrdinalIgnoreCase))
-            {
-                TweakBackupService.Remove(UltimatePreviousKey);
-                TweakBackupService.BackupIfNeeded(UltimatePreviousKey, previous);
-            }
-            RunProcess("powercfg.exe", $"/setactive {created}");
-        }
-
-        public static void UltimatePerformanceOff()
-        {
-            var created = TweakBackupService.GetBackup(UltimateCreatedKey);
-            var previous = TweakBackupService.GetBackup(UltimatePreviousKey);
-            // Επιστροφή στο σχέδιο που ήταν ενεργό ΠΡΙΝ (π.χ. High performance) — πριν γινόταν πάντα Balanced.
-            RunProcess("powercfg.exe", string.IsNullOrEmpty(previous) ? "/setactive SCHEME_BALANCED" : $"/setactive {previous}");
-            if (!string.IsNullOrEmpty(created)) RunProcess("powercfg.exe", $"-delete {created}");
-            TweakBackupService.Remove(UltimateCreatedKey);
-            TweakBackupService.Remove(UltimatePreviousKey);
-        }
+        public static void UltimatePerformanceOff() => UltimatePlanJournal.Disable();
 
         // ===== Απενεργοποίηση Game Bar / Game DVR (ξεχωριστό από Gaming Mode) =====
 
@@ -387,7 +306,7 @@ namespace OptimizerWpf.Services
             var reverted = 0;
             foreach (var t in MainTweaks.Concat(AiCopilotTweaks).Concat(PerfRegTweaks))
             {
-                if (TweakBackupService.GetBackup(t.BackupKey) == null) continue;
+                if (!TweakRegistryJournal.CanRestore(t)) continue;
                 try { ApplyOff(t); reverted++; }
                 catch { }
             }
@@ -428,7 +347,7 @@ namespace OptimizerWpf.Services
         {
             var count = 0;
             foreach (var t in MainTweaks.Concat(AiCopilotTweaks).Concat(PerfRegTweaks))
-                if (TweakBackupService.GetBackup(t.BackupKey) != null) count++;
+                if (TweakRegistryJournal.CanRestore(t)) count++;
 
             try
             {
@@ -589,9 +508,5 @@ namespace OptimizerWpf.Services
             catch { return ""; }
         }
 
-        private static void RunPowercfg(params string[] argSets)
-        {
-            foreach (var args in argSets) RunProcess("powercfg.exe", args);
-        }
     }
 }

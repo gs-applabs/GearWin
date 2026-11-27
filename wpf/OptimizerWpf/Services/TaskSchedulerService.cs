@@ -22,12 +22,12 @@ namespace OptimizerWpf.Services
     {
         private const string Ns = "http://schemas.microsoft.com/windows/2004/02/mit/task";
 
-        public static string BuildLogonTaskXml(string exePath, string arguments, int delaySeconds, string userId, string description)
+        public static string BuildLogonTaskXml(string exePath, string arguments, int delaySeconds, string userId, string description, bool elevated = true)
         {
             var delay = delaySeconds > 0 ? $"<Delay>PT{delaySeconds}S</Delay>" : "";
             return Wrap(
                 $"<LogonTrigger><Enabled>true</Enabled><UserId>{Esc(userId)}</UserId>{delay}</LogonTrigger>",
-                exePath, arguments, userId, description);
+                exePath, arguments, userId, description, elevated);
         }
 
         // Εβδομαδιαία, Κυριακή στις 03:00 (ίδια ώρα με την προηγούμενη υλοποίηση).
@@ -44,7 +44,7 @@ namespace OptimizerWpf.Services
                 "<ScheduleByDay><DaysInterval>1</DaysInterval></ScheduleByDay></CalendarTrigger>",
                 exePath, arguments, userId, description);
 
-        private static string Wrap(string trigger, string exePath, string arguments, string userId, string description) =>
+        private static string Wrap(string trigger, string exePath, string arguments, string userId, string description, bool elevated = true) =>
             $@"<?xml version=""1.0"" encoding=""UTF-16""?>
 <Task version=""1.4"" xmlns=""{Ns}"">
   <RegistrationInfo><Description>{Esc(description)}</Description></RegistrationInfo>
@@ -53,7 +53,7 @@ namespace OptimizerWpf.Services
     <Principal id=""Author"">
       <UserId>{Esc(userId)}</UserId>
       <LogonType>InteractiveToken</LogonType>
-      <RunLevel>HighestAvailable</RunLevel>
+      <RunLevel>{(elevated ? "HighestAvailable" : "LeastPrivilege")}</RunLevel>
     </Principal>
   </Principals>
   <Settings>
@@ -102,16 +102,30 @@ namespace OptimizerWpf.Services
             try { return WindowsIdentity.GetCurrent().Name; } catch { return Environment.UserName; }
         }
 
-        public static async Task<bool> CreateAsync(string taskName, string xml)
+        public static async Task<bool> CreateAsync(string taskName, string xml, bool replace = true)
         {
             // ΑΣΦΑΛΕΙΑ: το XML ορίζει εντολή που τρέχει με Highest privileges - ΟΧΙ από %TEMP% (αντικαταστάσιμο πριν το διαβάσει το schtasks).
-            var tmp = SecureStorage.NewPrivateTempFile("task", ".xml");
+            string? tmp = null;
             try
             {
-                File.WriteAllText(tmp, xml, Encoding.Unicode); // UTF-16, όπως δηλώνει το XML
-                return await RunAsync("/Create", "/TN", taskName, "/XML", tmp, "/F");
+                tmp = SecureStorage.NewPrivateTempFile("task", ".xml");
+                using (var stream = new FileStream(tmp, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                {
+                    using (var writer = new StreamWriter(stream, Encoding.Unicode, 4096, leaveOpen: true)) writer.Write(xml);
+                    stream.Flush(flushToDisk: true);
+                }
+                return replace
+                    ? await RunAsync("/Create", "/TN", taskName, "/XML", tmp, "/F")
+                    : await RunAsync("/Create", "/TN", taskName, "/XML", tmp);
             }
-            finally { try { Directory.Delete(Path.GetDirectoryName(tmp)!, true); } catch { } }
+            catch (Exception ex) { Trace.TraceError(ex.Message); return false; }
+            finally
+            {
+                if (tmp != null)
+                {
+                    try { File.Delete(tmp); Directory.Delete(Path.GetDirectoryName(tmp)!); } catch { }
+                }
+            }
         }
 
         public static Task<bool> DeleteAsync(string taskName) => RunAsync("/Delete", "/TN", taskName, "/F");
@@ -122,15 +136,24 @@ namespace OptimizerWpf.Services
         {
             try
             {
-                var psi = new ProcessStartInfo("schtasks.exe") { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
+                var psi = new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "schtasks.exe")) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
                 foreach (var a in args) psi.ArgumentList.Add(a);
                 using var p = Process.Start(psi);
                 if (p == null) return false;
                 // Αδειάζουμε τα pipes ώστε να μη μπλοκάρει η διεργασία σε μεγάλη έξοδο.
                 var o = p.StandardOutput.ReadToEndAsync();
                 var e = p.StandardError.ReadToEndAsync();
-                await p.WaitForExitAsync();
-                await Task.WhenAll(o, e);
+                using var timeout = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(30));
+                try
+                {
+                    await p.WaitForExitAsync(timeout.Token);
+                    await Task.WhenAll(o, e).WaitAsync(timeout.Token);
+                }
+                catch (OperationCanceledException)
+                {
+                    try { if (!p.HasExited) p.Kill(entireProcessTree: true); } catch { }
+                    return false;
+                }
                 return p.ExitCode == 0;
             }
             catch { return false; }

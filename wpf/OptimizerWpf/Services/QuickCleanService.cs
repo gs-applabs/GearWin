@@ -16,7 +16,7 @@ namespace OptimizerWpf.Services
     // Delivery Optimization, cache shader κάρτας γραφικών, και cache περιηγητών - όλα τα παρακάτω.
     public static class QuickCleanService
     {
-        private static string SystemRoot => Environment.GetEnvironmentVariable("SystemRoot") ?? @"C:\Windows";
+        private static string SystemRoot => Environment.GetFolderPath(Environment.SpecialFolder.Windows);
         private static string LocalAppData => Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
 
         private static string WindowsTempDir => Path.Combine(SystemRoot, "Temp");
@@ -46,24 +46,56 @@ namespace OptimizerWpf.Services
             return dirs;
         }
 
-        public static Task<IReadOnlyList<QuickCleanItem>> ScanAsync() => Task.Run(() =>
+        public static Task<IReadOnlyList<QuickCleanItem>> ScanAsync() => ScanCoreAsync(false);
+        internal static Task<IReadOnlyList<QuickCleanItem>> ScanRecommendedAsync() => ScanCoreAsync(true);
+        private static Task<IReadOnlyList<QuickCleanItem>> ScanCoreAsync(bool recommendedOnly) => GearWinCore.RunAsync(CoreWork.CleanupScan, () => Task.Run(() =>
         {
             var items = new List<QuickCleanItem>
             {
-                new("UserTemp", LanguageService.T("QuickClean_UserTemp"), DirSize(Path.GetTempPath()), true),
-                new("WindowsTemp", LanguageService.T("QuickClean_WindowsTemp"), DirSize(WindowsTempDir), true),
-                new("RecycleBin", LanguageService.T("QuickClean_RecycleBin"), RecycleBinSize(), true),
+                new("UserTemp", LanguageService.T("QuickClean_UserTemp"), MaintenancePaths.VerifiedUserTemp() is string temp ? MaintenancePaths.MeasureFiles(temp, TimeSpan.FromDays(2)) : 0, true),
                 new("ThumbnailCache", LanguageService.T("QuickClean_ThumbnailCache"), ThumbCacheSize(), true),
-                new("WindowsUpdateCache", LanguageService.T("QuickClean_WindowsUpdateCache"), DirSize(WindowsUpdateCacheDir), false),
-                new("DeliveryOptimization", LanguageService.T("QuickClean_DeliveryOptimization"), DirSize(DeliveryOptimizationDir), false),
-                new("ShaderCache", LanguageService.T("QuickClean_ShaderCache"), ShaderCacheDirs().Sum(DirSize), false),
-                new("LauncherCache", LanguageService.T("QuickClean_LauncherCache"), LauncherCacheDirs().Sum(DirSize), false),
-                new("BrowserCache", LanguageService.T("QuickClean_BrowserCache"), HealthCleanupService.DetectBrowsers().Sum(BrowserCacheSize), false),
             };
+            if (!recommendedOnly) items.AddRange(new QuickCleanItem[]
+            {
+                new("WindowsTemp", LanguageService.T("QuickClean_WindowsTemp"), MaintenancePaths.MeasureFiles(WindowsTempDir, TimeSpan.FromDays(7)), false),
+                new("RecycleBin", LanguageService.T("QuickClean_RecycleBin"), RecycleBinSize(), false),
+                new("WindowsUpdateCache", LanguageService.T("QuickClean_WindowsUpdateCache"), MaintenancePaths.MeasureFiles(WindowsUpdateCacheDir, TimeSpan.FromDays(7)), false),
+                new("DeliveryOptimization", LanguageService.T("QuickClean_DeliveryOptimization"), MaintenancePaths.MeasureFiles(DeliveryOptimizationDir, TimeSpan.FromDays(7)), false),
+                new("ShaderCache", LanguageService.T("QuickClean_ShaderCache"), ShaderCacheDirs().Sum(dir => MaintenancePaths.MeasureFiles(dir, TimeSpan.FromDays(2))), false),
+                new("LauncherCache", LanguageService.T("QuickClean_LauncherCache"), LauncherCacheDirs().Sum(dir => MaintenancePaths.MeasureFiles(dir, TimeSpan.FromDays(2))), false),
+                new("BrowserCache", LanguageService.T("QuickClean_BrowserCache"), HealthCleanupService.DetectBrowsers().Sum(BrowserCacheSize), false),
+            });
             return (IReadOnlyList<QuickCleanItem>)items;
-        });
+        }));
 
-        public static async Task<long> CleanAsync(IReadOnlyList<string> keys)
+        // The weekly task bypasses the GUI's single-instance mutex. Use a user-specific
+        // mutex spanning processes in the interactive session. Acquire/release on the same thread.
+        internal static Task<long> RunExclusiveAsync(Func<long> action, CorePriority priority = CorePriority.User) => GearWinCore.RunAsync(CoreWork.Cleanup, () => Task.Run(() =>
+        {
+            using var identity = System.Security.Principal.WindowsIdentity.GetCurrent();
+            var sid = identity.User?.Value ?? throw new IOException("Cannot identify maintenance owner.");
+            using var mutex = new System.Threading.Mutex(false, @"Local\GearWin.Cleanup." + sid);
+            bool acquired = false;
+            try
+            {
+                try { acquired = mutex.WaitOne(TimeSpan.FromSeconds(30)); }
+                catch (System.Threading.AbandonedMutexException) { acquired = true; }
+                if (!acquired) throw new TimeoutException("Another maintenance operation is active.");
+                return action();
+            }
+            finally
+            {
+                if (acquired) { HealthScoreService.Invalidate(); mutex.ReleaseMutex(); }
+            }
+        }), priority);
+
+        public static Task<long> CleanAsync(IReadOnlyList<string> keys)
+        {
+            var selected = keys.Distinct(StringComparer.Ordinal).ToArray();
+            return RunExclusiveAsync(() => CleanCore(selected));
+        }
+
+        private static long CleanCore(IReadOnlyList<string> keys)
         {
             long freed = 0;
             foreach (var key in keys)
@@ -71,48 +103,43 @@ namespace OptimizerWpf.Services
                 switch (key)
                 {
                     case "UserTemp":
-                        freed += DirSize(Path.GetTempPath());
-                        await Task.Run(() => DeleteContents(Path.GetTempPath()));
+                        if (MaintenancePaths.VerifiedUserTemp() is string temp)
+                            freed += MaintenancePaths.CleanFiles(temp, TimeSpan.FromDays(2));
                         break;
                     case "WindowsTemp":
-                        freed += DirSize(WindowsTempDir);
-                        await Task.Run(() => DeleteContents(WindowsTempDir));
+                        freed += MaintenancePaths.CleanFiles(WindowsTempDir, TimeSpan.FromDays(7));
                         break;
                     case "RecycleBin":
-                        freed += RecycleBinSize();
-                        await Task.Run(EmptyRecycleBin);
+                        var before = RecycleBinSize();
+                        EmptyRecycleBin();
+                        freed += Math.Max(0, before - RecycleBinSize());
                         break;
                     case "ThumbnailCache":
-                        freed += ThumbCacheSize();
-                        await Task.Run(DeleteThumbCache);
+                        freed += MaintenancePaths.CleanFiles(ExplorerCacheDir, TimeSpan.FromDays(2), false, "thumbcache_*.db") +
+                            MaintenancePaths.CleanFiles(ExplorerCacheDir, TimeSpan.FromDays(2), false, "iconcache_*.db");
                         break;
                     case "WindowsUpdateCache":
-                        freed += DirSize(WindowsUpdateCacheDir);
-                        await Task.Run(() => DeleteContents(WindowsUpdateCacheDir));
+                        freed += MaintenancePaths.CleanFiles(WindowsUpdateCacheDir, TimeSpan.FromDays(7));
                         break;
                     case "DeliveryOptimization":
-                        freed += DirSize(DeliveryOptimizationDir);
-                        await Task.Run(() => DeleteContents(DeliveryOptimizationDir));
+                        freed += MaintenancePaths.CleanFiles(DeliveryOptimizationDir, TimeSpan.FromDays(7));
                         break;
                     case "ShaderCache":
                         foreach (var dir in ShaderCacheDirs())
                         {
-                            freed += DirSize(dir);
-                            await Task.Run(() => DeleteContents(dir));
+                            freed += MaintenancePaths.CleanFiles(dir, TimeSpan.FromDays(2));
                         }
                         break;
                     case "LauncherCache":
                         foreach (var dir in LauncherCacheDirs())
                         {
-                            freed += DirSize(dir);
-                            await Task.Run(() => DeleteContents(dir));
+                            freed += MaintenancePaths.CleanFiles(dir, TimeSpan.FromDays(2));
                         }
                         break;
                     case "BrowserCache":
                         foreach (var browser in HealthCleanupService.DetectBrowsers())
                         {
-                            freed += BrowserCacheSize(browser);
-                            await HealthCleanupService.ClearBrowserCacheAsync(browser);
+                            freed += HealthCleanupService.ClearBrowserCacheCore(browser);
                         }
                         break;
                 }
@@ -120,26 +147,7 @@ namespace OptimizerWpf.Services
             return freed;
         }
 
-        private static long BrowserCacheSize(BrowserCacheEntry browser)
-        {
-            long total = 0;
-            foreach (var basePath in browser.Paths)
-            {
-                if (browser.Name is "Chrome" or "Edge" or "Brave" or "Vivaldi")
-                {
-                    foreach (var profileDir in SafeDirs(basePath))
-                    {
-                        foreach (var cacheSub in new[] { "Cache", "Code Cache", "GPUCache" })
-                            total += DirSize(Path.Combine(profileDir, cacheSub));
-                    }
-                }
-                else
-                {
-                    total += DirSize(basePath);
-                }
-            }
-            return total;
-        }
+        private static long BrowserCacheSize(BrowserCacheEntry browser) => HealthCleanupService.BrowserCacheSize(browser);
 
         // ΔΙΟΡΘΩΣΗ (εξονυχιστικός έλεγχος εντόπισε): Directory.EnumerateFiles(dir, "*",
         // SearchOption.AllDirectories) είναι ΤΕΜΠΕΛΗΣ (lazy) - το UnauthorizedAccessException από έναν
@@ -151,14 +159,14 @@ namespace OptimizerWpf.Services
         // συνεχίζει κανονικά στους υπόλοιπους.
         internal static long DirSize(string dir)
         {
-            if (!Directory.Exists(dir)) return 0;
+            if (!MaintenancePaths.IsOrdinaryLocalPath(dir) || !Directory.Exists(dir)) return 0;
             long total = 0;
 
             string[] files;
             try { files = Directory.GetFiles(dir); } catch { files = Array.Empty<string>(); }
             foreach (var f in files)
             {
-                try { total += new FileInfo(f).Length; } catch { }
+                try { if (MaintenancePaths.IsOrdinaryLocalPath(f)) total += new FileInfo(f).Length; } catch { }
             }
 
             string[] subdirs;
@@ -168,58 +176,9 @@ namespace OptimizerWpf.Services
             return total;
         }
 
-        private static void DeleteContents(string dir)
-        {
-            if (!Directory.Exists(dir)) return;
-            foreach (var f in SafeTopFiles(dir))
-            {
-                try { File.Delete(f); } catch { }
-            }
-            foreach (var d in SafeDirs(dir))
-            {
-                // ΑΣΦΑΛΕΙΑ: ποτέ διαγραφή μέσω junction/symlink - η εφαρμογή τρέχει elevated και οι φάκελοι Temp είναι
-                // εγγράψιμοι από κάθε διεργασία χρήστη· ένα junction προς π.χ. C:\Windows\System32 θα οδηγούσε σε διαγραφή εκεί.
-                try { if ((File.GetAttributes(d) & FileAttributes.ReparsePoint) != 0) continue; } catch { continue; }
-                try { Directory.Delete(d, true); } catch { }
-            }
-        }
-
-        private static long ThumbCacheSize()
-        {
-            if (!Directory.Exists(ExplorerCacheDir)) return 0;
-            long total = 0;
-            foreach (var pattern in new[] { "thumbcache_*.db", "iconcache_*.db" })
-                foreach (var f in SafeFilesPattern(ExplorerCacheDir, pattern))
-                {
-                    try { total += new FileInfo(f).Length; } catch { }
-                }
-            return total;
-        }
-
-        private static void DeleteThumbCache()
-        {
-            if (!Directory.Exists(ExplorerCacheDir)) return;
-            foreach (var pattern in new[] { "thumbcache_*.db", "iconcache_*.db" })
-                foreach (var f in SafeFilesPattern(ExplorerCacheDir, pattern))
-                {
-                    try { File.Delete(f); } catch { } // κλειδωμένα από την ενεργή Εξερεύνηση - αγνοούνται σιωπηλά
-                }
-        }
-
-        private static IEnumerable<string> SafeDirs(string root)
-        {
-            try { return Directory.EnumerateDirectories(root); } catch { return Array.Empty<string>(); }
-        }
-
-        private static IEnumerable<string> SafeTopFiles(string root)
-        {
-            try { return Directory.EnumerateFiles(root); } catch { return Array.Empty<string>(); }
-        }
-
-        private static IEnumerable<string> SafeFilesPattern(string root, string pattern)
-        {
-            try { return Directory.EnumerateFiles(root, pattern); } catch { return Array.Empty<string>(); }
-        }
+        private static long ThumbCacheSize() =>
+            MaintenancePaths.MeasureFiles(ExplorerCacheDir, TimeSpan.FromDays(2), false, "thumbcache_*.db") +
+            MaintenancePaths.MeasureFiles(ExplorerCacheDir, TimeSpan.FromDays(2), false, "iconcache_*.db");
 
         // ===== Κάδος Ανακύκλωσης μέσω shell32.dll - καμία διαθέσιμη διαχειριζόμενη API για
         // μέγεθος/άδειασμα, ίδιο μοτίβο P/Invoke με τα ήδη υπάρχοντα Win32 calls της εφαρμογής. =====

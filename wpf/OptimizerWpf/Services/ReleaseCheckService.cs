@@ -65,26 +65,28 @@ namespace OptimizerWpf.Services
 
         public static void Start()
         {
-            if (_timer != null) return;
+            if (_timer != null || !AppSettingsService.Current.SelfUpdateCheckEnabled) return;
             _timer = new DispatcherTimer { Interval = FirstDelay };
             _timer.Tick += async (_, _) => await TickAsync();
             _timer.Start();
         }
 
-        public static void Stop() { _timer?.Stop(); _timer = null; }
+        private static int _generation;
+        public static void Stop() { _generation++; _timer?.Stop(); _timer = null; }
 
         private static async Task TickAsync()
         {
             if (_timer == null || _inFlight) return;
             _timer.Stop();
             _inFlight = true;
+            var generation = _generation;
             var next = Interval;
             try
             {
                 if (!AppSettingsService.Current.SelfUpdateCheckEnabled) return;
                 var store = new OncePerVersionStore(OncePerVersionStore.DefaultPath());
                 var outcome = await CheckAsync(store, ReleaseVersion.FromVersion(SelfUpdateService.Current));
-                if (!outcome.ShouldNotify || outcome.Latest == null) return;
+                if (generation != _generation || !AppSettingsService.Current.SelfUpdateCheckEnabled || !outcome.ShouldNotify || outcome.Latest == null) return;
                 if (UserIsBusy()) { next = BusyRetry; return; }
                 store.MarkSeen(KeyBalloon, outcome.Latest);
                 // 6.7.1: popup με Εγκατάσταση / Αργότερα / Παράλειψη έκδοσης / Τι νέο υπάρχει (όπως στο Crawler) + μπαλόνι του tray
@@ -97,7 +99,7 @@ namespace OptimizerWpf.Services
             finally
             {
                 _inFlight = false;
-                if (_timer != null) { _timer.Interval = next; _timer.Start(); }
+                if (_timer != null && generation == _generation && AppSettingsService.Current.SelfUpdateCheckEnabled) { _timer.Interval = next; _timer.Start(); }
             }
         }
 

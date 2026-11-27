@@ -9,11 +9,15 @@ namespace OptimizerWpf.Views
 {
     public partial class DesktopWidgetWindow : Window
     {
-        private PerformanceCounter? _cpuCounter;
-        private PerformanceCounter[]? _gpuCounters;
+        private IDisposable? _gpuSubscription;
+        private bool _gpuReading;
+        private long _lastOverlayAttempt;
         private readonly DispatcherTimer _timer;
         private int _currentGamePid = -1;
         private bool _voltageQueryInFlight;
+        private bool _closed;
+        private long _lastNetworkCheck;
+        private long _lastVoltageCheck;
 
         public DesktopWidgetWindow()
         {
@@ -31,31 +35,53 @@ namespace OptimizerWpf.Views
             if (settings.DesktopWidgetX is { } wx && settings.DesktopWidgetY is { } wy) { Left = wx; Top = wy; }
             else PopupPlacement.PlaceBottomRightOnCursorMonitor(this);
 
-            try { _cpuCounter = new PerformanceCounter("Processor", "% Processor Time", "_Total"); _cpuCounter.NextValue(); }
-            catch { _cpuCounter = null; }
-            _ = System.Threading.Tasks.Task.Run(() => { _gpuCounters = GpuInfoService.CreateUsageCounters(); });
+            IsVisibleChanged += (_, _) => { if (!IsVisible) ReleaseOverlay(); };
 
             Refresh();
             _timer.Start();
+        }
+
+        private void ReleaseOverlay()
+        {
+            _gpuSubscription?.Dispose();
+            _gpuSubscription = null;
+            if (_currentGamePid != -1) GameOverlayService.Stop();
+            _currentGamePid = -1;
+        }
+
+        private async System.Threading.Tasks.Task RefreshGpuAsync()
+        {
+            if (_gpuReading || _gpuSubscription == null) return;
+            _gpuReading = true;
+            try
+            {
+                var value = await SharedTelemetryService.ReadGpuAsync();
+                if (!_closed && _gpuSubscription != null) TxtGpu.Text = value.HasValue ? $"{value}%" : "--";
+            }
+            catch { }
+            finally { _gpuReading = false; }
         }
 
         private bool _networkCheckInFlight;
 
         private async void Refresh()
         {
-            try { if (_cpuCounter != null) TxtCpu.Text = $"{_cpuCounter.NextValue():0}%"; }
-            catch { }
+            if (_closed || !IsVisible) return;
+            var cpu = PerformanceProfileService.SampleCpu();
+            TxtCpu.Text = cpu >= 0 ? $"{cpu:0}%" : "--";
 
             if (NativeMethods.GlobalMemoryStatusEx(out var mem) && mem.ullTotalPhys > 0)
                 TxtRam.Text = $"{mem.dwMemoryLoad}%";
 
             // 6.9.1: ποτέ επικαλυπτόμενα pings (αργό δίκτυο) και καμία εξαίρεση από async void (θα έφτανε στον global handler κάθε tick)
-            if (!_networkCheckInFlight)
+            if (!_networkCheckInFlight && (_lastNetworkCheck == 0 || Environment.TickCount64 - _lastNetworkCheck >= 20000))
             {
+                _lastNetworkCheck = Environment.TickCount64;
                 _networkCheckInFlight = true;
                 try
                 {
                     var (connected, latency) = await NetworkService.CheckInternetAsync();
+                    if (_closed) return;
                     TxtNetwork.Text = connected
                         ? $"{LanguageService.T("Tray_Connected")}{(latency.HasValue ? $" ({latency} ms)" : "")}"
                         : LanguageService.T("Tray_Disconnected");
@@ -64,7 +90,7 @@ namespace OptimizerWpf.Views
                 finally { _networkCheckInFlight = false; }
             }
 
-            RefreshGameOverlay();
+            if (!_closed && IsVisible) RefreshGameOverlay();
         }
 
         // ΝΕΟ - ρητό αίτημα χρήστη: "κάνε πάλι ως widget το FPS/in-game overlay που θα επεκτείνει το
@@ -77,7 +103,7 @@ namespace OptimizerWpf.Views
             var game = GameOverlayService.GetForegroundFullscreenProcess();
             if (game == null)
             {
-                if (_currentGamePid != -1) { GameOverlayService.Stop(); _currentGamePid = -1; }
+                ReleaseOverlay();
                 RowGpu.Visibility = Visibility.Collapsed;
                 RowGpuVoltage.Visibility = Visibility.Collapsed;
                 RowFps.Visibility = Visibility.Collapsed;
@@ -91,12 +117,14 @@ namespace OptimizerWpf.Views
             TxtGameName.Visibility = Visibility.Visible;
             TxtGameName.Text = $"{LanguageService.T("Widget_MonitoringPrefix")}{game.Value.Name}";
 
-            if (_gpuCounters != null) TxtGpu.Text = $"{GpuInfoService.SampleUsagePercent(_gpuCounters)}%";
+            _gpuSubscription ??= SharedTelemetryService.SubscribeGpu();
+            _ = RefreshGpuAsync();
             RefreshGpuVoltageAsync();
 
-            if (_currentGamePid != game.Value.Pid)
+            if (_currentGamePid != game.Value.Pid || (!GameOverlayService.IsRunning && Environment.TickCount64 - _lastOverlayAttempt >= 30000))
             {
                 _currentGamePid = game.Value.Pid;
+                _lastOverlayAttempt = Environment.TickCount64;
                 GameOverlayService.Start(game.Value.Pid);
             }
             var fps = GameOverlayService.SampleFps();
@@ -110,11 +138,13 @@ namespace OptimizerWpf.Views
         // την επιστροφή του προηγούμενου query.
         private async void RefreshGpuVoltageAsync()
         {
-            if (_voltageQueryInFlight) return;
+            if (_closed || _voltageQueryInFlight || (_lastVoltageCheck != 0 && Environment.TickCount64 - _lastVoltageCheck < 3000)) return;
+            _lastVoltageCheck = Environment.TickCount64;
             _voltageQueryInFlight = true;
             try
             {
                 var volts = await System.Threading.Tasks.Task.Run(SensorService.GetGpuVoltageVolts);
+                if (_closed) return;
                 TxtGpuVoltage.Text = volts.HasValue ? $"{volts.Value:0.000} V" : "--";
             }
             finally
@@ -137,9 +167,9 @@ namespace OptimizerWpf.Views
             AppSettingsService.Current.DesktopWidgetX = Left;
             AppSettingsService.Current.DesktopWidgetY = Top;
             AppSettingsService.Save();
+            _closed = true;
             _timer.Stop();
-            _cpuCounter?.Dispose();
-            if (_currentGamePid != -1) GameOverlayService.Stop();
+            ReleaseOverlay();
         }
     }
 }

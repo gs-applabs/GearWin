@@ -178,9 +178,9 @@ namespace OptimizerWpf.Views
         private void ToggleAutoGamingMode_Click(object sender, RoutedEventArgs e)
         {
             var enabled = ToggleAutoGamingMode.IsChecked == true;
-            if (enabled) AutoGamingModeService.Start(); else AutoGamingModeService.Stop();
             AppSettingsService.Current.AutoGamingModeEnabled = enabled;
             AppSettingsService.Save();
+            CoreFeatureLifecycle.Apply();
         }
 
         // ΝΕΟ - roadmap "Προγραμματισμένη συντήρηση".
@@ -222,37 +222,49 @@ namespace OptimizerWpf.Views
             var gamingWasOn = isOn && ToggleGamingMode.IsChecked == true;
             if (gamingWasOn) ToggleGamingMode.IsChecked = false;
             ToggleOfficeMode.IsEnabled = false;
+            ToggleGamingMode.IsEnabled = false;
+            ToggleOfficeMode.IsEnabled = false;
             try
             {
                 if (isOn)
                 {
                     StatusService.SetBusy(LanguageService.T("Opt_EnablingOfficeMode"));
                     // ΔΙΟΡΘΩΣΗ: πριν, το Gaming Mode εμφανιζόταν "κλειστό" αλλά τα Windows έμεναν στις ρυθμίσεις του - τώρα απενεργοποιείται πραγματικά.
-                    if (gamingWasOn) await Task.Run(() => PowerModeService.DisableGamingMode(restartExplorer: false));
-                    await Task.Run(PowerModeService.SetOfficeMode);
-                    AppSettingsService.Current.OfficeModeActive = true;
-                    AppSettingsService.Current.GamingModeActive = false;
-                    AppSettingsService.Save();
+                    if (await RestoreGuardService.EnsureRecentAsync() == RestoreGuardResult.Failed)
+                        throw new InvalidOperationException(LanguageService.T("Health_DeletePartialFailed"));
+                    await PowerModeService.ApplyManualProfileAsync("Office", true);
                     TxtGamingModeStatus.Text = "";
                     StatusService.SetIdle(LanguageService.T("Opt_OfficeModeEnabled"));
                 }
                 else
                 {
                     StatusService.SetBusy(LanguageService.T("Opt_DisablingOfficeMode"));
-                    await Task.Run(() => PowerModeService.DisableOfficeMode());
-                    AppSettingsService.Current.OfficeModeActive = false;
-                    AppSettingsService.Save();
+                    await PowerModeService.ApplyManualProfileAsync("Office", false);
                     StatusService.SetIdle(LanguageService.T("Opt_OfficeModeDisabled"));
                 }
             }
-            catch { StatusService.SetIdle(LanguageService.T("Ready")); }
-            finally { ToggleOfficeMode.IsEnabled = true; }
+            catch (Exception ex)
+            {
+                try
+                {
+                    var mode = await Task.Run(PowerModeService.ReadActiveProfile);
+                    AppSettingsService.Current.OfficeModeActive = mode == "Office";
+                    AppSettingsService.Current.GamingModeActive = mode == "Gaming";
+                    AppSettingsService.Save();
+                }
+                catch { /* retain last known state; original failure is still displayed */ }
+                ToggleOfficeMode.IsChecked = AppSettingsService.Current.OfficeModeActive;
+                ToggleGamingMode.IsChecked = AppSettingsService.Current.GamingModeActive;
+                StatusService.SetIdle(ex.Message);
+            }
+            finally { ToggleOfficeMode.IsEnabled = true; ToggleGamingMode.IsEnabled = true; }
         }
 
         private async void ToggleGamingMode_Click(object sender, RoutedEventArgs e)
         {
             var isOn = ToggleGamingMode.IsChecked == true;
             ToggleGamingMode.IsEnabled = false;
+            ToggleOfficeMode.IsEnabled = false;
             try
             {
                 if (isOn)
@@ -260,13 +272,12 @@ namespace OptimizerWpf.Views
                     var officeWasOn = ToggleOfficeMode.IsChecked == true;
                     if (officeWasOn) ToggleOfficeMode.IsChecked = false;
                     StatusService.SetBusy(LanguageService.T("Opt_EnablingGamingMode"));
-                    if (officeWasOn) await Task.Run(() => PowerModeService.DisableOfficeMode(restartExplorer: false));
+
                     // Το Gaming Mode αλλάζει ρυθμίσεις συστήματος (registry, πλάνο ενέργειας) - ίδια προστασία με τις άλλες μαζικές ενέργειες.
                     var guard = await RestoreGuardService.EnsureRecentAsync();
-                    await Task.Run(PowerModeService.SetGamingMode);
-                    AppSettingsService.Current.GamingModeActive = true;
-                    AppSettingsService.Current.OfficeModeActive = false;
-                    AppSettingsService.Save();
+                    if (guard == RestoreGuardResult.Failed)
+                        throw new InvalidOperationException(LanguageService.T("Health_DeletePartialFailed"));
+                    await PowerModeService.ApplyManualProfileAsync("Gaming", true);
                     ChangeJournalService.Record(LanguageService.T("Optimization_GamingMode") + ": " + LanguageService.T("Journal_On"), () =>
                     {
                         PowerModeService.DisableGamingMode();
@@ -280,15 +291,26 @@ namespace OptimizerWpf.Views
                 else
                 {
                     StatusService.SetBusy(LanguageService.T("Opt_DisablingGamingMode"));
-                    await Task.Run(() => PowerModeService.DisableGamingMode());
-                    AppSettingsService.Current.GamingModeActive = false;
-                    AppSettingsService.Save();
+                    await PowerModeService.ApplyManualProfileAsync("Gaming", false);
                     TxtGamingModeStatus.Text = "";
                     StatusService.SetIdle(LanguageService.T("Opt_GamingModeDisabled"));
                 }
             }
-            catch { StatusService.SetIdle(LanguageService.T("Ready")); }
-            finally { ToggleGamingMode.IsEnabled = true; }
+            catch (Exception ex)
+            {
+                try
+                {
+                    var mode = await Task.Run(PowerModeService.ReadActiveProfile);
+                    AppSettingsService.Current.OfficeModeActive = mode == "Office";
+                    AppSettingsService.Current.GamingModeActive = mode == "Gaming";
+                    AppSettingsService.Save();
+                }
+                catch { /* retain last known state; original failure is still displayed */ }
+                ToggleOfficeMode.IsChecked = AppSettingsService.Current.OfficeModeActive;
+                ToggleGamingMode.IsChecked = AppSettingsService.Current.GamingModeActive;
+                StatusService.SetIdle(ex.Message);
+            }
+            finally { ToggleGamingMode.IsEnabled = true; ToggleOfficeMode.IsEnabled = true; }
         }
 
         private void ChkGamingFreeRam_Click(object sender, RoutedEventArgs e)
@@ -423,9 +445,8 @@ namespace OptimizerWpf.Views
             try
             {
                 _scanCts = new System.Threading.CancellationTokenSource(TimeSpan.FromMinutes(8));   // συνολικό όριο χρόνου
-                WingetService.ScanToken = _scanCts.Token;
                 BtnCancelAppScan.Visibility = Visibility.Visible;
-                var results = await WingetService.ScanAsync();
+                var results = await WingetService.ScanCoordinatedAsync(_scanCts.Token, includeWindows: true, priority: CorePriority.User);
                 _scanCts.Token.ThrowIfCancellationRequested();
                 ReplaceUpdates(results);
 
@@ -447,7 +468,6 @@ namespace OptimizerWpf.Views
             }
             finally
             {
-                WingetService.ScanToken = System.Threading.CancellationToken.None;
                 _scanCts?.Dispose(); _scanCts = null;
                 BtnCancelAppScan.Visibility = Visibility.Collapsed;
                 SetBusy(false);

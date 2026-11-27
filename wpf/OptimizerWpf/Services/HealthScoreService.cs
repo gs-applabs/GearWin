@@ -8,14 +8,62 @@ using Microsoft.Win32;
 namespace OptimizerWpf.Services
 {
     public record HealthIssue(string Title, string FixType);
-    public record HealthResult(int Score, IReadOnlyList<HealthIssue> Issues);
+    public record HealthResult(int Score, IReadOnlyList<HealthIssue> Issues)
+    {
+        public bool IsComplete => !Issues.Any(i => i.FixType == "Unknown");
+        public string DisplayScore => IsComplete ? Score.ToString() : "—";
+    }
 
     // Direct C# port of Get-SystemHealthScore from Optimizer.ps1 (line ~17852) - same checks, same
     // score deductions, same v2.8.2 fix (PendingFileRenameOperations removed from the reboot check -
     // see the comment on PendingReboot below for why).
     public static class HealthScoreService
     {
-        public static HealthResult Compute()
+        private static readonly object SnapshotGate = new();
+        private static HealthResult? _cached;
+        private static long _cachedAt;
+        private static string? _cachedLanguage;
+        private static int _generation;
+        private static int _cachedGeneration;
+        internal static bool IsFresh(long now, long then) => now >= then && now - then < 15000;
+
+        public static HealthResult Compute() => GetSnapshot(false);
+        public static HealthResult ComputeFresh() => GetSnapshot(true);
+        private static readonly object AsyncGate = new();
+        private static System.Threading.Tasks.Task<HealthResult>? _sharedScan;
+
+        internal static System.Threading.Tasks.Task<HealthResult> ComputeAsync(bool fresh = false, CorePriority priority = CorePriority.User)
+        {
+            // One automatic snapshot even if many views were opened during a repair.
+            // Explicit refresh still retains its fresh semantics and is bounded by the core.
+            if (fresh) return GearWinCore.RunAsync(CoreWork.HealthScan, () => System.Threading.Tasks.Task.Run(() => GetSnapshot(true)), priority);
+            lock (AsyncGate)
+            {
+                if (_sharedScan is { IsCompleted: false }) return _sharedScan;
+                return _sharedScan = GearWinCore.RunAsync(CoreWork.HealthScan, () => System.Threading.Tasks.Task.Run(() => GetSnapshot(false)), priority);
+            }
+        }
+        public static void Invalidate() => System.Threading.Interlocked.Increment(ref _generation);
+
+        private static HealthResult GetSnapshot(bool fresh)
+        {
+            // One set of WMI checks for simultaneous Home, hero and shell requests.
+            lock (SnapshotGate)
+            {
+                var language = LanguageService.Current;
+                var generation = System.Threading.Volatile.Read(ref _generation);
+                if (!fresh && _cached != null && _cachedLanguage == language && _cachedGeneration == generation && IsFresh(Environment.TickCount64, _cachedAt))
+                    return _cached;
+                var result = ComputeCore();
+                _cached = result;
+                _cachedAt = Environment.TickCount64;
+                _cachedLanguage = language;
+                _cachedGeneration = generation;
+                return result;
+            }
+        }
+
+        private static HealthResult ComputeCore()
         {
             var checks = new Func<(int Delta, HealthIssue? Issue)>[]
             {
@@ -32,7 +80,7 @@ namespace OptimizerWpf.Services
             // σειριακά, ο συνολικός χρόνος καθορίζεται από τον ΠΙΟ αργό έλεγχο αντί από το άθροισμα
             // όλων. AsOrdered() διατηρεί την ίδια σειρά ευρημάτων με πριν (σειριακά) για προβλέψιμη
             // εμφάνιση, χωρίς επιπλέον κόστος αφού είναι ήδη μόνο 5 στοιχεία.
-            var results = checks.AsParallel().AsOrdered().Select(check => check()).ToList();
+            var results = checks.AsParallel().AsOrdered().WithDegreeOfParallelism(Math.Clamp(PerformanceProfileService.Current.MaxParallelScans, 1, 3)).Select(check => check()).ToList();
 
             var score = 100 + results.Sum(r => r.Delta);
             var issues = results.Where(r => r.Issue != null).Select(r => r.Issue!).ToList();
@@ -41,13 +89,16 @@ namespace OptimizerWpf.Services
             return new HealthResult(score, issues);
         }
 
+        private static (int Delta, HealthIssue? Issue) Unknown(string english, string greek)
+            => (0, new HealthIssue(LanguageService.Current == "el" ? "Ανεπαρκή δεδομένα: " + greek : "Insufficient data: " + english, "Unknown"));
+
         private static (int Delta, HealthIssue? Issue) CheckSystemDriveSpace()
         {
             try
             {
                 var sysRoot = Path.GetPathRoot(Environment.SystemDirectory) ?? "C:\\";
                 var drive = new DriveInfo(sysRoot);
-                if (!drive.IsReady || drive.TotalSize <= 0) return (0, null);
+                if (!drive.IsReady || drive.TotalSize <= 0) return Unknown("Disk space", "Χώρος δίσκου");
 
                 var freePct = Math.Round(100.0 * drive.TotalFreeSpace / drive.TotalSize);
                 if (freePct < 10)
@@ -55,7 +106,7 @@ namespace OptimizerWpf.Services
                 if (freePct < 20)
                     return (-10, new HealthIssue(LanguageService.T("HealthScore_DiskLowSpace"), "Storage"));
             }
-            catch { /* drive can be unready mid-check - skip, matches the WinForms try/catch-empty pattern */ }
+            catch { return Unknown("Disk space", "Χώρος δίσκου"); }
             return (0, null);
         }
 
@@ -68,15 +119,15 @@ namespace OptimizerWpf.Services
             // used to test the original fix. Only the two servicing-stack-specific keys are checked.
             try
             {
-                var cbsPending = Registry.LocalMachine.OpenSubKey(
-                    @"SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending") != null;
-                var wuPending = Registry.LocalMachine.OpenSubKey(
-                    @"SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired") != null;
+                using var cbsPending = Registry.LocalMachine.OpenSubKey(
+                    @"SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending");
+                using var wuPending = Registry.LocalMachine.OpenSubKey(
+                    @"SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired");
 
-                if (cbsPending || wuPending)
+                if (cbsPending != null || wuPending != null)
                     return (-10, new HealthIssue(LanguageService.T("HealthScore_RebootPending"), "Restart"));
             }
-            catch { }
+            catch { return Unknown("Pending reboot", "Εκκρεμής επανεκκίνηση"); }
             return (0, null);
         }
 
@@ -88,10 +139,8 @@ namespace OptimizerWpf.Services
                 defenderScope.Connect();
                 using var searcher = new ManagementObjectSearcher(defenderScope, new ObjectQuery("SELECT RealTimeProtectionEnabled FROM MSFT_MpComputerStatus"));
                 using var results = searcher.Get();
-                var status = results.Cast<ManagementBaseObject>().FirstOrDefault();
-                if (status == null) return (0, null);
-
-                var realTimeOn = (bool)(status["RealTimeProtectionEnabled"] ?? true);
+                using var status = results.Cast<ManagementBaseObject>().FirstOrDefault();
+                if (status == null || status["RealTimeProtectionEnabled"] is not bool realTimeOn) return Unknown("Antivirus protection", "Προστασία antivirus");
                 if (realTimeOn) return (0, null);
 
                 // Real-time protection is off - check whether another active AV explains it (Windows
@@ -102,7 +151,8 @@ namespace OptimizerWpf.Services
                     var scScope = new ManagementScope(@"root\SecurityCenter2");
                     scScope.Connect();
                     using var scSearcher = new ManagementObjectSearcher(scScope, new ObjectQuery("SELECT displayName, productState FROM AntiVirusProduct"));
-                    foreach (ManagementBaseObject av in scSearcher.Get())
+                    using var avResults = scSearcher.Get();
+                    foreach (ManagementBaseObject av in avResults)
                     {
                         var name = av["displayName"]?.ToString() ?? "";
                         if (name.Contains("Windows Defender", StringComparison.OrdinalIgnoreCase) ||
@@ -126,7 +176,7 @@ namespace OptimizerWpf.Services
 
                 return (-20, new HealthIssue(LanguageService.T("HealthScore_DefenderOff"), "Defender"));
             }
-            catch { return (0, null); }
+            catch { return Unknown("Antivirus protection", "Προστασία antivirus"); }
         }
 
         private static (int Delta, HealthIssue? Issue) CheckStartupCount()
@@ -149,7 +199,7 @@ namespace OptimizerWpf.Services
                     return (-10, new HealthIssue($"{LanguageService.T("HealthScore_TooManyStartupPrefix")}{startupCount}{LanguageService.T("HealthScore_TooManyStartupSuffix")}", "Startup"));
                 }
             }
-            catch { }
+            catch { return Unknown("Startup entries", "Εφαρμογές εκκίνησης"); }
             return (0, null);
         }
 
@@ -176,7 +226,7 @@ namespace OptimizerWpf.Services
                     return (-10, new HealthIssue(LanguageService.T("HealthScore_NoRestorePointFound"), "RestorePoint"));
                 }
             }
-            catch { }
+            catch { return Unknown("Restore points", "Σημεία επαναφοράς"); }
             return (0, null);
         }
     }

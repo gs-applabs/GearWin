@@ -101,31 +101,45 @@ namespace OptimizerWpf.Views
 
         private async void RunHealthToolAsync(string busyLabel, System.Func<System.Threading.CancellationToken, System.Threading.Tasks.Task<(bool Success, string Output)>> action)
         {
-            if (_toolRunning) return; // SFC/DISM/chkdsk δεν πρέπει να τρέξουν ταυτόχρονα
+            if (_toolRunning) return;
             _toolRunning = true;
             TxtHealthToolsStatus.Text = $"{busyLabel}...";
             _toolCts = new System.Threading.CancellationTokenSource();
             BtnCancelHealthTool.Visibility = Visibility.Visible;
+            BtnCancelHealthTool.IsEnabled = true;
+            BtnCancelHealthTool.Content = LanguageService.Current == "el" ? "Ακύρωση αναμονής" : "Cancel pending";
+            BtnCancelHealthTool.ToolTip = LanguageService.Current == "el"
+                ? "Ακυρώνει εργασία που δεν ξεκίνησε. Η ενεργή επισκευή ολοκληρώνεται με ασφάλεια."
+                : "Cancels work that has not started. An active repair is allowed to finish safely.";
             using var busy = BusyScope.Begin(busyLabel);
             bool success; string output;
             try { (success, output) = await action(_toolCts.Token); }
+            catch (OperationCanceledException) when (_toolCts.IsCancellationRequested)
+            {
+                TxtHealthToolsStatus.Text = $"{busyLabel}: {LanguageService.T("Health_ToolCancelled")}";
+                return;
+            }
             catch (Exception ex) { success = false; output = ex.Message; }
             finally
             {
                 _toolRunning = false;
                 BtnCancelHealthTool.Visibility = Visibility.Collapsed;
-                busy.Dispose();
+                _toolCts.Dispose(); _toolCts = null;
             }
-            var cancelled = _toolCts.IsCancellationRequested;
-            _toolCts.Dispose(); _toolCts = null;
-            if (cancelled) { TxtHealthToolsStatus.Text = $"{busyLabel}: {LanguageService.T("Health_ToolCancelled")}"; return; }
             TxtHealthToolsStatus.Text = success ? $"{busyLabel}{LanguageService.T("Health_ToolCompletedSuffix")}" : $"{busyLabel}{LanguageService.T("Health_ToolFailedSuffix")}";
             var shown = output.Length > 3000 ? output[..3000] + LanguageService.T("Health_OutputTruncatedSuffix") : output;
             ThemedMessageBox.Show(string.IsNullOrWhiteSpace(shown) ? LanguageService.T("Health_NoOutput") : shown, busyLabel, MessageBoxButton.OK,
                 success ? MessageBoxImage.Information : MessageBoxImage.Warning);
         }
 
-        private void BtnCancelHealthTool_Click(object sender, RoutedEventArgs e) => _toolCts?.Cancel();
+        private void BtnCancelHealthTool_Click(object sender, RoutedEventArgs e)
+        {
+            _toolCts?.Cancel();
+            BtnCancelHealthTool.IsEnabled = false;
+            TxtHealthToolsStatus.Text = LanguageService.Current == "el"
+                ? "Ζητήθηκε ακύρωση αναμονής. Εάν η επισκευή έχει ξεκινήσει, αναμένεται η ολοκλήρωσή της."
+                : "Pending cancellation requested. If repair has started, waiting for completion.";
+        }
 
         private void BtnSfc_Click(object sender, RoutedEventArgs e) => RunHealthToolAsync(LanguageService.T("Health_SfcBtn"), ct => HealthCleanupService.RunSfcScanAsync(ct));
         private void BtnDismCheckHealth_Click(object sender, RoutedEventArgs e) => RunHealthToolAsync("DISM CheckHealth", ct => HealthCleanupService.RunDismCheckHealthAsync(ct));
@@ -159,7 +173,7 @@ namespace OptimizerWpf.Views
             TxtHealthToolsStatus.Text = LanguageService.T("Health_ScanningShortcuts");
             using var busy = BusyScope.Begin(LanguageService.T("Health_FindingBrokenShortcuts"));
             var count = await HealthCleanupService.FixBrokenShortcutsAsync();
-            TxtHealthToolsStatus.Text = $"{LanguageService.T("Health_ShortcutsFoundPrefix")}{count}{LanguageService.T("Health_ShortcutsFoundSuffix")}";
+            TxtHealthToolsStatus.Text = $"{LanguageService.T("Health_ItemsFoundPrefix")}{count}{LanguageService.T("Health_ItemsFoundSuffix")}";
         }
 
         private void BtnDotNetVersion_Click(object sender, RoutedEventArgs e) =>
@@ -181,7 +195,7 @@ namespace OptimizerWpf.Views
 
         private async void BtnRegCleanDelete_Click(object sender, RoutedEventArgs e)
         {
-            var selected = _findings.Where(f => f.IsSelected).Select(f => f.Finding).ToList();
+            var selected = _findings.Where(f => f.IsSelected && f.CanDelete).Select(f => f.Finding).ToList();
             if (selected.Count == 0)
             {
                 // ΔΙΟΡΘΩΣΗ (εξονυχιστικός έλεγχος εντόπισε): σιωπηλό return, καμία ένδειξη στον χρήστη -
@@ -202,16 +216,24 @@ namespace OptimizerWpf.Views
             // flow). Τώρα χρησιμοποιεί το ΙΔΙΟ μόνιμο HealthCleanupService.RegistryBackupsDir - όλα τα
             // registry backups (από ΟΠΟΙΟΔΗΠΟΤΕ σημείο της εφαρμογής) καταλήγουν πλέον σε ΕΝΑ μέρος.
             var backupDir = HealthCleanupService.RegistryBackupsDir;
-            Directory.CreateDirectory(backupDir);
-
             using var busy = BusyScope.Begin(LanguageService.T("Health_DeletingRegistryItems"));
+            // A requested restore point must not silently fail before registry mutations.
+            if (await RestoreGuardService.EnsureRecentAsync() == RestoreGuardResult.Failed)
+            {
+                TxtRegCleanStatus.Text = LanguageService.T("Health_DeletePartialFailed");
+                s_regCleanStatusCache = TxtRegCleanStatus.Text;
+                return;
+            }
             var ok = await HealthCleanupService.DeleteFindingsAsync(selected, backupDir);
 
             TxtRegCleanStatus.Text = ok
                 ? $"{LanguageService.T("Health_DeletedItemsPrefix")}{selected.Count}{LanguageService.T("Health_DeletedItemsMid")}{backupDir}"
                 : LanguageService.T("Health_DeletePartialFailed");
             s_regCleanStatusCache = TxtRegCleanStatus.Text;
-            foreach (var f in selected) _findings.Remove(_findings.First(r => r.Finding == f));
+            // Keep the actual remaining findings visible even if the operation partially failed.
+            var remaining = await HealthCleanupService.ScanRegistryAsync();
+            _findings.Clear();
+            foreach (var finding in remaining) _findings.Add(new RegistryFindingRow(finding));
             await RefreshRegBackupsAsync();
         }
 
@@ -237,7 +259,7 @@ namespace OptimizerWpf.Views
 
         private async void BtnRestoreRegBackup_Click(object sender, RoutedEventArgs e)
         {
-            if (sender is not Button { Tag: RegistryBackupRow row }) return;
+            if (sender is not Button { Tag: RegistryBackupRow row } || !row.CanRestore) return;
             var confirm = ThemedMessageBox.Show(
                 $"{LanguageService.T("Health_RestoreConfirmPrefix")}{row.DisplayName}{LanguageService.T("Health_RestoreConfirmSuffix")}",
                 LanguageService.T("Health_ConfirmTitle"), MessageBoxButton.YesNo, MessageBoxImage.Warning);
@@ -255,20 +277,16 @@ namespace OptimizerWpf.Views
             var browser = row.Entry;
             // ΝΕΟ (roadmap: "σύγκριση πριν/μετά σε καθαρισμούς") - ελεύθερος χώρος στον δίσκο συστήματος
             // πριν/μετά τον καθαρισμό, ώστε ο χρήστης να βλέπει το πραγματικό όφελος, όχι μόνο "έγινε".
-            var freeBefore = GetSystemDriveFreeGb();
             TxtBrowserCacheStatus.Text = $"{LanguageService.T("Health_ClearingCacheForPrefix")}{browser.Label}...";
             using var busy = BusyScope.Begin($"{LanguageService.T("Health_ClearingCachePrefix")}{browser.Label}...");
-            await HealthCleanupService.ClearBrowserCacheAsync(browser);
-            var freed = GetSystemDriveFreeGb() - freeBefore;
-            if (freed > 0.05) ImpactTrackingService.RecordBytesFreed((long)(freed * 1024 * 1024 * 1024));
-            var freedText = freed > 0.05 ? $" (+{freed:0.0} GB)" : "";
-            TxtBrowserCacheStatus.Text = $"{LanguageService.T("Health_CacheClearedPrefix")}{browser.Label}{LanguageService.T("Health_CacheClearedSuffix")}{freedText}";
-        }
-
-        private static double GetSystemDriveFreeGb()
-        {
-            try { return new DriveInfo(Path.GetPathRoot(Environment.SystemDirectory)!).AvailableFreeSpace / 1024.0 / 1024 / 1024; }
-            catch { return 0; }
+            try
+            {
+                var removed = await HealthCleanupService.ClearBrowserCacheAsync(browser);
+                if (removed > 0) ImpactTrackingService.RecordBytesFreed(removed);
+                TxtBrowserCacheStatus.Text = $"{browser.Label} · {QuickCleanService.FormatSize(removed)} " +
+                    (LanguageService.Current == "el" ? "λογικού μεγέθους αρχείων αφαιρέθηκαν" : "logical bytes removed");
+            }
+            catch (Exception ex) { TxtBrowserCacheStatus.Text = ex.Message; }
         }
 
         private async void BtnWinRERefresh_Click(object sender, RoutedEventArgs e) => await RefreshWinREAsync();
@@ -311,9 +329,10 @@ namespace OptimizerWpf.Views
     // Εγγυάται SetIdle ακόμα κι αν ο handler πετάξει εξαίρεση (αλλιώς η status bar έμενε "busy").
     internal sealed class BusyScope : IDisposable
     {
-        private BusyScope() { }
-        public static BusyScope Begin(string label) { StatusService.SetBusy(label); return new BusyScope(); }
-        public void Dispose() => StatusService.SetIdle(LanguageService.T("Ready"));
+        private readonly StatusService.Scope _scope;
+        private BusyScope(string label) { _scope = StatusService.BeginScope(label); }
+        public static BusyScope Begin(string label) => new BusyScope(label);
+        public void Dispose() => _scope.End(LanguageService.T("Ready"));
     }
 
     public class RegistryFindingRow : INotifyPropertyChanged
@@ -322,11 +341,13 @@ namespace OptimizerWpf.Views
         // ΝΕΟ - βελτίωση: η ακριβής registry τοποθεσία (+ValueName αν υπάρχει) που θα διαγραφεί -
         // βλ. σχόλιο στο HealthView.xaml.
         public string RegPathDisplay => string.IsNullOrEmpty(Finding.ValueName) ? Finding.RegPath : $"{Finding.RegPath}\\{Finding.ValueName}";
+        public bool CanDelete => HealthCleanupService.CanDeleteFinding(Finding);
+        public string ReviewLabel => CanDelete ? Finding.Category : Finding.Category + (LanguageService.Current == "el" ? " · Μόνο έλεγχος" : " · Review only");
         private bool _isSelected;
         public bool IsSelected
         {
             get => _isSelected;
-            set { _isSelected = value; PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsSelected))); }
+            set { _isSelected = CanDelete && value; PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsSelected))); }
         }
         public RegistryFindingRow(RegistryFinding finding) => Finding = finding;
         public event PropertyChangedEventHandler? PropertyChanged;
@@ -337,10 +358,11 @@ namespace OptimizerWpf.Views
         public string DisplayName { get; }
         public string SubText { get; }
         public string FullPath { get; }
+        public bool CanRestore => HealthCleanupService.CanRestoreBackup(FullPath);
 
         public RegistryBackupRow(RegistryBackupEntry entry)
         {
-            DisplayName = entry.FileName;
+            DisplayName = entry.FileName + (HealthCleanupService.CanRestoreBackup(entry.FullPath) ? "" : " · Legacy / review only");
             FullPath = entry.FullPath;
             SubText = $"{entry.CreatedAt:yyyy-MM-dd HH:mm}  •  {QuickCleanService.FormatSize(entry.SizeBytes)}";
         }
@@ -377,7 +399,7 @@ namespace OptimizerWpf.Views
             if (row.Icon != null) return;
             if (HealthView.BrowserExeCandidates.TryGetValue(row.Entry.Name, out var candidates))
                 row.Icon = candidates.Select(AppIconService.GetIconForFile).FirstOrDefault(i => i != null);
-            row.Icon ??= AppIconService.GetIconForFile(AppIconService.FindInstalledIconPath(row.Entry.Label) ?? "");
+            // Unknown identity stays neutral, not a similarly named application.
         }
     }
 }

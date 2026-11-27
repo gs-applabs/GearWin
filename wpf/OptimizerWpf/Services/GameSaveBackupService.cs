@@ -68,25 +68,104 @@ namespace OptimizerWpf.Services
             }
         }
 
-        public static Task<bool> BackupAsync(string destinationZipPath) => Task.Run(() =>
+        public static Task<bool> BackupAsync(string destinationZipPath) =>
+            GearWinCore.RunAsync(CoreWork.Backup, () => Task.Run(() => BackupFolders(KnownSaveFolders(), destinationZipPath)));
+
+        // Commit a new archive only after complete enumeration, stable reads and read-back verification.
+        // On any failure the old archive remains untouched.
+        internal static bool BackupFolders(IEnumerable<string> folders, string destinationZipPath)
         {
+            string? staged = null;
             try
             {
-                if (File.Exists(destinationZipPath)) File.Delete(destinationZipPath);
-                using var zip = ZipFile.Open(destinationZipPath, ZipArchiveMode.Create);
-                foreach (var folder in KnownSaveFolders().Where(Directory.Exists))
+                var destination = Path.GetFullPath(destinationZipPath);
+                var roots = new List<string>();
+                foreach (var folder in folders.Select(Path.GetFullPath).Distinct(StringComparer.OrdinalIgnoreCase))
                 {
-                    var root = Path.GetFileName(folder.TrimEnd(Path.DirectorySeparatorChar));
-                    foreach (var file in EnumerateFilesNoReparse(folder))
+                    try
                     {
-                        if (string.Equals(file, destinationZipPath, StringComparison.OrdinalIgnoreCase)) continue; // ποτέ το ίδιο το zip
-                        try { zip.CreateEntryFromFile(file, Path.Combine(root, Path.GetRelativePath(folder, file))); }
-                        catch { /* ένα κλειδωμένο/απρόσιτο αρχείο δεν ακυρώνει όλο το backup */ }
+                        if ((File.GetAttributes(folder) & FileAttributes.Directory) == 0) return false;
+                        if (!MaintenancePaths.IsOrdinaryLocalPath(folder)) return false;
+                        roots.Add(folder);
+                    }
+                    catch (DirectoryNotFoundException) { }
+                    catch (FileNotFoundException) { }
+                }
+                var parent = Path.GetDirectoryName(destination);
+                if (parent == null || !MaintenancePaths.IsOrdinaryLocalPath(parent, allowRemovable: true) ||
+                    (File.Exists(destination) && !MaintenancePaths.IsOrdinaryLocalPath(destination, allowRemovable: true))) return false;
+                if (roots.Count == 0) return false;
+                foreach (var root in roots)
+                {
+                    if (MaintenancePaths.IsWithin(root, destination))
+                        return false;
+                }
+                staged = destination + "." + Guid.NewGuid().ToString("N") + ".tmp";
+                var expected = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                var buffer = new byte[128 * 1024];
+                using (var stream = new FileStream(staged, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None))
+                {
+                    using (var zip = new ZipArchive(stream, ZipArchiveMode.Create, leaveOpen: true))
+                    {
+                        foreach (var folder in roots)
+                        {
+                            var prefix = Path.GetFileName(Path.TrimEndingDirectorySeparator(folder));
+                            foreach (var file in EnumerateStrict(folder))
+                            {
+                                var name = prefix + "/" + Path.GetRelativePath(folder, file).Replace('\\', '/');
+                                // FileShare.Read denies concurrent writers/deletion while the copy is made.
+                                using var input = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read);
+                                var entry = zip.CreateEntry(name, CompressionLevel.Optimal);
+                                using var output = entry.Open();
+                                using var hash = System.Security.Cryptography.IncrementalHash.CreateHash(System.Security.Cryptography.HashAlgorithmName.SHA256);
+                                int read;
+                                while ((read = input.Read(buffer, 0, buffer.Length)) > 0)
+                                {
+                                    output.Write(buffer, 0, read);
+                                    hash.AppendData(buffer, 0, read);
+                                }
+                                expected.Add(name, Convert.ToHexString(hash.GetHashAndReset()));
+                            }
+                        }
+                    }
+                    stream.Flush(flushToDisk: true);
+                }
+                using (var verify = ZipFile.OpenRead(staged))
+                {
+                    if (verify.Entries.Count != expected.Count) return false;
+                    foreach (var entry in verify.Entries)
+                    {
+                        using var data = entry.Open();
+                        if (!expected.TryGetValue(entry.FullName, out var hash) ||
+                            hash != Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(data))) return false;
                     }
                 }
+                // Same-directory staging; do not remove the last good copy before commit.
+                File.Move(staged, destination, overwrite: true);
+                staged = null;
                 return true;
             }
             catch { return false; }
-        });
+            finally { if (staged != null) try { File.Delete(staged); } catch { } }
+        }
+
+        private static IEnumerable<string> EnumerateStrict(string root)
+        {
+            var stack = new Stack<string>();
+            stack.Push(root);
+            while (stack.Count > 0)
+            {
+                var directory = stack.Pop();
+                if ((File.GetAttributes(directory) & FileAttributes.ReparsePoint) != 0)
+                    throw new IOException("Backup refuses redirected directories.");
+                foreach (var file in Directory.EnumerateFiles(directory))
+                {
+                    if ((File.GetAttributes(file) & FileAttributes.ReparsePoint) != 0)
+                        throw new IOException("Backup refuses redirected files.");
+                    yield return file;
+                }
+                foreach (var child in Directory.EnumerateDirectories(directory)) stack.Push(child);
+            }
+        }
     }
 }

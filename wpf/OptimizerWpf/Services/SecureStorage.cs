@@ -15,82 +15,106 @@ namespace OptimizerWpf.Services
     {
         public static string RootDir => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "GearWin");
 
-        public static void SecureDirectory(string dir)
+        private static readonly SecurityIdentifier Admin = new(WellKnownSidType.BuiltinAdministratorsSid, null);
+        private static readonly SecurityIdentifier SystemSid = new(WellKnownSidType.LocalSystemSid, null);
+        private static readonly SecurityIdentifier TrustedInstaller = new("S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464");
+        private const FileSystemRights WriteRights = FileSystemRights.WriteData | FileSystemRights.AppendData |
+            FileSystemRights.Delete | FileSystemRights.DeleteSubdirectoriesAndFiles | FileSystemRights.ChangePermissions |
+            FileSystemRights.TakeOwnership | FileSystemRights.WriteAttributes | FileSystemRights.WriteExtendedAttributes;
+
+        internal static bool IsTrustedWriter(SecurityIdentifier sid) =>
+            sid.Equals(Admin) || sid.Equals(SystemSid) || sid.Equals(TrustedInstaller);
+
+        private static bool IsProtected(FileSystemSecurity security)
         {
-            Directory.CreateDirectory(dir);
-            var security = new DirectorySecurity();
-            security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
-            var inherit = InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit;
-            void Allow(WellKnownSidType sid, FileSystemRights rights) =>
-                security.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(sid, null), rights, inherit,
-                    PropagationFlags.None, AccessControlType.Allow));
-            Allow(WellKnownSidType.LocalSystemSid, FileSystemRights.FullControl);
-            Allow(WellKnownSidType.BuiltinAdministratorsSid, FileSystemRights.FullControl);
-            Allow(WellKnownSidType.BuiltinUsersSid, FileSystemRights.ReadAndExecute);
-            new DirectoryInfo(dir).SetAccessControl(security);
+            // A null DACL grants unrestricted access; an empty rule enumeration is not proof of protection.
+            if (new RawSecurityDescriptor(security.GetSecurityDescriptorBinaryForm(), 0).DiscretionaryAcl == null) return false;
+            if (security.GetOwner(typeof(SecurityIdentifier)) is not SecurityIdentifier owner || !IsTrustedWriter(owner)) return false;
+            foreach (FileSystemAccessRule rule in security.GetAccessRules(true, true, typeof(SecurityIdentifier)))
+            {
+                if (rule.AccessControlType != AccessControlType.Allow ||
+                    (rule.PropagationFlags & PropagationFlags.InheritOnly) != 0 ||
+                    (rule.FileSystemRights & WriteRights) == 0) continue;
+                if (rule.IdentityReference is not SecurityIdentifier sid || !IsTrustedWriter(sid)) return false;
+            }
+            return true;
         }
 
-        // true μόνο αν ΚΑΝΕΝΑΣ μη-διαχειριστής (Users, Authenticated Users, Everyone, ο τρέχων χρήστης) δεν έχει δικαίωμα
-        // εγγραφής/δημιουργίας/διαγραφής στον φάκελο. Χρησιμοποιείται πριν καταχωρηθεί εργασία που ξεκινά ένα exe με
-        // ΥΨΗΛΑ δικαιώματα χωρίς UAC: αν το exe ζει σε εγγράψιμο από τον χρήστη φάκελο (Downloads, Desktop, φάκελος
-        // ανάπτυξης), κάθε μη-elevated διεργασία θα μπορούσε να το αντικαταστήσει και να αποκτήσει admin σε κάθε σύνδεση.
         public static bool IsDirectoryAdminOnlyWritable(string? dir)
         {
             try
             {
-                if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir)) return false;
-                const FileSystemRights writeRights = FileSystemRights.WriteData | FileSystemRights.AppendData |
-                    FileSystemRights.CreateFiles | FileSystemRights.CreateDirectories | FileSystemRights.Delete |
-                    FileSystemRights.DeleteSubdirectoriesAndFiles | FileSystemRights.ChangePermissions |
-                    FileSystemRights.TakeOwnership | FileSystemRights.WriteAttributes | FileSystemRights.WriteExtendedAttributes;
-                var risky = new[]
-                {
-                    new SecurityIdentifier(WellKnownSidType.BuiltinUsersSid, null),
-                    new SecurityIdentifier(WellKnownSidType.AuthenticatedUserSid, null),
-                    new SecurityIdentifier(WellKnownSidType.WorldSid, null),
-                    WindowsIdentity.GetCurrent().User!,
-                };
-                var rules = new DirectoryInfo(dir).GetAccessControl().GetAccessRules(true, true, typeof(SecurityIdentifier));
-                foreach (FileSystemAccessRule r in rules)
-                {
-                    if (r.AccessControlType != AccessControlType.Allow) continue;
-                    if ((r.FileSystemRights & writeRights) == 0) continue;
-                    if (Array.Exists(risky, s => s.Equals(r.IdentityReference))) return false;
-                }
-                return true;
+                return !string.IsNullOrEmpty(dir) && MaintenancePaths.IsOrdinaryLocalPath(dir) &&
+                    Directory.Exists(dir) && IsProtected(new DirectoryInfo(dir).GetAccessControl(AccessControlSections.Access | AccessControlSections.Owner));
             }
             catch { return false; }
         }
 
-        public static void EnsureRoot() => SecureDirectory(RootDir);
-
-        // Προσωρινός φάκελος εργασίας για αρχεία που θα χρησιμοποιηθούν από elevated εργαλεία. Επιστρέφει νέο μοναδικό
-        // υποφάκελο (κληρονομεί το κλειδωμένο ACL). Ρίχνει εξαίρεση αν ο φάκελος δεν μπορεί να κλειδωθεί - ποτέ
-        // "σιωπηλή" υποβάθμιση σε μη ασφαλή διαδρομή.
-        public static string NewPrivateTempDir(string prefix)
-        {
-            EnsureRoot();
-            PurgeOldTemp();
-            var dir = Path.Combine(RootDir, "tmp", $"{prefix}_{Guid.NewGuid():N}");
-            Directory.CreateDirectory(dir);
-            return dir;
-        }
-
-        // Υπολείμματα (π.χ. διεργασία που τερματίστηκε πριν τον καθαρισμό) - διαγράφονται όσα είναι παλιότερα από 1 μέρα.
-        private static void PurgeOldTemp()
+        internal static bool IsProtectedFile(string? path)
         {
             try
             {
-                var tmp = Path.Combine(RootDir, "tmp");
-                if (!Directory.Exists(tmp)) return;
-                foreach (var d in Directory.GetDirectories(tmp))
-                    if (DateTime.UtcNow - Directory.GetCreationTimeUtc(d) > TimeSpan.FromDays(1))
-                        try { Directory.Delete(d, true); } catch { }
+                return !string.IsNullOrEmpty(path) &&
+                    MaintenancePaths.IsOrdinaryLocalPath(path) && File.Exists(path) &&
+                    IsDirectoryAdminOnlyWritable(Path.GetDirectoryName(path)) &&
+                    IsProtected(new FileInfo(path).GetAccessControl(AccessControlSections.Access | AccessControlSections.Owner));
             }
-            catch { }
+            catch { return false; }
         }
 
-        public static string NewPrivateTempFile(string prefix, string extension) =>
-            Path.Combine(NewPrivateTempDir(prefix), "file" + extension);
+        internal static bool IsProtectedExecutable(string? path) =>
+            string.Equals(Path.GetExtension(path), ".exe", StringComparison.OrdinalIgnoreCase) && IsProtectedFile(path);
+
+        private static DirectorySecurity NewSecurity()
+        {
+            var security = new DirectorySecurity();
+            security.SetOwner(Admin);
+            security.SetAccessRuleProtection(true, false);
+            var inherit = InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit;
+            security.AddAccessRule(new FileSystemAccessRule(SystemSid, FileSystemRights.FullControl, inherit, PropagationFlags.None, AccessControlType.Allow));
+            security.AddAccessRule(new FileSystemAccessRule(Admin, FileSystemRights.FullControl, inherit, PropagationFlags.None, AccessControlType.Allow));
+            security.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(WellKnownSidType.BuiltinUsersSid, null), FileSystemRights.ReadAndExecute, inherit, PropagationFlags.None, AccessControlType.Allow));
+            return security;
+        }
+
+        public static void SecureDirectory(string dir)
+        {
+            var full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(dir));
+            var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(RootDir));
+            if (!string.Equals(full, root, StringComparison.OrdinalIgnoreCase) && !MaintenancePaths.IsWithin(root, full))
+                throw new IOException("Secure storage must be under the GearWin root.");
+            if (!string.Equals(full, root, StringComparison.OrdinalIgnoreCase))
+                SecureDirectory(Path.GetDirectoryName(full)!);
+            else if (!MaintenancePaths.IsOrdinaryLocalPath(Path.GetDirectoryName(root)!))
+                throw new IOException("Unsafe secure storage parent.");
+
+            // Existing storage is never blindly re-ACL'd: it could contain untrusted files
+            // or be a link. Fail closed, preserve its contents for explicit migration.
+            if (!Directory.Exists(full))
+                new DirectoryInfo(full).Create(NewSecurity());
+            if (!IsDirectoryAdminOnlyWritable(full))
+                throw new IOException("Secure storage is not protected. Repair or migrate its permissions before proceeding.");
+        }
+
+        public static void EnsureRoot() => SecureDirectory(RootDir);
+
+        public static string NewPrivateTempDir(string prefix)
+        {
+            if (string.IsNullOrEmpty(prefix) || prefix.Length > 40 ||
+                !System.Text.RegularExpressions.Regex.IsMatch(prefix, @"\A[A-Za-z0-9_-]+\z"))
+                throw new ArgumentException("Invalid temporary directory prefix.", nameof(prefix));
+            var dir = Path.Combine(RootDir, "tmp", $"{prefix}_{Guid.NewGuid():N}");
+            SecureDirectory(dir);
+            // Do not purge old directories by age alone: another process may still own
+            // a long-running job. Orphan cleanup requires explicit ownership evidence.
+            return dir;
+        }
+
+        public static string NewPrivateTempFile(string prefix, string extension)
+        {
+            if (!System.Text.RegularExpressions.Regex.IsMatch(extension ?? "", @"\A\.[A-Za-z0-9]{1,12}\z"))
+                throw new ArgumentException("Invalid extension.", nameof(extension));
+            return Path.Combine(NewPrivateTempDir(prefix), "file" + extension);
+        }
     }
 }

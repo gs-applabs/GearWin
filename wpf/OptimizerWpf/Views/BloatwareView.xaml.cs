@@ -37,8 +37,7 @@ namespace OptimizerWpf.Views
         // εφαρμογή (CheckRecommendedInstalledAsync) επαναλαμβανόταν από την αρχή κάθε φορά. Η cache
         // ζει όσο τρέχει η εφαρμογή· ενημερώνεται ΚΑΙ από τα Install/Uninstall handlers παρακάτω ώστε
         // να μην ξεμείνει stale μέσα στην ίδια συνεδρία.
-        private static readonly Dictionary<string, bool> s_recommendedInstalledCache = new();
-        private static bool s_recommendedScanned;
+        private bool _recommendedBusy;
 
         private readonly ObservableCollection<BuiltinAppRow> _builtin = new();
         private readonly ObservableCollection<RecommendedAppRow> _recommended = new();
@@ -97,38 +96,27 @@ namespace OptimizerWpf.Views
         // εφαρμογή τρέχει elevated). Τώρα ελέγχεται ΚΑΙ το μητρώο Uninstall (ίδιος μηχανισμός με το
         // AppIconService - ανεξάρτητος από winget/elevation) ως δεύτερο, ανεξάρτητο σήμα - "εγκατεστημένη"
         // αν ΤΟ ΕΝΑ ΑΠΟ ΤΑ ΔΥΟ το επιβεβαιώνει, πιο ανθεκτικό από το να βασίζεται μόνο στο winget.
-        private async System.Threading.Tasks.Task CheckRecommendedInstalledAsync()
+        private async System.Threading.Tasks.Task CheckRecommendedInstalledAsync(bool refresh = false)
         {
-            // Λήψη logos ΠΑΝΤΑ (φθηνό, ήδη cached τοπικά μέσω LogoCacheService - βλ. σχόλιο εκεί).
-            _ = System.Threading.Tasks.Task.WhenAll(_recommended.Select(async row => row.Icon = await LogoCacheService.GetLogoAsync(row.App.WingetId)));
-
-            if (s_recommendedScanned)
+            if (_recommendedBusy) return;
+            _recommendedBusy = true;
+            try
             {
+                await System.Threading.Tasks.Task.WhenAll(_recommended.Select(async row => row.Icon = await LogoCacheService.GetLogoAsync(row.App.WingetId)));
+                TxtRecommendedStatus.Text = LanguageService.T("Bloatware_CheckingInstalled");
+                var inventory = await RecommendedInventoryService.GetAsync(refresh);
                 foreach (var row in _recommended)
-                    if (s_recommendedInstalledCache.TryGetValue(row.App.WingetId, out var installed)) row.IsInstalled = installed;
-                TxtRecommendedStatus.Text = LanguageService.T("Bloatware_ReadyDot");
-                return;
+                    row.InstalledState = inventory.TryGetValue(row.App.WingetId, out var state) ? state : null;
+                TxtRecommendedStatus.Text = _recommended.Any(row => row.InstalledState == null)
+                    ? (LanguageService.Current == "el" ? "Ορισμένες εφαρμογές χρειάζονται επιβεβαίωση." : "Some apps need verification.")
+                    : LanguageService.T("Bloatware_ReadyDot");
             }
-
-            TxtRecommendedStatus.Text = LanguageService.T("Bloatware_CheckingInstalled");
-            foreach (var row in _recommended)
-            {
-                var iconPath = AppIconService.FindInstalledIconPath(row.App.Title);
-                var installedViaWinget = await BloatwareService.IsWingetAppInstalledAsync(row.App.WingetId);
-                row.IsInstalled = installedViaWinget || iconPath != null;
-                s_recommendedInstalledCache[row.App.WingetId] = row.IsInstalled;
-                if (row.Icon == null && iconPath != null) row.Icon = AppIconService.GetIconForFile(iconPath);
-            }
-            s_recommendedScanned = true;
-            TxtRecommendedStatus.Text = LanguageService.T("Bloatware_ReadyDot");
+            catch (System.Exception ex) { TxtRecommendedStatus.Text = ex.Message; }
+            finally { _recommendedBusy = false; }
         }
 
-        private void BtnRefreshRecommended_Click(object sender, RoutedEventArgs e)
-        {
-            s_recommendedScanned = false;
-            s_recommendedInstalledCache.Clear();
-            _ = CheckRecommendedInstalledAsync();
-        }
+        private async void BtnRefreshRecommended_Click(object sender, RoutedEventArgs e)
+            => await CheckRecommendedInstalledAsync(refresh: true);
 
         private static string BuiltinTitle(BuiltinAppRow row) => row.Name;
 
@@ -170,47 +158,61 @@ namespace OptimizerWpf.Views
 
         private async void BtnRecommendedToggle_Click(object sender, RoutedEventArgs e)
         {
-            if (sender is not Button { Tag: RecommendedAppRow row } button) return;
+            if (sender is not Button { Tag: RecommendedAppRow row } button || _recommendedBusy) return;
+            _recommendedBusy = true;
             button.IsEnabled = false;
-            StatusService.SetBusy($"{(row.IsInstalled ? LanguageService.T("Bloatware_Uninstall") : LanguageService.T("Bloatware_Install"))} {row.App.Title}...");
-            // K-Lite έχει πρόσθετο βήμα μετά την εγκατάσταση (ορισμός WMP/MPC-HC ως προεπιλογή +
-            // καρφίτσωμα στη γραμμή εργασιών, port του ps1 original ~14731 - βλ. BloatwareService).
-            var ok = row.IsInstalled
-                ? await BloatwareService.WingetUninstallAsync(row.App.WingetId)
-                : row.App.WingetId == "CodecGuide.K-LiteCodecPack.Mega"
-                    ? await BloatwareService.InstallKLiteAsync()
-                    : await BloatwareService.WingetInstallAsync(row.App.WingetId);
-            StatusService.SetIdle(LanguageService.T("Ready"));
-            button.IsEnabled = true;
-            if (ok) { row.IsInstalled = !row.IsInstalled; s_recommendedInstalledCache[row.App.WingetId] = row.IsInstalled; }
-            else ThemedMessageBox.Show($"{LanguageService.T("Bloatware_ActionFailedPrefix")}{row.App.Title}{LanguageService.T("Bloatware_ActionFailedSuffix")}", LanguageService.T("Bloatware_ErrorTitle"), MessageBoxButton.OK, MessageBoxImage.Warning);
+            using var busy = StatusService.BeginScope(row.App.Title);
+            try
+            {
+                if (row.InstalledState == null)
+                {
+                    row.InstalledState = await BloatwareService.ProbeInstalledAsync(row.App.WingetId);
+                    if (row.InstalledState == null)
+                        TxtRecommendedStatus.Text = LanguageService.Current == "el" ? "Αδυναμία επιβεβαίωσης εγκατάστασης." : "Installation state could not be verified.";
+                    return;
+                }
+                var ok = row.IsInstalled
+                    ? await BloatwareService.WingetUninstallAsync(row.App.WingetId)
+                    : row.App.WingetId == "CodecGuide.K-LiteCodecPack.Mega"
+                        ? await BloatwareService.InstallKLiteAsync()
+                        : await BloatwareService.WingetInstallAsync(row.App.WingetId);
+                RecommendedInventoryService.Invalidate();
+                row.InstalledState = await BloatwareService.ProbeInstalledAsync(row.App.WingetId);
+                if (!ok) ThemedMessageBox.Show($"{LanguageService.T("Bloatware_ActionFailedPrefix")}{row.App.Title}{LanguageService.T("Bloatware_ActionFailedSuffix")}", LanguageService.T("Bloatware_ErrorTitle"), MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+            catch (System.Exception ex) { TxtRecommendedStatus.Text = ex.Message; }
+            finally { button.IsEnabled = true; _recommendedBusy = false; }
         }
 
-        // ΝΕΟ - roadmap "Μαζική επιλογή ανά κατηγορία" - εγκαθιστά όλες τις εφαρμογές της ομάδας που
-        // ΔΕΝ είναι ήδη εγκατεστημένες, μία-μία (winget δεν υποστηρίζει αξιόπιστα παράλληλες κλήσεις
-        // στην ίδια σύνοδο) με ενημέρωση της γραμμής κατάστασης ανά εφαρμογή.
         private async void BtnInstallGroup_Click(object sender, RoutedEventArgs e)
         {
-            if (sender is not Button { Tag: string groupName } button) return;
-            var toInstall = _recommended.Where(r => r.App.Group == groupName && !r.IsInstalled).ToList();
+            if (sender is not Button { Tag: string groupName } button || _recommendedBusy) return;
+            var toInstall = _recommended.Where(r => r.App.Group == groupName && r.InstalledState == false).ToList();
             if (toInstall.Count == 0) return;
             if (ThemedMessageBox.Show($"{LanguageService.T("Bloatware_InstallAllConfirmPrefix")}{toInstall.Count}{LanguageService.T("Bloatware_InstallAllConfirmSuffix")}",
                     LanguageService.T("Bloatware_ConfirmTitle"), MessageBoxButton.YesNo, MessageBoxImage.Information) != MessageBoxResult.Yes) return;
-
+            _recommendedBusy = true;
             button.IsEnabled = false;
-            var failed = 0;
-            foreach (var row in toInstall)
+            using var busy = StatusService.BeginScope(LanguageService.T("Bloatware_Install"));
+            int failed = 0;
+            try
             {
-                StatusService.SetBusy($"{LanguageService.T("Bloatware_Install")} {row.App.Title}...");
-                var ok = row.App.WingetId == "CodecGuide.K-LiteCodecPack.Mega"
-                    ? await BloatwareService.InstallKLiteAsync()
-                    : await BloatwareService.WingetInstallAsync(row.App.WingetId);
-                if (ok) { row.IsInstalled = true; s_recommendedInstalledCache[row.App.WingetId] = true; } else failed++;
+                foreach (var row in toInstall)
+                {
+                    var ok = row.App.WingetId == "CodecGuide.K-LiteCodecPack.Mega"
+                        ? await BloatwareService.InstallKLiteAsync()
+                        : await BloatwareService.WingetInstallAsync(row.App.WingetId);
+                    row.InstalledState = null;
+                    if (!ok) failed++;
+                }
+                RecommendedInventoryService.Invalidate();
+                var inventory = await RecommendedInventoryService.GetAsync(refresh: true);
+                foreach (var row in _recommended)
+                    row.InstalledState = inventory.TryGetValue(row.App.WingetId, out var state) ? state : null;
+                if (failed > 0) ThemedMessageBox.Show($"{failed}{LanguageService.T("Bloatware_InstallAllFailedSuffix")}", LanguageService.T("Bloatware_ErrorTitle"), MessageBoxButton.OK, MessageBoxImage.Warning);
             }
-            StatusService.SetIdle(LanguageService.T("Ready"));
-            button.IsEnabled = true;
-            if (failed > 0)
-                ThemedMessageBox.Show($"{failed}{LanguageService.T("Bloatware_InstallAllFailedSuffix")}", LanguageService.T("Bloatware_ErrorTitle"), MessageBoxButton.OK, MessageBoxImage.Warning);
+            catch (System.Exception ex) { RecommendedInventoryService.Invalidate(); TxtRecommendedStatus.Text = ex.Message; }
+            finally { button.IsEnabled = true; _recommendedBusy = false; }
         }
 
         private void BtnOpenUwpManager_Click(object sender, RoutedEventArgs e)
@@ -224,44 +226,95 @@ namespace OptimizerWpf.Views
         // εμφανίζεται με ελαφρώς διαφορετικό όνομα στο Uninstall registry έναντι στο Run key).
         private async void BtnRefreshInstalledApps_Click(object sender, RoutedEventArgs e)
         {
-            StatusService.SetBusy(LanguageService.T("Bloatware_LoadingInstalled"));
-            _installedApps.Clear();
-            var startupItems = await SystemService.LoadStartupItemsAsync();
-            foreach (var app in await BloatwareService.LoadInstalledAppsAsync())
+            if (_deepUninstallBusy) return;
+            _deepUninstallBusy = true;
+            if (sender is Button button) button.IsEnabled = false;
+            using var busy = StatusService.BeginScope(LanguageService.T("Bloatware_LoadingInstalled"));
+            try
             {
-                var alsoAtStartup = app.DisplayName.Length >= 4 && startupItems.Any(s =>
-                    s.Name.Length >= 4 &&
-                    (app.DisplayName.Contains(s.Name, System.StringComparison.CurrentCultureIgnoreCase) ||
-                     s.Name.Contains(app.DisplayName, System.StringComparison.CurrentCultureIgnoreCase)));
-                _installedApps.Add(new DeepUninstallRow(app, alsoAtStartup));
+                var startupItems = await SystemService.LoadStartupItemsAsync();
+                var apps = await BloatwareService.LoadInstalledAppsAsync();
+                _installedApps.Clear();
+                foreach (var app in apps)
+                {
+                    var alsoAtStartup = app.DisplayName.Length >= 4 && startupItems.Any(s =>
+                        s.Name.Length >= 4 &&
+                        (app.DisplayName.Contains(s.Name, System.StringComparison.CurrentCultureIgnoreCase) ||
+                         s.Name.Contains(app.DisplayName, System.StringComparison.CurrentCultureIgnoreCase)));
+                    _installedApps.Add(new DeepUninstallRow(app, alsoAtStartup));
+                }
             }
-            StatusService.SetIdle(LanguageService.T("Ready"));
+            catch (Exception ex) { busy.End(ex.Message); }
+            finally
+            {
+                if (sender is Button b) b.IsEnabled = true;
+                _deepUninstallBusy = false;
+            }
         }
+
+        private bool _deepUninstallBusy;
 
         private async void BtnDeepUninstall_Click(object sender, RoutedEventArgs e)
         {
-            if (sender is not Button { Tag: DeepUninstallRow row }) return;
-            if (ThemedMessageBox.Show($"{LanguageService.T("Bloatware_UninstallConfirmPrefix")}{row.App.DisplayName}{LanguageService.T("Bloatware_UninstallConfirmSuffix")}",
-                    LanguageService.T("Bloatware_ConfirmTitle"), MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+            if (sender is not Button { Tag: DeepUninstallRow row } button || _deepUninstallBusy) return;
+            bool greek = LanguageService.Current == "el";
+            var question = $"{LanguageService.T("Bloatware_UninstallConfirmPrefix")}{row.App.DisplayName}{LanguageService.T("Bloatware_UninstallConfirmSuffix")}";
+            if (row.App.MachineProductCode == null)
+                question += greek ? "\n\nΗ απεγκατάσταση θα γίνει από τις Ρυθμίσεις των Windows." :
+                    "\n\nUninstall will be performed from Windows Settings.";
+            if (ThemedMessageBox.Show(question, LanguageService.T("Bloatware_ConfirmTitle"),
+                    MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
 
-            StatusService.SetBusy(LanguageService.T("Sys_CreatingRestorePoint"));
-            await RestoreGuardService.EnsureRecentAsync(); // ΝΕΟ (6.1.0) - ασφάλεια πριν από απεγκατάσταση
-            StatusService.SetBusy($"{LanguageService.T("Bloatware_Uninstall")} {row.App.DisplayName}...");
-            int exitCode;
-            try { exitCode = await BloatwareService.UninstallAppAsync(row.App.UninstallString); }
-            catch { exitCode = -1; }
-            StatusService.SetIdle(LanguageService.T("Ready"));
-            // Μόνο αν η απεγκατάσταση ΟΛΟΚΛΗΡΩΘΗΚΕ (0 ή 3010 = χρειάζεται επανεκκίνηση). Πριν, ακόμη κι αν ο χρήστης
-            // ΑΚΥΡΩΝΕ τον uninstaller, η εφαρμογή αφαιρούνταν από τη λίστα και η εφαρμογή πρότεινε διαγραφή των
-            // φακέλων δεδομένων της ΕΝΩ ΕΙΝΑΙ ΑΚΟΜΑ ΕΓΚΑΤΕΣΤΗΜΕΝΗ.
-            if (exitCode != 0 && exitCode != 3010) return;
-            _installedApps.Remove(row);
+            _deepUninstallBusy = true;
+            button.IsEnabled = false;
+            using var busy = StatusService.BeginScope(LanguageService.T("Sys_CreatingRestorePoint"));
+            try
+            {
+                if (row.App.MachineProductCode != null &&
+                    await RestoreGuardService.EnsureRecentAsync() == RestoreGuardResult.Failed)
+                {
+                    ThemedMessageBox.Show(greek ? "Δεν δημιουργήθηκε σημείο επαναφοράς. Η απεγκατάσταση δεν ξεκίνησε." :
+                        "Restore point failed. Uninstall was not started.", "GearWin", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return;
+                }
+                busy.Update($"{LanguageService.T("Bloatware_Uninstall")} {row.App.DisplayName}...");
+                var result = await SafeUninstallService.UninstallAsync(row.App);
+                RecommendedInventoryService.Invalidate();
+                if (result.State != SafeUninstallService.Outcome.Removed)
+                {
+                    string message = result.State switch
+                    {
+                        SafeUninstallService.Outcome.WindowsSettingsOpened => greek
+                            ? "Ολοκληρώστε την απεγκατάσταση στις Ρυθμίσεις και ανανεώστε τη λίστα."
+                            : "Complete uninstall in Windows Settings and refresh the list.",
+                        SafeUninstallService.Outcome.RestartRequired => greek
+                            ? "Απαιτείται επανεκκίνηση. Δεν αφαιρέθηκαν φάκελοι δεδομένων."
+                            : "Restart required. No data folders were removed.",
+                        SafeUninstallService.Outcome.NotVerified => greek
+                            ? "Η αφαίρεση δεν επιβεβαιώθηκε. Η καταχώρηση διατηρείται."
+                            : "Removal could not be verified. The entry is retained.",
+                        _ => (greek ? "Η απεγκατάσταση απέτυχε ή δεν ολοκληρώθηκε." :
+                            "Uninstall failed or did not complete.") + (result.ExitCode is int code ? $" ({code})" : "")
+                    };
+                    busy.End(message);
+                    ThemedMessageBox.Show(message, "GearWin", MessageBoxButton.OK, MessageBoxImage.Information);
+                    return;
+                }
 
-            var residuals = BloatwareService.FindResidualFolders(row.App.DisplayName);
-            if (residuals.Count == 0) return;
-            var msg = LanguageService.T("Bloatware_ResidualFoldersFoundPrefix") + string.Join("\n", residuals) + LanguageService.T("Bloatware_ResidualFoldersFoundSuffix");
-            if (ThemedMessageBox.Show(msg, LanguageService.T("Bloatware_ResidualFilesTitle"), MessageBoxButton.YesNo, MessageBoxImage.Information) != MessageBoxResult.Yes) return;
-            foreach (var r in residuals) BloatwareService.DeleteResidualFolder(r);
+                _installedApps.Remove(row);
+                var residuals = await System.Threading.Tasks.Task.Run(() => BloatwareService.FindResidualFolders(row.App.DisplayName));
+                if (residuals.Count > 0)
+                {
+                    var note = greek
+                        ? "Πιθανοί φάκελοι για χειροκίνητο έλεγχο. Μπορεί να περιέχουν προσωπικά ή κοινόχρηστα δεδομένα. Δεν διαγράφηκε τίποτα."
+                        : "Possible folders for manual review. They may contain personal or shared data. Nothing was deleted.";
+                    ThemedMessageBox.Show(note + "\n\n" + string.Join("\n", residuals),
+                        LanguageService.T("Bloatware_ResidualFilesTitle"), MessageBoxButton.OK, MessageBoxImage.Information);
+                }
+                busy.End(greek ? "Η απεγκατάσταση επιβεβαιώθηκε." : "Uninstall verified.");
+            }
+            catch (Exception ex) { busy.End(ex.Message); }
+            finally { button.IsEnabled = true; _deepUninstallBusy = false; }
         }
 
         // ===== Πρόσθετες Λειτουργίες Windows (ενοποιημένη λίστα - βλ. σχόλιο στο XAML) =====
@@ -380,13 +433,17 @@ namespace OptimizerWpf.Views
     public class RecommendedAppRow : INotifyPropertyChanged
     {
         public RecommendedApp App { get; }
-        private bool _isInstalled;
-        public bool IsInstalled
+        private bool? _installedState;
+        public bool? InstalledState
         {
-            get => _isInstalled;
-            set { _isInstalled = value; PropertyChanged?.Invoke(this, new(nameof(IsInstalled))); PropertyChanged?.Invoke(this, new(nameof(ButtonLabel))); }
+            get => _installedState;
+            set { _installedState = value; PropertyChanged?.Invoke(this, new(nameof(InstalledState))); PropertyChanged?.Invoke(this, new(nameof(IsInstalled))); PropertyChanged?.Invoke(this, new(nameof(ButtonLabel))); }
         }
-        public string ButtonLabel => IsInstalled ? LanguageService.T("Bloatware_Uninstall") : LanguageService.T("Bloatware_Install");
+        public bool IsInstalled { get => InstalledState == true; set => InstalledState = value; }
+        public string ButtonLabel => InstalledState == null
+            ? (LanguageService.Current == "el" ? "Έλεγχος" : "Verify")
+            : IsInstalled ? LanguageService.T("Bloatware_Uninstall") : LanguageService.T("Bloatware_Install");
+        public Visibility IconFallbackVisibility => _icon == null ? Visibility.Visible : Visibility.Collapsed;
 
         // Ρητό αίτημα χρήστη: "βάλε τα logos των εφαρμογών" - πραγματικό εικονίδιο ΜΟΝΟ αν η εφαρμογή
         // είναι ήδη εγκατεστημένη (βλ. AppIconService.FindInstalledIconPath) - καμία τοπική πηγή
@@ -395,7 +452,7 @@ namespace OptimizerWpf.Views
         public System.Windows.Media.ImageSource? Icon
         {
             get => _icon;
-            set { _icon = value; PropertyChanged?.Invoke(this, new(nameof(Icon))); }
+            set { _icon = value; PropertyChanged?.Invoke(this, new(nameof(Icon))); PropertyChanged?.Invoke(this, new(nameof(IconFallbackVisibility))); }
         }
 
         public RecommendedAppRow(RecommendedApp app) => App = app;

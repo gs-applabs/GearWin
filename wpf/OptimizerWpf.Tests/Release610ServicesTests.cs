@@ -198,7 +198,7 @@ public class Release610ServicesTests
     {
         Assert.True(SecurityStatusService.AllEnabled(new int?[] { 1, 1, 1 }));
         Assert.False(SecurityStatusService.AllEnabled(new int?[] { 1, 0, 1 }));
-        Assert.True(SecurityStatusService.AllEnabled(new int?[] { 1, null, 1 })); // άγνωστο προφίλ δεν μετράει ως off
+        Assert.Null(SecurityStatusService.AllEnabled(new int?[] { 1, null, 1 })); // unknown is neither on nor off
         Assert.Null(SecurityStatusService.AllEnabled(new int?[] { null, null }));
     }
 

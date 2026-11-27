@@ -35,7 +35,7 @@ namespace OptimizerWpf.Views
             ListStorageResults.ItemsSource = _storage;
 
             if (s_storageStatusCache != null) TxtStorageStatus.Text = s_storageStatusCache;
-            _ = LoadProcessesAsync();
+
 
             // ΝΕΟ v3.2.0 - τα κουμπιά Google Drive/Dropbox εμφανίζονται ΜΟΝΟ αν εντοπιστεί πραγματικά
             // εγκατεστημένος ο αντίστοιχος client (βλ. SystemService.FindGoogleDriveFolder/
@@ -43,9 +43,20 @@ namespace OptimizerWpf.Views
             if (SystemService.FindGoogleDriveFolder() != null) BtnGoogleDrive.Visibility = Visibility.Visible;
             if (SystemService.FindDropboxFolder() != null) BtnDropbox.Visibility = Visibility.Visible;
 
-            _ = LoadMyDeviceAsync();
-
-            InitFontsSection();
+            Loaded += (_, _) =>
+            {
+                if (_viewLifetime != null) return;
+                _viewLifetime = new System.Threading.CancellationTokenSource();
+                _ = LoadProcessesAsync();
+                _ = LoadMyDeviceAsync();
+                InitFontsSection();
+            };
+            Unloaded += (_, _) =>
+            {
+                var lifetime = _viewLifetime;
+                _viewLifetime = null;
+                if (lifetime != null) { lifetime.Cancel(); lifetime.Dispose(); }
+            };
         }
 
         // REQ-580-02 follow-up: μεταφέρθηκε εδώ από το Views/AppearanceSettingsWindow.xaml(.cs) -
@@ -77,18 +88,25 @@ namespace OptimizerWpf.Views
         // 6.5.3: το SetIdle είναι πλέον σε finally - αν η σάρωση WMI πετούσε εξαίρεση, ο "κύκλος" της γραμμής κατάστασης έμενε αιώνια.
         private async System.Threading.Tasks.Task LoadMyDeviceAsync()
         {
-            StatusService.SetBusy(LanguageService.T("Sys_ScanningDevice"));
-            try { await LoadMyDeviceCoreAsync(); }
-            finally { StatusService.SetIdle(LanguageService.T("Ready")); }
+            if (_viewLifetime == null || _deviceLoading) return;
+            _deviceLoading = true;
+            var token = _viewLifetime.Token;
+            using var busy = StatusService.BeginScope(LanguageService.T("Sys_ScanningDevice"));
+            try { await LoadMyDeviceCoreAsync(token); }
+            catch (System.OperationCanceledException) when (token.IsCancellationRequested) { }
+            catch (System.Exception ex) { StatusService.Report(ex.Message); }
+            finally { _deviceLoading = false; }
         }
 
-        private async System.Threading.Tasks.Task LoadMyDeviceCoreAsync()
+        private bool _deviceLoading;
+        private async System.Threading.Tasks.Task LoadMyDeviceCoreAsync(System.Threading.CancellationToken token)
         {
             // ΔΙΟΡΘΩΣΗ (ρητό αίτημα χρήστη: "όταν σαρώνει η εφαρμογή... η γραμμή κατάστασης δεν
             // εμφανίζει το κυκλάκι") - αυτή η μέθοδος κάνει πραγματικές, όχι-στιγμιαίες κλήσεις WMI
             // (Motherboard/CPU/OS/Drives/κ.λπ. - βλ. MyDeviceService.GetSummaryAsync) χωρίς να αγγίζει
             // καθόλου το StatusService, ασυνεπές με κάθε άλλη σάρωση της εφαρμογής.
-            var d = await MyDeviceService.GetSummaryAsync();
+            var d = await MyDeviceService.GetSummaryAsync().WaitAsync(token);
+            token.ThrowIfCancellationRequested();
             var na = LanguageService.T("Sys_NotAvailable");
             string S(string? v) => string.IsNullOrWhiteSpace(v) ? na : v;
 
@@ -229,10 +247,12 @@ namespace OptimizerWpf.Views
         // ΝΕΟ - βλ. σχόλιο στο MyDeviceService.ClearCache() και στο κουμπί στο SystemView.xaml -
         // ρητή διέξοδος για πραγματικά φρέσκια σάρωση, αφού η cache δεν ανιχνεύει μόνη της αλλαγές
         // υλικού που έγιναν εκτός εφαρμογής μέσα στο ίδιο session.
-        private void BtnRefreshDevice_Click(object sender, RoutedEventArgs e)
+        private async void BtnRefreshDevice_Click(object sender, RoutedEventArgs e)
         {
-            MyDeviceService.ClearCache();
-            _ = LoadMyDeviceAsync();
+            if (_deviceLoading || _viewLifetime == null) return;
+            if (sender is Button button) button.IsEnabled = false;
+            try { MyDeviceService.ClearCache(); await LoadMyDeviceAsync(); }
+            finally { if (sender is Button b) b.IsEnabled = true; }
         }
 
         // ΔΙΟΡΘΩΣΗ - ρητό αίτημα χρήστη: "η εξαγωγή των πληροφοριών συστήματος να γίνεται σε αρχείο
@@ -259,14 +279,28 @@ namespace OptimizerWpf.Views
         // ΝΕΟ - roadmap "Ιστορικό χρήσης πόρων" - κάθε ανανέωση καταγράφει ένα δείγμα μνήμης ανά
         // διεργασία (βλ. ProcessHistoryService), ώστε το sparkline να χτίζεται σταδιακά όσο ο χρήστης
         // ξαναεπισκέπτεται/ανανεώνει την καρτέλα, χωρίς φόντο-timer (ίδιο πνεύμα "ελαφρύτερη εφαρμογή").
+        private bool _processLoading;
+        private System.Threading.CancellationTokenSource? _viewLifetime;
+
         private async System.Threading.Tasks.Task LoadProcessesAsync()
         {
-            _processes.Clear();
-            foreach (var p in await SystemService.LoadProcessesAsync())
+            if (_processLoading || _viewLifetime == null) return;
+            _processLoading = true;
+            var token = _viewLifetime.Token;
+            try
             {
-                ProcessHistoryService.RecordSample(p.Name, p.WorkingSetMb);
-                _processes.Add(new ProcessRowVm(p));
+                var snapshot = await SystemService.LoadProcessesAsync().WaitAsync(token);
+                if (token.IsCancellationRequested) return;
+                _processes.Clear();
+                foreach (var p in snapshot)
+                {
+                    ProcessHistoryService.RecordSample(p.Name, p.WorkingSetMb);
+                    _processes.Add(new ProcessRowVm(p));
+                }
             }
+            catch (System.OperationCanceledException) when (token.IsCancellationRequested) { }
+            catch (System.Exception ex) { StatusService.Report(ex.Message); }
+            finally { _processLoading = false; }
         }
 
         private async void BtnRefreshProcesses_Click(object sender, RoutedEventArgs e) => await LoadProcessesAsync();
@@ -274,11 +308,10 @@ namespace OptimizerWpf.Views
         private async void BtnFreeMemory_Click(object sender, RoutedEventArgs e)
         {
             if (ThemedMessageBox.Show(LanguageService.T("Sys_FreeMemoryConfirm"), LanguageService.T("Sys_ConfirmTitle"), MessageBoxButton.YesNo, MessageBoxImage.Information) != MessageBoxResult.Yes) return;
-            StatusService.SetBusy(LanguageService.T("Sys_FreeingMemory"));
-            var (count, freedMb) = await SystemService.FreeBackgroundMemoryAsync();
-            StatusService.SetIdle(LanguageService.T("Ready"));
+            using var busy = StatusService.BeginScope(LanguageService.T("Sys_FreeingMemory"));
+            var result = await MemoryCleanerService.CleanAsync();
             await LoadProcessesAsync();
-            ThemedMessageBox.Show($"{LanguageService.T("Sys_FreeMemoryDonePrefix")}{count}{LanguageService.T("Sys_FreeMemoryDoneMid")}{freedMb} MB{LanguageService.T("Sys_FreeMemoryDoneSuffix")}",
+            ThemedMessageBox.Show(MemoryCleanerService.Describe(result),
                 LanguageService.T("Sys_ConfirmTitle"), MessageBoxButton.OK, MessageBoxImage.Information);
         }
 

@@ -9,7 +9,10 @@ using Microsoft.Win32;
 namespace OptimizerWpf.Services
 {
     public record RecommendedApp(string Group, string Title, string WingetId);
-    public record InstalledApp(string DisplayName, string? Publisher, string UninstallString);
+    public record InstalledApp(string DisplayName, string? Publisher, string UninstallString)
+    {
+        internal string? MachineProductCode { get; init; }
+    }
     public record UwpAppInfo(string Name, string PackageFullName)
     {
         // 6.9.1: PackageFullName = "Name_1.2.3.0_x64__publisherid" -> έκδοση/αρχιτεκτονική για καλύτερη οπτικοποίηση της λίστας
@@ -196,48 +199,96 @@ try {{
             new RecommendedApp("SystemLibs", "Visual C++ Redistributable x64", "Microsoft.VCRedist.2015+.x64"),
         };
 
-        public static async Task<bool> IsWingetAppInstalledAsync(string wingetId)
+        private static bool ValidRecommendationId(string id) => id != null && System.Text.RegularExpressions.Regex.IsMatch(id, @"^[A-Za-z0-9._+-]{1,120}$");
+
+        internal static bool OutputContainsPackageId(string output, string packageId)
         {
-            // Αν το winget.exe δεν υπάρχει (παλιό Windows 10 / χωρίς App Installer) το Process.Start πετά Win32Exception —
-            // πριν δεν πιανόταν και τερμάτιζε τον async void handler με διάλογο σφάλματος αντί για "δεν είναι εγκατεστημένο".
-            try
-            {
-                using var process = Process.Start(new ProcessStartInfo("winget.exe", $"list --id {wingetId} --exact --accept-source-agreements")
-                { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true });
-                if (process == null) return false;
-                _ = process.StandardError.ReadToEndAsync(); // drain
-                var output = await process.StandardOutput.ReadToEndAsync();
-                await process.WaitForExitAsync();
-                return process.ExitCode == 0 && !output.Contains("No installed package found");
-            }
-            catch (System.ComponentModel.Win32Exception) { return false; }
+            if (!System.Text.RegularExpressions.Regex.IsMatch(packageId, @"^[A-Za-z0-9._+-]{1,120}$")) return false;
+            return output.Split('\n').Any(line =>
+                System.Text.RegularExpressions.Regex.IsMatch(line.TrimEnd('\r'),
+                    @"(?<!\S)" + System.Text.RegularExpressions.Regex.Escape(packageId) + @"(?=\s|$)",
+                    System.Text.RegularExpressions.RegexOptions.IgnoreCase));
         }
 
-        public static Task<bool> WingetInstallAsync(string wingetId) => RunProcessForSuccessAsync("winget.exe",
+        public static async Task<bool> IsWingetAppInstalledAsync(string wingetId) => await ProbeInstalledAsync(wingetId) == true;
+
+        internal static async Task<bool?> ProbeInstalledAsync(string wingetId)
+        {
+            using var lease = await GearWinCore.EnterAsync(CoreWork.UpdateScan);
+            if (!System.Text.RegularExpressions.Regex.IsMatch(wingetId, @"^[A-Za-z0-9._+-]{1,120}$")) return null;
+            try
+            {
+                var psi = new ProcessStartInfo("winget.exe")
+                {
+                    RedirectStandardOutput = true, RedirectStandardError = true,
+                    UseShellExecute = false, CreateNoWindow = true
+                };
+                foreach (var arg in new[] { "list", "--id", wingetId, "--exact", "--accept-source-agreements", "--disable-interactivity" })
+                    psi.ArgumentList.Add(arg);
+                using var process = Process.Start(psi);
+                if (process == null) return null;
+                using var timeout = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(30));
+                var output = process.StandardOutput.ReadToEndAsync(timeout.Token);
+                var error = process.StandardError.ReadToEndAsync(timeout.Token);
+                try
+                {
+                    await process.WaitForExitAsync(timeout.Token);
+                    await Task.WhenAll(output, error).WaitAsync(timeout.Token);
+                    return InterpretProbe(await output, process.ExitCode, wingetId);
+                }
+                catch (OperationCanceledException)
+                {
+                    try { if (!process.HasExited) process.Kill(entireProcessTree: true); } catch { }
+                    return null;
+                }
+            }
+            catch { return null; }
+        }
+
+        internal static bool? InterpretProbe(string output, int exitCode, string id)
+        {
+            if (exitCode == 0 && OutputContainsPackageId(output, id)) return true;
+            if (unchecked((uint)exitCode) == 0x8a150014u) return false;
+            return null;
+        }
+
+        public static Task<bool> WingetInstallAsync(string wingetId) => !ValidRecommendationId(wingetId) ? Task.FromResult(false) : RunProcessForSuccessAsync("winget.exe",
             $"install --id {wingetId} --exact --silent --accept-source-agreements --accept-package-agreements");
 
-        public static Task<bool> WingetUninstallAsync(string wingetId) => RunProcessForSuccessAsync("winget.exe",
+        public static Task<bool> WingetUninstallAsync(string wingetId) => !ValidRecommendationId(wingetId) ? Task.FromResult(false) : RunProcessForSuccessAsync("winget.exe",
             $"uninstall --id {wingetId} --exact --silent");
 
         // ===== Διαχείριση UWP (Store apps only) =====
 
         public static async Task<IReadOnlyList<UwpAppInfo>> ScanUwpAppsAsync()
         {
-            const string script = "Get-AppxPackage | Where-Object { -not $_.IsFramework -and -not $_.IsResourcePackage -and $_.SignatureKind -eq 'Store' } | " +
+            using var lease = await GearWinCore.EnterAsync(CoreWork.UpdateScan);
+            const string script = "$ErrorActionPreference = 'Stop'; Get-AppxPackage | Where-Object { -not $_.IsFramework -and -not $_.IsResourcePackage -and -not $_.NonRemovable -and $_.SignatureKind -eq 'Store' } | " +
                                    "Select-Object Name, PackageFullName | Sort-Object Name | ConvertTo-Json -Compress";
             var output = await RunPsCaptureAsync(script);
             if (string.IsNullOrWhiteSpace(output)) return Array.Empty<UwpAppInfo>();
-            try
-            {
-                var root = System.Text.Json.JsonDocument.Parse(output).RootElement;
-                var elements = root.ValueKind == System.Text.Json.JsonValueKind.Array ? root.EnumerateArray() : new[] { root }.AsEnumerable();
-                return elements.Select(e => new UwpAppInfo(e.GetProperty("Name").GetString() ?? "", e.GetProperty("PackageFullName").GetString() ?? "")).ToList();
-            }
-            catch { return Array.Empty<UwpAppInfo>(); }
+            using var document = System.Text.Json.JsonDocument.Parse(output);
+            var root = document.RootElement;
+            var elements = root.ValueKind == System.Text.Json.JsonValueKind.Array ? root.EnumerateArray() : new[] { root }.AsEnumerable();
+            return elements.Select(e => new UwpAppInfo(e.GetProperty("Name").GetString() ?? "", e.GetProperty("PackageFullName").GetString() ?? ""))
+                .Where(e => IsValidUwpPackageIdentity(e.PackageFullName)).ToList();
         }
 
-        public static Task<bool> RemoveUwpAppAsync(string packageFullName) =>
-            RunPsForSuccessAsync($"Remove-AppxPackage -Package '{packageFullName}'");
+        internal static bool IsValidUwpPackageIdentity(string? name) =>
+            name != null && System.Text.RegularExpressions.Regex.IsMatch(name,
+                @"\A[A-Za-z0-9][A-Za-z0-9.-]{0,49}_[0-9]{1,5}\.[0-9]{1,5}\.[0-9]{1,5}\.[0-9]{1,5}_(?:x86|x64|arm|arm64|neutral|x86a64)_[A-Za-z0-9.-]{0,30}_[A-Za-z0-9]{13}\z",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+        public static Task<bool> RemoveUwpAppAsync(string packageFullName)
+        {
+            if (!IsValidUwpPackageIdentity(packageFullName)) return Task.FromResult(false);
+            // Revalidate exact current-user package and eligibility inside the mutation.
+            var script = $"$ErrorActionPreference = 'Stop'; $id = '{packageFullName}'; " +
+                "$p = @(Get-AppxPackage | Where-Object { $_.PackageFullName -eq $id -and $_.SignatureKind -eq 'Store' -and -not $_.IsFramework -and -not $_.IsResourcePackage -and -not $_.NonRemovable }); " +
+                "if ($p.Count -ne 1) { exit 1 }; Remove-AppxPackage -Package $p[0].PackageFullName -ErrorAction Stop; " +
+                "if (@(Get-AppxPackage | Where-Object { $_.PackageFullName -eq $id }).Count -ne 0) { exit 1 }; exit 0";
+            return RunPsForSuccessAsync(script);
+        }
 
         // ===== Βαθιά Απεγκατάσταση =====
 
@@ -261,54 +312,49 @@ try {{
                     if (string.IsNullOrEmpty(displayName) || string.IsNullOrEmpty(uninstallString)) continue;
                     if (sub!.GetValue("SystemComponent") != null) continue;
                     if (apps.Any(a => a.DisplayName == displayName)) continue;
-                    apps.Add(new InstalledApp(displayName, sub.GetValue("Publisher") as string, uninstallString));
+                    var product = SafeUninstallService.MatchMachineMsi(name, uninstallString,
+                        ReferenceEquals(hive, Registry.LocalMachine), sub.GetValue("WindowsInstaller") is int flag && flag == 1);
+                    apps.Add(new InstalledApp(displayName, sub.GetValue("Publisher") as string, uninstallString)
+                        { MachineProductCode = product });
                 }
             }
             return (IReadOnlyList<InstalledApp>)apps.OrderBy(a => a.DisplayName).ToList();
         });
 
-        public static Task<int> UninstallAppAsync(string uninstallString) => Task.Run(() =>
-        {
-            using var process = Process.Start(new ProcessStartInfo("cmd.exe", $"/c \"{uninstallString}\"") { UseShellExecute = false });
-            process?.WaitForExit();
-            return process?.ExitCode ?? -1;
-        });
+        // Exact-name candidates are advisory only, never automatic deletion targets.
+        internal static bool IsResidualNameMatch(string appName, string folderName) =>
+            !string.IsNullOrWhiteSpace(appName) && appName.Trim().Length >= 4 &&
+            string.Equals(appName.Trim(), folderName, StringComparison.OrdinalIgnoreCase);
 
         public static IReadOnlyList<string> FindResidualFolders(string appName)
         {
-            var safeName = string.Concat(appName.Where(c => !Path.GetInvalidFileNameChars().Contains(c)));
-            // Πολύ σύντομο/γενικό όνομα (π.χ. "Java", "Go", "7") ταίριαζε με δεκάδες άσχετους φακέλους AppData/ProgramData
-            // που προτείνονταν για διαγραφή. Κάτω από 4 χαρακτήρες δεν προτείνουμε τίποτα.
-            if (safeName.Trim().Length < 4) return Array.Empty<string>();
+            if (string.IsNullOrWhiteSpace(appName)) return Array.Empty<string>();
             var roots = new[]
             {
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                Environment.GetEnvironmentVariable("ProgramData") ?? "",
             };
             var results = new List<string>();
             foreach (var root in roots.Where(Directory.Exists))
             {
                 try
                 {
-                    results.AddRange(Directory.EnumerateDirectories(root).Where(d => Path.GetFileName(d).Contains(safeName, StringComparison.OrdinalIgnoreCase)));
+                    if (!MaintenancePaths.IsOrdinaryLocalPath(root)) continue;
+                    foreach (var candidate in Directory.EnumerateDirectories(root))
+                    {
+                        if (IsResidualNameMatch(appName, Path.GetFileName(candidate)) &&
+                            MaintenancePaths.IsWithin(root, candidate) &&
+                            MaintenancePaths.IsOrdinaryLocalPath(candidate))
+                            results.Add(candidate);
+                    }
                 }
                 catch { }
             }
-            return results;
+            return results.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         }
 
-        public static bool DeleteResidualFolder(string path)
-        {
-            try
-            {
-                Microsoft.VisualBasic.FileIO.FileSystem.DeleteDirectory(path,
-                    Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs,
-                    Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin);
-                return true;
-            }
-            catch { return false; }
-        }
+        // Intentionally no elevated recursive folder deletion from ambiguous app metadata.
+        // Manual review in Explorer remains possible; exact ownership proof is a release gate.
 
         // ===== helpers =====
 
@@ -316,9 +362,10 @@ try {{
         // είχαν try/finally, οπότε μια εξαίρεση άφηνε τη γραμμή κατάστασης "busy" και τα κουμπιά απενεργοποιημένα.
         private static async Task<bool> RunPsForSuccessAsync(string command)
         {
+            using var lease = await GearWinCore.EnterAsync(CoreWork.SoftwareChange);
             try
             {
-                using var process = Process.Start(new ProcessStartInfo("powershell.exe", PowerShellArgs.Command(command))
+                using var process = Process.Start(new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, @"WindowsPowerShell\v1.0\powershell.exe"), PowerShellArgs.Command(command))
                 { UseShellExecute = false, CreateNoWindow = true });
                 if (process == null) return false;
                 await process.WaitForExitAsync();
@@ -329,16 +376,29 @@ try {{
 
         private static async Task<string> RunPsCaptureAsync(string command)
         {
-            using var process = Process.Start(new ProcessStartInfo("powershell.exe", PowerShellArgs.Command(command))
-            { RedirectStandardOutput = true, UseShellExecute = false, CreateNoWindow = true, StandardOutputEncoding = System.Text.Encoding.UTF8 });
-            if (process == null) return "";
-            var output = await process.StandardOutput.ReadToEndAsync();
-            await process.WaitForExitAsync();
-            return output;
+            using var process = Process.Start(new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, @"WindowsPowerShell\v1.0\powershell.exe"), PowerShellArgs.Command(command))
+            { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true, StandardOutputEncoding = System.Text.Encoding.UTF8 });
+            if (process == null) throw new InvalidOperationException("PowerShell did not start.");
+            using var timeout = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(30));
+            try
+            {
+                var output = process.StandardOutput.ReadToEndAsync(timeout.Token);
+                var errors = process.StandardError.ReadToEndAsync(timeout.Token);
+                await Task.WhenAll(output, errors, process.WaitForExitAsync(timeout.Token));
+                if (process.ExitCode != 0) throw new InvalidOperationException("App inventory failed (exit " + process.ExitCode + ").");
+                return await output;
+            }
+            catch (OperationCanceledException) when (timeout.IsCancellationRequested)
+            {
+                // This helper is for read-only inventory, never servicing mutations.
+                try { if (!process.HasExited) process.Kill(entireProcessTree: true); } catch { }
+                throw new TimeoutException("App inventory exceeded the time limit.");
+            }
         }
 
         private static async Task<bool> RunProcessForSuccessAsync(string fileName, string arguments)
         {
+            using var lease = await GearWinCore.EnterAsync(CoreWork.SoftwareChange);
             try
             {
                 using var process = Process.Start(new ProcessStartInfo(fileName, arguments) { UseShellExecute = false, CreateNoWindow = true });

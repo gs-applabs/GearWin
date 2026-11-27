@@ -24,7 +24,10 @@ namespace OptimizerWpf.Services
         // ===== Εφαρμογές Εκκίνησης - ΠΑΝΤΑ αναστρέψιμο (rename τιμής, ΠΟΤΕ διαγραφή δεδομένων) =====
 
         private const string RunKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
-        private const string DisabledPrefix = "OptimizerDisabled_";
+        // Disabled entries must be OUTSIDE the Windows Run key. A renamed Run value
+        // is still executable at logon. Legacy prefixed values are shown as active
+        // under their real name; no silent migration of user startup selections.
+        internal const string DisabledStartupKeyPath = @"Software\OptimizerWpf\DisabledStartup";
 
         public static Task<IReadOnlyList<StartupItem>> LoadStartupItemsAsync() => Task.Run(LoadStartupItems);
 
@@ -33,57 +36,66 @@ namespace OptimizerWpf.Services
             var items = new List<StartupItem>();
             foreach (var (hive, label) in new[] { (Registry.CurrentUser, "HKCU"), (Registry.LocalMachine, "HKLM") })
             {
-                using var key = hive.OpenSubKey(RunKeyPath);
-                if (key == null) continue;
-                foreach (var valueName in key.GetValueNames())
+                foreach (var (path, disabled) in new[] { (RunKeyPath, false), (DisabledStartupKeyPath, true) })
                 {
-                    var command = key.GetValue(valueName) as string ?? "";
-                    if (valueName.StartsWith(DisabledPrefix, StringComparison.Ordinal))
+                    using var key = hive.OpenSubKey(path);
+                    if (key == null) continue;
+                    foreach (var name in key.GetValueNames())
                     {
-                        var realName = valueName[DisabledPrefix.Length..];
-                        if (items.Any(i => i.Name == realName)) continue;
-                        items.Add(new StartupItem(realName, command, label, true));
-                    }
-                    else
-                    {
-                        items.Add(new StartupItem(valueName, command, label, false));
+                        if (string.IsNullOrEmpty(name) || key.GetValue(name) is not string command ||
+                            key.GetValueKind(name) is not (RegistryValueKind.String or RegistryValueKind.ExpandString)) continue;
+                        if (disabled && items.Any(i => i.Location == label && string.Equals(i.Name, name, StringComparison.OrdinalIgnoreCase))) continue;
+                        items.Add(new StartupItem(name, command, label, disabled));
                     }
                 }
             }
             return items;
         }
 
-        // ΔΙΟΡΘΩΣΗ (εξονυχιστικός έλεγχος εντόπισε): void, χωρίς try/catch - ένα κλειδωμένο/απαγορευμένο
-        // HKLM κλειδί (π.χ. χωρίς αρκετά δικαιώματα σε ασυνήθιστη διαμόρφωση) θα πετούσε αδιαχείριστη
-        // εξαίρεση. Επιστρέφει τώρα bool ώστε το UI να μπορεί να ενημερώσει/επαναφέρει τον διακόπτη.
+        internal static Task<bool> SetStartupItemEnabledAsync(StartupItem item, bool enabled) =>
+            GearWinCore.RunAsync(CoreWork.StartupChange, () => Task.Run(() => SetStartupItemEnabled(item, enabled)));
+
+        internal static (string Source, string Destination) StartupMovePaths(bool enabled) =>
+            enabled ? (DisabledStartupKeyPath, RunKeyPath) : (RunKeyPath, DisabledStartupKeyPath);
+
+        internal static bool CanResumeStartupMove(string raw, RegistryValueKind kind, object? staged, RegistryValueKind stagedKind) =>
+            staged is string value && string.Equals(raw, value, StringComparison.Ordinal) && kind == stagedKind;
+
         public static bool SetStartupItemEnabled(StartupItem item, bool enabled)
         {
+            if (item.Location is not ("HKCU" or "HKLM") || string.IsNullOrEmpty(item.Name)) return false;
             try
             {
                 var hive = item.Location == "HKCU" ? Registry.CurrentUser : Registry.LocalMachine;
-                using var key = hive.OpenSubKey(RunKeyPath, writable: true);
-                if (key == null) return false;
-                if (enabled)
+                var (sourcePath, destinationPath) = StartupMovePaths(enabled);
+                using var source = hive.OpenSubKey(sourcePath, writable: true);
+                if (source == null) return false;
+                var raw = source.GetValue(item.Name, null, RegistryValueOptions.DoNotExpandEnvironmentNames);
+                if (raw is not string command || !string.Equals(source.GetValue(item.Name) as string, item.Command, StringComparison.Ordinal)) return false;
+                var kind = source.GetValueKind(item.Name);
+                if (kind is not (RegistryValueKind.String or RegistryValueKind.ExpandString)) return false;
+                using var destination = hive.CreateSubKey(destinationPath);
+                if (destination == null) return false;
+                var staged = destination.GetValue(item.Name, null, RegistryValueOptions.DoNotExpandEnvironmentNames);
+                if (staged == null)
                 {
-                    var disabledName = DisabledPrefix + item.Name;
-                    var value = key.GetValue(disabledName) as string;
-                    if (value == null) return false;
-                    key.SetValue(item.Name, value);
-                    key.DeleteValue(disabledName, throwOnMissingValue: false);
+                    destination.SetValue(item.Name, command, kind);
+                    destination.Flush();
                 }
-                else
-                {
-                    var value = key.GetValue(item.Name) as string;
-                    if (value == null) return false;
-                    key.SetValue(DisabledPrefix + item.Name, value);
-                    key.DeleteValue(item.Name, throwOnMissingValue: false);
-                }
-                return true;
+                else if (!CanResumeStartupMove(command, kind, staged, destination.GetValueKind(item.Name))) return false;
+                // An explicit retry may finish an interrupted move only when both
+                // registrations still contain exactly the same raw value and type.
+                if (!Equals(destination.GetValue(item.Name, null, RegistryValueOptions.DoNotExpandEnvironmentNames), raw) ||
+                    destination.GetValueKind(item.Name) != kind) return false;
+                // Do not remove a changed source. Retain the staged value on uncertain failure
+                // for manual recovery; never overwrite another startup registration.
+                if (!Equals(source.GetValue(item.Name, null, RegistryValueOptions.DoNotExpandEnvironmentNames), raw) ||
+                    source.GetValueKind(item.Name) != kind) return false;
+                source.DeleteValue(item.Name, throwOnMissingValue: true);
+                source.Flush();
+                return source.GetValue(item.Name, null, RegistryValueOptions.DoNotExpandEnvironmentNames) == null;
             }
-            catch
-            {
-                return false;
-            }
+            catch { return false; }
         }
 
         // ΝΕΟ - ROADMAP.md REQ-570-02/12 (ρητό αίτημα χρήστη: "εκκίνηση εφαρμογής με τα windows στο
@@ -105,7 +117,7 @@ namespace OptimizerWpf.Services
         public static bool IsAutostartLocationSafe()
         {
             var exePath = Environment.ProcessPath ?? System.Reflection.Assembly.GetExecutingAssembly().Location;
-            return SecureStorage.IsDirectoryAdminOnlyWritable(System.IO.Path.GetDirectoryName(exePath));
+            return SecureStorage.IsProtectedExecutable(exePath);
         }
 
         public static async System.Threading.Tasks.Task<bool> SetLaunchWithWindowsToTrayAsync(bool enabled)
@@ -216,20 +228,43 @@ namespace OptimizerWpf.Services
             "explorer", "dwm", "fontdrvhost", "sihost", "WUDFHost", "Memory Compression",
         };
 
-        public static Task<IReadOnlyList<ProcessRow>> LoadProcessesAsync() => Task.Run(() =>
+        private static readonly object ProcessScanGate = new();
+        private static Task<IReadOnlyList<ProcessRow>>? _processScan;
+
+        public static Task<IReadOnlyList<ProcessRow>> LoadProcessesAsync()
+        {
+            lock (ProcessScanGate)
+            {
+                if (_processScan is { IsCompleted: false }) return _processScan;
+                return _processScan = GearWinCore.RunAsync(CoreWork.ProcessSnapshot, () => Task.Run(ReadProcesses));
+            }
+        }
+
+        private static IReadOnlyList<ProcessRow> ReadProcesses()
         {
             var rows = new List<ProcessRow>();
-            // Ένα snapshot της μνήμης ανά διεργασία (πριν: SafeWorkingSet καλούνταν πολλές φορές ανά διεργασία μέσα στο
-            // sort) και ΟΛΑ τα Process objects γίνονται Dispose (πριν διέρρεαν εκατοντάδες handles σε κάθε ανανέωση).
             var all = Process.GetProcesses();
-            var ranked = all.Select(p => (Proc: p, Ws: SafeWorkingSet(p))).OrderByDescending(x => x.Ws).Take(25).ToList();
-            foreach (var (p, _) in ranked)
+            try
             {
-                rows.Add(new ProcessRow(p.Id, p.ProcessName, Math.Round(SafeWorkingSet(p) / 1024.0 / 1024.0, 1), CriticalProcessNames.Contains(p.ProcessName)));
+                var ranked = all.Select(p => (Proc: p, Ws: SafeWorkingSet(p)))
+                    .OrderByDescending(x => x.Ws).Take(25);
+                foreach (var (p, ws) in ranked)
+                {
+                    try
+                    {
+                        var name = p.ProcessName;
+                        rows.Add(new ProcessRow(p.Id, name, Math.Round(ws / 1024.0 / 1024.0, 1), CriticalProcessNames.Contains(name)));
+                    }
+                    catch (InvalidOperationException) { /* process exited during snapshot */ }
+                    catch (System.ComponentModel.Win32Exception) { /* process inaccessible */ }
+                }
+                return rows;
             }
-            foreach (var p in all) { try { p.Dispose(); } catch { } }
-            return (IReadOnlyList<ProcessRow>)rows;
-        });
+            finally
+            {
+                foreach (var p in all) { try { p.Dispose(); } catch { } }
+            }
+        }
 
         private static long SafeWorkingSet(Process p) { try { return p.WorkingSet64; } catch { return 0; } }
 
@@ -327,7 +362,7 @@ namespace OptimizerWpf.Services
         // που δεν υπάρχει, επαναχρησιμοποιούνται τα ΗΔΗ υπάρχοντα εργαλεία εύρεσης διπλότυπων/μεγάλων
         // αρχείων, με πεδίο σάρωσης τον τοπικό φάκελο συγχρονισμού του καθενός - ο χρήστης βλέπει τι
         // πιάνει χώρο και το διαγράφει ο ίδιος (η διαγραφή συγχρονίζεται φυσιολογικά στο cloud μετά).
-        private static Task<IReadOnlyList<(string Path, double SizeMb, DateTime LastWriteTime)>> FindDuplicatesInAsync(IEnumerable<string> roots) => Task.Run(() =>
+        private static Task<IReadOnlyList<(string Path, double SizeMb, DateTime LastWriteTime)>> FindDuplicatesInAsync(IEnumerable<string> roots) => GearWinCore.RunAsync(CoreWork.Diagnostics, () => Task.Run(() =>
         {
             var files = roots.SelectMany(SafeEnumerateFiles)
                 .Select(f => new FileInfo(f))
@@ -350,9 +385,9 @@ namespace OptimizerWpf.Services
                 }
             }
             return (IReadOnlyList<(string, double, DateTime)>)results;
-        });
+        }));
 
-        private static Task<IReadOnlyList<(string Path, double SizeMb, DateTime LastWriteTime)>> FindLargeFilesInAsync(IEnumerable<string> roots) => Task.Run(() =>
+        private static Task<IReadOnlyList<(string Path, double SizeMb, DateTime LastWriteTime)>> FindLargeFilesInAsync(IEnumerable<string> roots) => GearWinCore.RunAsync(CoreWork.Diagnostics, () => Task.Run(() =>
         {
             // 6.9.8: streaming - κρατά μόνο τα 50 μεγαλύτερα (όχι λίστα όλων των διαδρομών/FileInfo + πλήρης ταξινόμηση)
             var top = new List<FileInfo>(51);
@@ -367,7 +402,7 @@ namespace OptimizerWpf.Services
             }
             var results = top.Select(fi => (fi.FullName, Math.Round(fi.Length / 1024.0 / 1024.0, 2), fi.LastWriteTime)).ToList();
             return (IReadOnlyList<(string, double, DateTime)>)results;
-        });
+        }));
 
         // Επίσημα τεκμηριωμένος τρόπος εντοπισμού του τοπικού φακέλου Dropbox - το ίδιο το Dropbox
         // γράφει info.json με το πραγματικό μονοπάτι (μπορεί να έχει μετακινηθεί από τον χρήστη).
@@ -582,85 +617,75 @@ namespace OptimizerWpf.Services
             return (IReadOnlyList<ServiceRow>)rows;
         });
 
-        // Μόνο υπηρεσίες που ήταν ΗΔΗ Automatic αγγίζονται ποτέ - backup μέσω μοιρασμένου TweakBackupService.
-        public static Task<bool> SetServiceManualAsync(string serviceName) => Task.Run(() =>
-        {
-            try
-            {
-                using var searcher = new ManagementObjectSearcher($"SELECT * FROM Win32_Service WHERE Name='{serviceName.Replace("'", "''")}'");
-                var svc = searcher.Get().Cast<ManagementObject>().FirstOrDefault();
-                if (svc == null) return false;
-                TweakBackupService.BackupIfNeeded($"SVC_{serviceName}", svc["StartMode"]?.ToString() ?? "Auto");
-                var result = svc.InvokeMethod("ChangeStartMode", new object[] { "Manual" });
-                return Convert.ToInt32(result) == 0;
-            }
-            catch { return false; }
-        });
+        public static Task<bool> SetServiceManualAsync(string serviceName) => ChangeServiceStartAsync(serviceName, false);
 
-        public static Task<bool> RestoreServiceStartModeAsync(string serviceName) => Task.Run(() =>
+        public static Task<bool> RestoreServiceStartModeAsync(string serviceName) => ChangeServiceStartAsync(serviceName, true);
+
+        private static Task<bool> ChangeServiceStartAsync(string serviceName, bool restore) => GearWinCore.RunAsync(CoreWork.StartupChange, () => Task.Run(() =>
         {
-            try
-            {
-                var original = TweakBackupService.GetBackup($"SVC_{serviceName}") ?? "Auto";
-                // Το Win32_Service.StartMode επιστρέφει "Auto", αλλά η μέθοδος ChangeStartMode δέχεται "Automatic" —
-                // με "Auto" επέστρεφε κωδικό σφάλματος (21) και η υπηρεσία ΠΟΤΕ δεν επανερχόταν σε αυτόματη εκκίνηση.
-                if (original.Equals("Auto", StringComparison.OrdinalIgnoreCase)) original = "Automatic";
-                using var searcher = new ManagementObjectSearcher($"SELECT * FROM Win32_Service WHERE Name='{serviceName.Replace("'", "''")}'");
-                var svc = searcher.Get().Cast<ManagementObject>().FirstOrDefault();
-                if (svc == null) return false;
-                var result = svc.InvokeMethod("ChangeStartMode", new object[] { original });
-                var ok = Convert.ToInt32(result) == 0;
-                if (ok) TweakBackupService.Remove($"SVC_{serviceName}");
-                return ok;
-            }
-            catch { return false; }
-        });
+            if (!SafeServicesToOptimize.ContainsKey(serviceName)) return false;
+            try { return ServiceStartJournal.Change(serviceName, restore); }
+            catch (Exception ex) { System.Diagnostics.Trace.TraceError("Service startup transaction: " + ex.Message); return false; }
+        }));
 
         // ===== Δοκιμή Ταχύτητας Δίσκου =====
 
-        public static Task<BenchmarkResult> RunBenchmarkAsync(string driveLetter) => Task.Run(() =>
+        internal static string BenchmarkRoot(string driveLetter)
         {
-            var testFile = Path.Combine(driveLetter.TrimEnd('\\') + "\\", "OptimizerWpfBenchTest_TEMP.bin");
+            if (string.IsNullOrEmpty(driveLetter) || driveLetter.Length > 3 ||
+                !((driveLetter[0] >= 'A' && driveLetter[0] <= 'Z') || (driveLetter[0] >= 'a' && driveLetter[0] <= 'z')) ||
+                (driveLetter.Length >= 2 && driveLetter[1] != ':') ||
+                (driveLetter.Length == 3 && driveLetter[2] != '\\'))
+                throw new ArgumentException("Select a local drive letter.");
+            return char.ToUpperInvariant(driveLetter[0]) + @":\";
+        }
+
+        // Keep one exclusive handle from creation to readback and deletion.
+        // Never truncate an existing path or delete by name in a finally block.
+        internal static FileStream OpenBenchmarkFile(string path, int bufferSize) =>
+            new(path, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None, bufferSize,
+                FileOptions.WriteThrough | FileOptions.DeleteOnClose);
+
+        public static Task<BenchmarkResult> RunBenchmarkAsync(string driveLetter) => GearWinCore.RunAsync(CoreWork.Benchmark, () => Task.Run(() =>
+        {
             try
             {
-                var drive = new DriveInfo(driveLetter.TrimEnd('\\') + "\\");
+                var root = BenchmarkRoot(driveLetter);
+                if (!MaintenancePaths.IsOrdinaryLocalPath(root, allowRemovable: true))
+                    throw new IOException("Benchmark requires a ready ordinary local drive.");
+                var drive = new DriveInfo(root);
                 if (drive.AvailableFreeSpace < 1024L * 1024 * 1024) return new BenchmarkResult(0, 0, LanguageService.T("SysSvc_InsufficientSpace"));
 
-                // 6.9.8: ίδιος όγκος δεδομένων (256 MiB) αλλά γραμμένος σε κομμάτια των 4 MiB από ΕΝΑ επαναχρησιμοποιούμενο buffer (όχι δέσμευση 256 MiB στη RAM)
                 const int size = 256 * 1024 * 1024;
                 const int chunk = 4 * 1024 * 1024;
                 var buffer = new byte[chunk];
                 new Random().NextBytes(buffer);
+                var testFile = Path.Combine(root, "GearWin-benchmark-" + Guid.NewGuid().ToString("N") + ".bin");
 
+                using var fs = OpenBenchmarkFile(testFile, chunk);
                 var sw = Stopwatch.StartNew();
-                using (var fs = new FileStream(testFile, FileMode.Create, FileAccess.Write, FileShare.None, chunk, FileOptions.WriteThrough))
-                {
-                    for (var written = 0; written < size; written += chunk) fs.Write(buffer, 0, chunk);
-                    fs.Flush(true);
-                }
+                for (var written = 0; written < size; written += chunk) fs.Write(buffer, 0, chunk);
+                fs.Flush(true);
                 sw.Stop();
-                var writeMbps = size / 1024.0 / 1024.0 / sw.Elapsed.TotalSeconds;
+                var writeMbps = size / 1024.0 / 1024.0 / Math.Max(sw.Elapsed.TotalSeconds, 0.000001);
 
+                // Reuse the buffer and the owned handle. Readback can benefit from
+                // the OS cache; it is not a certified raw physical-device benchmark.
+                fs.Position = 0;
+                long readTotal = 0;
                 sw.Restart();
-                using (var fs = new FileStream(testFile, FileMode.Open, FileAccess.Read, FileShare.None, 4 * 1024 * 1024, FileOptions.SequentialScan))
-                {
-                    var readBuf = new byte[4 * 1024 * 1024];
-                    while (fs.Read(readBuf, 0, readBuf.Length) > 0) { }
-                }
+                int read;
+                while ((read = fs.Read(buffer, 0, buffer.Length)) > 0) readTotal += read;
                 sw.Stop();
-                var readMbps = size / 1024.0 / 1024.0 / sw.Elapsed.TotalSeconds;
-
+                if (readTotal != size) throw new IOException("Incomplete benchmark readback.");
+                var readMbps = readTotal / 1024.0 / 1024.0 / Math.Max(sw.Elapsed.TotalSeconds, 0.000001);
                 return new BenchmarkResult(Math.Round(writeMbps, 1), Math.Round(readMbps, 1), null);
             }
             catch (Exception ex)
             {
                 return new BenchmarkResult(0, 0, ex.Message);
             }
-            finally
-            {
-                try { File.Delete(testFile); } catch { }
-            }
-        });
+        }));
 
         // ===== κοινά PowerShell helpers =====
 

@@ -1,0 +1,143 @@
+name: UMP01 audit baseline
+on:
+  push:
+    branches: [release/7.1.0-ultra]
+  pull_request:
+    branches: [release/7.0.0-validation]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: gearwin-audit-${{ github.ref }}
+  # Preserve the running validation; newer commits replace pending work, not active tests.
+  cancel-in-progress: false
+jobs:
+  source-inventory:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 tools/audit/source_inventory.py "${{ runner.temp }}/inventory"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ump01-inventory
+          path: ${{ runner.temp }}/inventory
+          retention-days: 30
+  windows-baseline:
+    runs-on: windows-2022
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Prepare and audit package-specific icons
+        shell: pwsh
+        run: ./tools/prepare-recommended-icons.ps1 -ReportDir "$env:RUNNER_TEMP/gearwin-audit/icons"
+      - name: Build and collect explicit test results
+        shell: pwsh
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP 'gearwin-audit'
+          New-Item -ItemType Directory -Force $out | Out-Null
+          $env:GEARWIN_REQUIRE_RECOMMENDED_ICONS = '1'
+          dotnet test wpf/OptimizerWpf.Tests -c Release --logger 'trx;LogFileName=desktop.trx' --results-directory $out
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet test migration/GearWin.Migration.Tests -c Release --logger 'trx;LogFileName=migration.trx' --results-directory $out
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build installer
+        shell: pwsh
+        run: |
+          ./tools/ci-install-inno.ps1
+          ./tools/build-setup-ci.ps1
+      - name: Measure clean-installed application in normal and tray launch modes
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:GITHUB_ACTIONS -ne 'true') { throw 'Disposable runner required' }
+          $out = Join-Path $env:RUNNER_TEMP 'gearwin-audit'
+          $setup = (Resolve-Path installer/Output/GearWin-Setup.exe).Path
+          $p = Start-Process $setup -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -PassThru
+          if (-not $p.WaitForExit(240000) -or $p.ExitCode -ne 0) { throw 'Installer did not complete successfully' }
+          $exe = Join-Path $env:ProgramFiles 'GearWin - Complete PC Care/GearWin.exe'
+          if (-not (Test-Path $exe)) { throw 'Installed executable missing' }
+          $info = [ordered]@{
+            commit = (git rev-parse HEAD)
+            os = [Environment]::OSVersion.VersionString
+            logicalProcessors = [Environment]::ProcessorCount
+            installedVersion = (Get-Item $exe).VersionInfo.ProductVersion
+            exeSha256 = (Get-FileHash $exe -Algorithm SHA256).Hash
+            notes = '60-second samples after 30-second warmup; normal/tray launch arguments, no UI state assertion; process tree observed at sample time; transfer counters are process I/O, not physical SSD writes. UI click-through opt-in test NOT RUN; no destructive operations.'
+          }
+          $info | ConvertTo-Json | Set-Content (Join-Path $out 'environment.json')
+          $rows = [System.Collections.Generic.List[object]]::new()
+          foreach ($mode in @('normal','tray')) {
+            $p = if ($mode -eq 'tray') { Start-Process $exe -ArgumentList '--tray' -PassThru } else { Start-Process $exe -PassThru }
+            try {
+              Start-Sleep -Seconds 30
+              $clock = [Diagnostics.Stopwatch]::StartNew()
+              for ($i=0; $i -le 12; $i++) {
+                $p.Refresh()
+                if ($p.HasExited) { throw "GearWin exited in $mode mode" }
+                $all = @(Get-CimInstance Win32_Process)
+                $ids = [System.Collections.Generic.HashSet[uint32]]::new()
+                [void]$ids.Add([uint32]$p.Id)
+                do {
+                  $before = $ids.Count
+                  foreach ($proc in $all) {
+                    if ($ids.Contains([uint32]$proc.ParentProcessId)) { [void]$ids.Add([uint32]$proc.ProcessId) }
+                  }
+                } while ($ids.Count -gt $before)
+                foreach ($proc in $all | Where-Object { $ids.Contains([uint32]$_.ProcessId) }) {
+                  $rows.Add([pscustomobject]@{
+                    mode=$mode; elapsedSeconds=[math]::Round($clock.Elapsed.TotalSeconds,3); pid=$proc.ProcessId
+                    creationTime=$proc.CreationDate; name=$proc.Name; kernel100ns=$proc.KernelModeTime; user100ns=$proc.UserModeTime
+                    workingSetBytes=$proc.WorkingSetSize; privateBytes=$proc.PrivatePageCount; handles=$proc.HandleCount; threads=$proc.ThreadCount
+                    readTransferBytes=$proc.ReadTransferCount; writeTransferBytes=$proc.WriteTransferCount
+                    mainWindowHandle=if ($proc.ProcessId -eq $p.Id) { $p.MainWindowHandle.ToInt64() } else { $null }
+                  })
+                }
+                if ($i -lt 12) { Start-Sleep -Seconds 5 }
+              }
+            } finally {
+              $rows | Export-Csv (Join-Path $out 'process-samples.csv') -NoTypeInformation
+              if (-not $p.HasExited) { [void]$p.CloseMainWindow(); Start-Sleep -Seconds 2 }
+              # MainWindow close may minimize to tray; end only the audit-launched process on this disposable runner.
+              if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force }
+              Start-Sleep -Seconds 2
+            }
+          }
+      - name: Summarize measured process samples
+        if: always()
+        shell: pwsh
+        run: |
+          $path = Join-Path $env:RUNNER_TEMP 'gearwin-audit/process-samples.csv'
+          if (-not (Test-Path $path)) { Write-Host 'No process samples available'; exit 0 }
+          $rows = Import-Csv $path
+          $summary = foreach ($group in ($rows | Where-Object { $_.name -eq 'GearWin.exe' } | Group-Object mode,pid,creationTime)) {
+            $s = @($group.Group | Sort-Object { [double]$_.elapsedSeconds })
+            if ($s.Count -lt 2) { continue }
+            $first = $s[0]; $last = $s[-1]
+            $seconds = [double]$last.elapsedSeconds - [double]$first.elapsedSeconds
+            if ($seconds -le 0) { continue }
+            $cpu = ([double]$last.kernel100ns + [double]$last.user100ns) - ([double]$first.kernel100ns + [double]$first.user100ns)
+            [pscustomobject]@{
+              mode=$first.mode; seconds=[math]::Round($seconds,2); samples=$s.Count
+              cpuMachinePercent=[math]::Round(100*$cpu/1e7/$seconds/[Environment]::ProcessorCount,3)
+              maxWorkingSetMiB=[math]::Round((($s | ForEach-Object {[double]$_.workingSetBytes} | Measure-Object -Maximum).Maximum)/1MB,2)
+              maxPrivateMiB=[math]::Round((($s | ForEach-Object {[double]$_.privateBytes} | Measure-Object -Maximum).Maximum)/1MB,2)
+              readTransferDelta=[double]$last.readTransferBytes-[double]$first.readTransferBytes
+              writeTransferDelta=[double]$last.writeTransferBytes-[double]$first.writeTransferBytes
+              handlesFirst=$first.handles; handlesLast=$last.handles
+            }
+          }
+          $json = @($summary) | ConvertTo-Json -Depth 4
+          $json | Set-Content (Join-Path $env:RUNNER_TEMP 'gearwin-audit/summary.json')
+          Write-Host $json
+          Write-Host 'Root process only; transfer bytes include non-disk I/O. Not physical SSD wear. Raw process tree is in CSV.'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ump01-windows-baseline
+          path: ${{ runner.temp }}/gearwin-audit
+          retention-days: 30

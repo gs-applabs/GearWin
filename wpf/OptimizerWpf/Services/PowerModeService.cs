@@ -1,122 +1,244 @@
-using System.Diagnostics;
+using System;
+using System.IO;
+using System.Linq;
+using System.Runtime.InteropServices;
+using System.Security.Principal;
+using System.Security.AccessControl;
+using System.Text.Json;
 using Microsoft.Win32;
 
 namespace OptimizerWpf.Services
 {
-    // Πλήρης C# port του Office Mode / Gaming Mode του Optimizer.ps1 (Set-OfficeMode/Disable-OfficeMode/
-    // Set-GamingMode/Disable-GamingMode, ~10855-10946) - όχι πια μόνο η εναλλαγή πλάνου ενέργειας.
-    // ΣΗΜΕΙΩΣΗ ΕΙΛΙΚΡΙΝΕΙΑΣ: η εφαρμογή δεν ζητάει ακόμα elevation - τα registry keys κάτω από
-    // HKEY_LOCAL_MACHINE (Network Throttling, HAGS, VBS/HVCI κ.λπ.) θα αποτύχουν σιωπηλά χωρίς αυτήν,
-    // ΑΚΡΙΒΩΣ όπως το Set-RegSafe του Optimizer.ps1 - το ίδιο ρίσκο υπήρχε ήδη εκεί, το Optimizer.ps1
-    // απλά τρέχει ΠΑΝΤΑ ως Administrator.
+    // A durable, allowlisted snapshot is written before the first mutation.
+    // Restore only values still owned by the profile; never reset unrelated user changes.
     public static class PowerModeService
     {
-        public static bool SetBalancedPlan() => RunPowercfg("/setactive SCHEME_BALANCED");
+        private static readonly object Gate = new();
+        private static readonly Guid Balanced = new("381b4222-f694-41f0-9685-ff5bb260df2e");
+        private static readonly Guid High = new("8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c");
 
-        public static bool SetHighPerformancePlan() => RunPowercfg("/setactive SCHEME_MIN");
+        private sealed record Setting(bool Machine, string Path, string Name, int Applied);
+        private sealed record Previous(bool Exists, int Value);
+        private sealed record Snapshot(string Mode, Guid OriginalPlan, Previous[] Values, bool? Committed = null);
 
-        public static void SetOfficeMode()
+        // Security policy, desktop appearance, menu delays, HAGS and capture settings
+        // are independent user choices, not prerequisites for a performance profile.
+        private static readonly Setting[] Office = Array.Empty<Setting>();
+        private static readonly Setting[] Gaming =
         {
-            RunPowercfg("/setactive SCHEME_BALANCED");
-            SetRegSafe(Registry.CurrentUser, @"Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects", "VisualFXSetting", 2);
-            SetRegSafe(Registry.LocalMachine, @"SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management", "ClearPageFileAtShutdown", 0);
-            SetRegSafe(Registry.LocalMachine, @"SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer", "SmartScreenEnabled", "RequireAdmin", RegistryValueKind.String);
-            SetRegSafe(Registry.CurrentUser, @"Software\Microsoft\Windows\CurrentVersion\UserProfileEngagement", "ScoobeSystemSettingEnabled", 0);
-            SetRegSafe(Registry.CurrentUser, @"Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager", "SystemPaneSuggestionsEnabled", 0);
+            new(false, @"Software\Microsoft\GameBar", "AllowAutoGameMode", 1),
+            new(false, @"Software\Microsoft\GameBar", "AutoGameModeEnabled", 1),
+        };
+
+        [DllImport("powrprof.dll")] private static extern uint PowerGetActiveScheme(IntPtr root, out IntPtr scheme);
+        [DllImport("powrprof.dll")] private static extern uint PowerSetActiveScheme(IntPtr root, ref Guid scheme);
+        [DllImport("kernel32.dll")] private static extern IntPtr LocalFree(IntPtr memory);
+
+        internal static Guid GetPlan()
+        {
+            if (PowerGetActiveScheme(IntPtr.Zero, out var ptr) != 0 || ptr == IntPtr.Zero)
+                throw new IOException("Cannot read the active power plan.");
+            try { return Marshal.PtrToStructure<Guid>(ptr); }
+            finally { LocalFree(ptr); }
         }
 
-        // restartExplorer=false όταν γίνεται εναλλαγή απευθείας σε άλλο mode (το επόμενο Set* ορίζει τα δικά του εφέ) - αποφεύγεται άσκοπο flicker.
-        public static void DisableOfficeMode(bool restartExplorer = true)
+        internal static void SetPlan(Guid plan)
         {
-            SetRegSafe(Registry.CurrentUser, @"Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects", "VisualFXSetting", 0);
-            SetRegSafe(Registry.CurrentUser, @"Software\Microsoft\Windows\CurrentVersion\UserProfileEngagement", "ScoobeSystemSettingEnabled", 1);
-            SetRegSafe(Registry.CurrentUser, @"Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager", "SystemPaneSuggestionsEnabled", 1);
-            if (restartExplorer) RestartExplorer();
+            if (GetPlan() == plan) return;
+            if (PowerSetActiveScheme(IntPtr.Zero, ref plan) != 0 || GetPlan() != plan)
+                throw new IOException("Cannot apply the requested power plan.");
         }
 
-        public static void SetGamingMode()
+        public static bool SetBalancedPlan() { lock (Gate) { try { using var lease = UltimatePlanJournal.PowerLease(); SetPlan(Balanced); return true; } catch { return false; } } }
+        public static bool SetHighPerformancePlan() { lock (Gate) { try { using var lease = UltimatePlanJournal.PowerLease(); SetPlan(High); return true; } catch { return false; } } }
+
+        private static string SnapshotPath()
         {
-            RunPowercfg("/setactive SCHEME_MIN");
-            SetRegSafe(Registry.CurrentUser, @"Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects", "VisualFXSetting", 2);
-            SetRegSafe(Registry.CurrentUser, @"Software\Microsoft\GameBar", "AllowAutoGameMode", 1);
-            // Ίδια τιμή που διαβάζει/γράφει ο διακόπτης "Game Mode" της καρτέλας Παιχνίδια (GamingTweaksService) - οι δύο ενδείξεις συμφωνούν.
-            SetRegSafe(Registry.CurrentUser, @"Software\Microsoft\GameBar", "AutoGameModeEnabled", 1);
-            SetRegSafe(Registry.CurrentUser, @"System\GameConfigStore", "GameDVR_Enabled", 0);
-            SetRegSafe(Registry.LocalMachine, @"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile", "NetworkThrottlingIndex", 255);
-            SetRegSafe(Registry.LocalMachine, @"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile", "SystemResponsiveness", 0);
-            SetRegSafe(Registry.LocalMachine, @"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games", "GPU Priority", 8);
-            SetRegSafe(Registry.LocalMachine, @"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games", "Priority", 6);
-            SetRegSafe(Registry.CurrentUser, @"Control Panel\Desktop", "MenuShowDelay", "0", RegistryValueKind.String);
-            SetRegSafe(Registry.LocalMachine, @"SYSTEM\CurrentControlSet\Control\PriorityControl", "Win32PrioritySeparation", 38);
-            SetRegSafe(Registry.LocalMachine, @"SYSTEM\CurrentControlSet\Control\GraphicsDrivers", "HwSchMode", 2);
-            // ΑΣΦΑΛΕΙΑ: ΔΕΝ απενεργοποιούνται πια τα VBS/Memory Integrity (HVCI) εδώ. Προστατεύουν τον πυρήνα των
-            // Windows από φόρτωση κακόβουλων/ευάλωτων οδηγών· το Gaming Mode τα έκλεινε (μόνιμα, μέχρι επανεκκίνηση και
-            // μετά) για πολύ μικρό κέρδος FPS, και το "τέλος" του mode τα ξαναενεργοποιούσε ΑΚΟΜΑ ΚΙ ΑΝ ο χρήστης τα
-            // είχε σκόπιμα κλειστά. Ό,τι ήταν ήδη ρυθμισμένο από τον χρήστη/τα Windows μένει ως έχει.
+            var root = SecureStorage.RootDir;
+            if (Directory.Exists(root) && (File.GetAttributes(root) & FileAttributes.ReparsePoint) != 0)
+                throw new IOException("Unsafe profile storage.");
+            SecureStorage.EnsureRoot();
+            if (!SecureStorage.IsDirectoryAdminOnlyWritable(root))
+                throw new IOException("Profile storage is not protected.");
+            using var identity = WindowsIdentity.GetCurrent();
+            var sid = identity.User?.Value ?? throw new IOException("Cannot identify the Windows user.");
+            var file = Path.Combine(root, "PowerProfile-" + sid + ".json");
+            if (File.Exists(file) && (File.GetAttributes(file) & FileAttributes.ReparsePoint) != 0)
+                throw new IOException("Unsafe profile snapshot.");
+            return file;
         }
 
-        public static void DisableGamingMode(bool restartExplorer = true)
+        private static Setting[] Settings(string mode) => mode switch
         {
-            RunPowercfg("/setactive SCHEME_BALANCED");
-            SetRegSafe(Registry.CurrentUser, @"System\GameConfigStore", "GameDVR_Enabled", 1);
-            SetRegSafe(Registry.LocalMachine, @"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile", "NetworkThrottlingIndex", 10);
-            SetRegSafe(Registry.LocalMachine, @"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile", "SystemResponsiveness", 14);
-            if (restartExplorer) RestartExplorer();
+            "Office" => Office,
+            "Gaming" => Gaming,
+            _ => throw new InvalidDataException("Unknown profile.")
+        };
+
+        private static Guid Target(string mode) => mode == "Office" ? Balanced : High;
+        private static RegistryKey Hive(Setting s) => s.Machine ? Registry.LocalMachine : Registry.CurrentUser;
+
+        private static Previous Read(Setting setting)
+        {
+            using var key = Hive(setting).OpenSubKey(setting.Path);
+            var value = key?.GetValue(setting.Name, null, RegistryValueOptions.DoNotExpandEnvironmentNames);
+            if (value == null) return new(false, 0);
+            if (value is not int number || key!.GetValueKind(setting.Name) != RegistryValueKind.DWord)
+                throw new IOException("Unexpected existing registry value type.");
+            return new(true, number);
         }
 
-        // Ίδιο με το Stop-Process -Name explorer -Force του ps1 original - δεν επανεκκινεί χειροκίνητα
-        // τον Explorer, βασίζεται στη δική του αυτόματη επανεκκίνηση από τα Windows (ίδια συμπεριφορά
-        // με το αρχικό, δεν είναι bug εδώ).
-        private static void RestartExplorer()
+        private static void Write(Setting setting, Previous value)
         {
-            foreach (var p in Process.GetProcessesByName("explorer"))
+            using var key = value.Exists ? Hive(setting).CreateSubKey(setting.Path) : Hive(setting).OpenSubKey(setting.Path, writable: true);
+            if (value.Exists)
             {
-                try { p.Kill(); } catch { }
-                finally { p.Dispose(); } // τα Process objects του GetProcessesByName δεν γίνονταν ποτέ Dispose
+                if (key == null) throw new IOException("Cannot open profile registry key.");
+                key.SetValue(setting.Name, value.Value, RegistryValueKind.DWord);
             }
+            else key?.DeleteValue(setting.Name, false);
+            if (Read(setting) != value) throw new IOException("Profile registry change could not be verified.");
         }
 
-        private static void SetRegSafe(RegistryKey root, string path, string name, int value) =>
-            SetRegSafe(root, path, name, value, RegistryValueKind.DWord);
+        internal static bool StillOwned(bool exists, int value, int applied) => exists && value == applied;
 
-        private static void SetRegSafe(RegistryKey root, string path, string name, object value, RegistryValueKind kind)
+        private static Snapshot? Load(string path)
         {
+            try { _ = File.GetAttributes(path); }
+            catch (FileNotFoundException) { return null; }
+            if (!SecureStorage.IsProtectedFile(path) || new FileInfo(path).Length > 65536)
+                throw new IOException("Unsafe profile snapshot.");
+            var state = JsonSerializer.Deserialize<Snapshot>(File.ReadAllText(path)) ?? throw new InvalidDataException("Invalid profile snapshot.");
+            if (state.OriginalPlan == Guid.Empty || state.Values == null || state.Values.Length != Settings(state.Mode).Length)
+                throw new InvalidDataException("Invalid profile snapshot.");
+            return state;
+        }
+
+        private static void Persist(string path, Snapshot state, bool replace = false)
+        {
+            var tmp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
             try
             {
-                using var key = root.CreateSubKey(path, writable: true);
-                key?.SetValue(name, value, kind);
-            }
-            catch
-            {
-                // Ίδια πολιτική ανοχής σφαλμάτων με το Set-RegSafe του Optimizer.ps1 - ένα μεμονωμένο
-                // registry key (π.χ. λόγω έλλειψης elevation) δεν πρέπει να σταματήσει τα υπόλοιπα.
-            }
-        }
-
-        private static bool RunPowercfg(string arguments)
-        {
-            try
-            {
-                var psi = new ProcessStartInfo
+                using (var stream = new FileStream(tmp, FileMode.CreateNew, FileAccess.Write, FileShare.None))
                 {
-                    FileName = "powercfg",
-                    Arguments = arguments,
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                };
-                using var process = Process.Start(psi);
-                if (process == null) return false;
-                _ = process.StandardOutput.ReadToEndAsync(); // drain — redirected αλλά δεν διαβάζονταν
-                _ = process.StandardError.ReadToEndAsync();
-                if (!process.WaitForExit(5000)) { try { process.Kill(true); } catch { } return false; }
-                return process.ExitCode == 0;
+                    JsonSerializer.Serialize(stream, state);
+                    stream.Flush(flushToDisk: true);
+                }
+                var info = new FileInfo(tmp);
+                var security = info.GetAccessControl(System.Security.AccessControl.AccessControlSections.Owner);
+                security.SetOwner(new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null));
+                info.SetAccessControl(security);
+                if (!SecureStorage.IsProtectedFile(tmp)) throw new IOException("Profile journal is not protected.");
+                File.Move(tmp, path, overwrite: replace);
             }
-            catch
+            finally { if (File.Exists(tmp)) File.Delete(tmp); }
+        }
+
+        private static void Restore(string path, Snapshot state)
+        {
+            var settings = Settings(state.Mode);
+            // Do not overwrite any value changed since activation by another tool or the user.
+            for (var i = 0; i < settings.Length; i++)
             {
-                return false;
+                var current = Read(settings[i]);
+                if (StillOwned(current.Exists, current.Value, settings[i].Applied) && current != state.Values[i])
+                    Write(settings[i], state.Values[i]);
+            }
+            if (GetPlan() == Target(state.Mode)) SetPlan(state.OriginalPlan);
+            File.Delete(path);
+        }
+
+        private static bool MatchesApplied(Snapshot state)
+        {
+            if (GetPlan() != Target(state.Mode)) return false;
+            return Settings(state.Mode).All(setting => Read(setting) == new Previous(true, setting.Applied));
+        }
+
+        // Old snapshots have no commit marker. Do not silently overwrite an externally
+        // changed profile or assume that a pre-crash partial application was successful.
+        internal static bool IsConfirmedActive(bool? committed, bool matchesApplied) =>
+            committed != false && matchesApplied;
+
+        private static void Enable(string mode)
+        {
+            lock (Gate)
+            {
+                using var powerLease = UltimatePlanJournal.PowerLease();
+                var path = SnapshotPath();
+                var existing = Load(path);
+                if (existing != null)
+                {
+                    if (existing.Mode == mode && IsConfirmedActive(existing.Committed, MatchesApplied(existing))) return;
+                    if (existing.Committed != false && existing.Mode == mode)
+                        throw new IOException("Profile differs from its saved state. Disable it explicitly before reapplying.");
+                    // Pending journal: rollback only values still matching our applied value.
+                    Restore(path, existing);
+                }
+                var settings = Settings(mode);
+                var state = new Snapshot(mode, GetPlan(), settings.Select(Read).ToArray(), false);
+                Persist(path, state);
+                try
+                {
+                    SetPlan(Target(mode));
+                    for (var i = 0; i < settings.Length; i++)
+                        if (state.Values[i] != new Previous(true, settings[i].Applied))
+                            Write(settings[i], new Previous(true, settings[i].Applied));
+                    if (!MatchesApplied(state)) throw new IOException("Profile activation could not be verified.");
+                    Persist(path, state with { Committed = true }, replace: true);
+                }
+                catch
+                {
+                    Restore(path, state); // if rollback fails, the durable snapshot stays available for retry
+                    throw;
+                }
             }
         }
+
+        private static void Disable(string mode)
+        {
+            lock (Gate)
+            {
+                using var powerLease = UltimatePlanJournal.PowerLease();
+                var path = SnapshotPath();
+                var state = Load(path);
+                // Old releases have no trustworthy snapshot: never guess original values.
+                if (state?.Mode == mode) Restore(path, state);
+            }
+        }
+
+        // Read persisted ownership after a failed switch; UI must not claim the old mode survived.
+        public static string? ReadActiveProfile()
+        {
+            lock (Gate)
+            {
+                var state = Load(SnapshotPath());
+                return state != null && IsConfirmedActive(state.Committed, MatchesApplied(state)) ? state.Mode : null;
+            }
+        }
+
+        internal static async System.Threading.Tasks.Task ApplyManualProfileAsync(string mode, bool enabled)
+        {
+            if (mode is not ("Office" or "Gaming")) throw new ArgumentException("Unknown profile.", nameof(mode));
+            using var lease = await GearWinCore.EnterAsync(CoreWork.ProfileChange);
+            await System.Threading.Tasks.Task.Run(() =>
+            {
+                if (enabled) Enable(mode); else Disable(mode);
+            });
+            var settings = AppSettingsService.Current;
+            if (enabled)
+            {
+                settings.OfficeModeActive = mode == "Office";
+                settings.GamingModeActive = mode == "Gaming";
+            }
+            else if (mode == "Office") settings.OfficeModeActive = false;
+            else settings.GamingModeActive = false;
+            AppSettingsService.Save();
+        }
+
+        public static void SetOfficeMode() => Enable("Office");
+        public static void SetGamingMode() => Enable("Gaming");
+        // Preserve the old call signature. Never terminate Explorer.
+        public static void DisableOfficeMode(bool restartExplorer = true) => Disable("Office");
+        public static void DisableGamingMode(bool restartExplorer = true) => Disable("Gaming");
     }
 }

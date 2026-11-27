@@ -31,7 +31,9 @@ namespace OptimizerWpf.Services
 
         public static void Start()
         {
-            if (_timer != null) return;
+            if (_timer != null || !AppSettingsService.Current.AutoGamingModeEnabled) return;
+            _lastFullscreenHwnd = IntPtr.Zero;
+            _consecutiveFullscreenTicks = _consecutiveNonFullscreenTicks = 0;
             _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
             _timer.Tick += (_, _) => Tick();
             _timer.Start();
@@ -41,39 +43,55 @@ namespace OptimizerWpf.Services
         {
             _timer?.Stop();
             _timer = null;
-            if (_isActive) { try { PowerModeService.DisableGamingMode(restartExplorer: false); } catch { } _isActive = false; }
+            if (_isActive && !AppSettingsService.Current.GamingModeActive && !AppSettingsService.Current.OfficeModeActive)
+            {
+                try { PowerModeService.DisableGamingMode(restartExplorer: false); _isActive = false; }
+                catch (Exception ex) { System.Diagnostics.Trace.TraceError(ex.Message); }
+            }
+            else _isActive = false;
         }
 
         private static void Tick()
         {
             try
             {
+                if (!AppSettingsService.Current.AutoGamingModeEnabled) return;
                 // Αν ο χρήστης έχει ενεργοποιήσει χειροκίνητα το Gaming Mode (Βελτιστοποίηση), το αυτόματο δεν το αγγίζει - ούτε το ενεργοποιεί ξανά ούτε το απενεργοποιεί στο τέλος του παιχνιδιού.
-                if (!_isActive && AppSettingsService.Current.GamingModeActive) return;
+                if (AppSettingsService.Current.GamingModeActive || AppSettingsService.Current.OfficeModeActive)
+                {
+                    _isActive = false; // ownership transferred to the manual profile; do not restore it later
+                    _consecutiveFullscreenTicks = _consecutiveNonFullscreenTicks = 0;
+                    return;
+                }
                 var hwnd = GetForegroundWindow();
-                if (hwnd == IntPtr.Zero || !IsFullscreen(hwnd) || IsSelfOrShell(hwnd))
+                if (hwnd == IntPtr.Zero || !IsFullscreen(hwnd) || IsSelfOrShell(hwnd) || !IsConfiguredGame(hwnd))
                 {
                     _consecutiveFullscreenTicks = 0;
-                    _consecutiveNonFullscreenTicks++;
+                    _consecutiveNonFullscreenTicks = Math.Min(2, _consecutiveNonFullscreenTicks + 1);
                     // 2 συνεχόμενοι έλεγχοι (10s) χωρίς fullscreen πριν την επαναφορά - αποφεύγει
                     // τρεμόπαιγμα σε σύντομη εναλλαγή παραθύρου (π.χ. Alt+Tab στιγμιαία).
                     if (_isActive && _consecutiveNonFullscreenTicks >= 2)
                     {
                         // Χωρίς επανεκκίνηση του Explorer: το αυτόματο mode δεν πρέπει να κλείνει τα ανοιχτά παράθυρα του χρήστη κάθε φορά που τελειώνει ένα παιχνίδι.
-                        PowerModeService.DisableGamingMode(restartExplorer: false);
+                        using var lease = GearWinCore.TryEnterBackground(CoreWork.ProfileChange);
+                        if (lease == null) return;
+                        if (!AppSettingsService.Current.GamingModeActive && !AppSettingsService.Current.OfficeModeActive)
+                            PowerModeService.DisableGamingMode(restartExplorer: false);
                         _isActive = false;
                     }
                     return;
                 }
 
                 _consecutiveNonFullscreenTicks = 0;
-                _consecutiveFullscreenTicks = hwnd == _lastFullscreenHwnd ? _consecutiveFullscreenTicks + 1 : 1;
+                _consecutiveFullscreenTicks = hwnd == _lastFullscreenHwnd ? Math.Min(2, _consecutiveFullscreenTicks + 1) : 1;
                 _lastFullscreenHwnd = hwnd;
 
                 // 2 συνεχόμενοι έλεγχοι (10s) στο ΙΔΙΟ fullscreen παράθυρο πριν την ενεργοποίηση -
                 // αποφεύγει ψευδές θετικό από σύντομη fullscreen προβολή (π.χ. video player splash).
                 if (!_isActive && _consecutiveFullscreenTicks >= 2)
                 {
+                    using var lease = GearWinCore.TryEnterBackground(CoreWork.ProfileChange);
+                    if (lease == null || AppSettingsService.Current.GamingModeActive || AppSettingsService.Current.OfficeModeActive) return;
                     PowerModeService.SetGamingMode();
                     _isActive = true;
                 }
@@ -86,6 +104,19 @@ namespace OptimizerWpf.Services
             if (!GetWindowRect(hwnd, out var r)) return false;
             var w = r.Right - r.Left; var h = r.Bottom - r.Top;
             return w == GetSystemMetrics(SM_CXSCREEN) && h == GetSystemMetrics(SM_CYSCREEN);
+        }
+
+        // Fullscreen alone also matches browsers, presentation software and video players.
+        // Until launcher detection is unified, only an explicitly configured game is eligible.
+        private static bool IsConfiguredGame(IntPtr hwnd)
+        {
+            try
+            {
+                GetWindowThreadProcessId(hwnd, out var pid);
+                using var process = Process.GetProcessById(pid);
+                return process.MainModule?.FileName is string path && GameProfileService.HasProfile(path);
+            }
+            catch { return false; }
         }
 
         private static bool IsSelfOrShell(IntPtr hwnd)

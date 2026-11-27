@@ -182,7 +182,32 @@ namespace OptimizerWpf.Views
 
         // ===== Συντήρηση & Διάγνωση =====
 
-        private void BtnFullMaintenance_Click(object sender, RoutedEventArgs e) { AdvancedToolsService.FullMaintenance(); TxtMaintenanceStatus.Text = LanguageService.T("Adv_MaintenanceStarted"); }
+        private async void BtnFullMaintenance_Click(object sender, RoutedEventArgs e)
+        {
+            bool greek = LanguageService.Current == "el";
+            if (ThemedMessageBox.Show(greek
+                    ? "Θα εκτελεστεί ασφαλής καθαρισμός προσωρινών αρχείων, DISM RestoreHealth και SFC. Ενδέχεται να απαιτηθεί χρόνος και σύνδεση στο Internet. Συνέχεια;"
+                    : "Run conservative temporary-file cleanup, DISM RestoreHealth and SFC? Repair may take time and require Internet access.",
+                    LanguageService.T("Adv_WarningTitle"), MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
+            if (sender is Button button) button.IsEnabled = false;
+            using var busy = StatusService.BeginScope(LanguageService.T("Adv_MaintenanceStarted"));
+            TxtMaintenanceStatus.Text = LanguageService.T("Adv_MaintenanceStarted");
+            try
+            {
+                var guard = await RestoreGuardService.EnsureRecentAsync();
+                if (guard == RestoreGuardResult.Failed)
+                {
+                    TxtMaintenanceStatus.Text = LanguageService.T("Health_DeletePartialFailed");
+                    return;
+                }
+                var result = await AdvancedToolsService.FullMaintenanceAsync();
+                TxtMaintenanceStatus.Text = LanguageService.T(result.Success ? "Adv_Enabled" : "Adv_Failed");
+                ThemedMessageBox.Show(result.Output, LanguageService.T("Adv_MaintenanceStarted"),
+                    MessageBoxButton.OK, result.Success ? MessageBoxImage.Information : MessageBoxImage.Warning);
+            }
+            catch (System.Exception ex) { TxtMaintenanceStatus.Text = ex.Message; }
+            finally { if (sender is Button b) b.IsEnabled = true; }
+        }
         private void BtnEnablePrivileges_Click(object sender, RoutedEventArgs e) { var ok = AdvancedToolsService.EnablePrivilege("SeDebugPrivilege"); TxtMaintenanceStatus.Text = ok ? LanguageService.T("Adv_Enabled") : LanguageService.T("Adv_Failed"); }
         private void BtnNetworkReset_Click(object sender, RoutedEventArgs e) { AdvancedToolsService.NetworkReset(); TxtMaintenanceStatus.Text = LanguageService.T("Adv_NetworkResetStarted"); }
 

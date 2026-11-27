@@ -28,6 +28,11 @@ namespace OptimizerWpf.Services
         private const uint MOD_WIN = 0x0008, MOD_SHIFT = 0x0004;
         private const uint VK_V = 0x56;
         private const int MaxHistory = 50;
+        private const int MaxTextLength = 65536;
+        private const int MaxHistoryFileBytes = 16 * 1024 * 1024;
+        private static System.Threading.Timer? _saveTimer;
+        private static bool _dirty;
+        private static bool _hotkeyRegistered;
 
         [DllImport("user32.dll")] private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
         [DllImport("user32.dll")] private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
@@ -47,35 +52,62 @@ namespace OptimizerWpf.Services
         public static event Action? HistoryChanged;
         public static bool IsRunning { get; private set; }
 
-        public static IReadOnlyList<string> History { get { lock (Lock) return _history.ToList(); } }
+        public static IReadOnlyList<string> History
+        {
+            get { lock (Lock) { if (!IsRunning && !_dirty) LoadPersisted(); return _history.ToList(); } }
+        }
+
+        internal static void ReleaseInactiveHistory()
+        {
+            lock (Lock) if (!IsRunning && !_dirty) { _history.Clear(); _lastSeen = null; }
+        }
 
         public static void Start(Window mainWindow)
         {
-            if (IsRunning) return;
-            LoadPersisted();
+            if (IsRunning || !AppSettingsService.Current.ClipboardHistoryEnabled) return;
+            if (!_dirty) LoadPersisted();
 
             var helper = new WindowInteropHelper(mainWindow);
             _hwnd = helper.Handle != IntPtr.Zero ? helper.Handle : helper.EnsureHandle();
             _source = HwndSource.FromHwnd(_hwnd);
             _source?.AddHook(WndProc);
             // 6.9.8 (κανόνας συντομεύσεων): αν η καταχώριση αποτύχει (άλλο πρόγραμμα κρατά τη συντόμευση) ενημερώνεται ο χρήστης, όχι σιωπηλή αποτυχία
-            if (!RegisterHotKey(_hwnd, HotkeyId, MOD_WIN | MOD_SHIFT, VK_V)) StatusService.SetIdle(LanguageService.T("Clip_HotkeyInUse"));
-            AddClipboardFormatListener(_hwnd);
+            _hotkeyRegistered = RegisterHotKey(_hwnd, HotkeyId, MOD_WIN | MOD_SHIFT | 0x4000, VK_V);
+            if (!_hotkeyRegistered) StatusService.Report(LanguageService.T("Clip_HotkeyInUse"));
+            if (!AddClipboardFormatListener(_hwnd))
+            {
+                if (_hotkeyRegistered) UnregisterHotKey(_hwnd, HotkeyId);
+                _hotkeyRegistered = false;
+                _source?.RemoveHook(WndProc);
+                _source = null;
+                return;
+            }
+            lock (Lock) _saveTimer = new System.Threading.Timer(_ => FlushPending(), null, System.Threading.Timeout.Infinite, System.Threading.Timeout.Infinite);
             IsRunning = true;
         }
 
         public static void Stop()
         {
             if (!IsRunning) return;
-            try { UnregisterHotKey(_hwnd, HotkeyId); } catch { }
+            try { if (_hotkeyRegistered) UnregisterHotKey(_hwnd, HotkeyId); } catch { }
+            _hotkeyRegistered = false;
             try { RemoveClipboardFormatListener(_hwnd); } catch { }
             _source?.RemoveHook(WndProc);
             _source = null;
+            lock (Lock)
+            {
+                _saveTimer?.Dispose();
+                _saveTimer = null;
+                FlushPending();
+                _lastSeen = null;
+            }
             IsRunning = false;
+            ReleaseInactiveHistory();
         }
 
         private static IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
         {
+            if (!IsRunning || !AppSettingsService.Current.ClipboardHistoryEnabled) return IntPtr.Zero;
             if (msg == WM_HOTKEY && wParam.ToInt32() == HotkeyId)
             {
                 HotkeyPressed?.Invoke();
@@ -99,7 +131,7 @@ namespace OptimizerWpf.Services
                 // κωδικούς σε απλό κείμενο στο δίσκο (ClipboardHistory.json). Τώρα τα σέβεται.
                 if (IsMarkedSensitive()) return;
                 var text = Clipboard.GetText();
-                if (string.IsNullOrWhiteSpace(text) || text == _lastSeen) return;
+                if (string.IsNullOrWhiteSpace(text) || text.Length > MaxTextLength || text == _lastSeen) return;
                 _lastSeen = text;
 
                 lock (Lock)
@@ -107,8 +139,9 @@ namespace OptimizerWpf.Services
                     _history.RemoveAll(x => x == text);
                     _history.Insert(0, text);
                     if (_history.Count > MaxHistory) _history.RemoveRange(MaxHistory, _history.Count - MaxHistory);
+                    _dirty = true;
+                    _saveTimer?.Change(1500, System.Threading.Timeout.Infinite);
                 }
-                SavePersisted();
                 HistoryChanged?.Invoke();
             }
             catch { }
@@ -128,21 +161,29 @@ namespace OptimizerWpf.Services
 
         public static void CopyToClipboard(string text)
         {
-            try { _lastSeen = text; Clipboard.SetText(text); }
+            try { if (IsRunning) _lastSeen = text; Clipboard.SetText(text); }
             catch { }
         }
 
         public static void RemoveItem(string text)
         {
-            lock (Lock) _history.Remove(text);
-            SavePersisted();
+            lock (Lock)
+            {
+                if (_history.Remove(text)) _dirty = true;
+                FlushPending();
+            }
             HistoryChanged?.Invoke();
         }
 
         public static void ClearHistory()
         {
-            lock (Lock) _history.Clear();
-            SavePersisted();
+            lock (Lock)
+            {
+                _history.Clear();
+                _lastSeen = null;
+                _dirty = true;
+                FlushPending();
+            }
             HistoryChanged?.Invoke();
         }
 
@@ -150,35 +191,49 @@ namespace OptimizerWpf.Services
         {
             try
             {
-                if (!File.Exists(StorePath)) return;
+                if (!File.Exists(StorePath) || new FileInfo(StorePath).Length > MaxHistoryFileBytes) return;
                 var bytes = File.ReadAllBytes(StorePath);
                 string json;
                 try { json = System.Text.Encoding.UTF8.GetString(System.Security.Cryptography.ProtectedData.Unprotect(bytes, null, System.Security.Cryptography.DataProtectionScope.CurrentUser)); }
                 catch (System.Security.Cryptography.CryptographicException) { json = System.Text.Encoding.UTF8.GetString(bytes); } // παλιό (μη κρυπτογραφημένο) αρχείο
                 var items = System.Text.Json.JsonSerializer.Deserialize<List<string>>(json);
                 if (items == null) return;
-                lock (Lock) { _history.Clear(); _history.AddRange(items.Take(MaxHistory)); }
+                lock (Lock) { _history.Clear(); _history.AddRange(items.Where(x => !string.IsNullOrWhiteSpace(x) && x.Length <= MaxTextLength).Take(MaxHistory)); }
             }
             catch { }
         }
 
-        private static void SavePersisted()
+        private static void FlushPending()
         {
-            try
+            lock (Lock)
             {
-                Directory.CreateDirectory(Path.GetDirectoryName(StorePath)!);
-                List<string> snapshot;
-                lock (Lock) snapshot = _history.ToList();
-                // Κρυπτογράφηση DPAPI (μόνο ο τρέχων χρήστης Windows) + ατομική εγγραφή — το ιστορικό μπορεί να περιέχει
-                // ευαίσθητο κείμενο και πριν αποθηκευόταν σε καθαρό JSON.
-                var protectedBytes = System.Security.Cryptography.ProtectedData.Protect(
-                    System.Text.Encoding.UTF8.GetBytes(System.Text.Json.JsonSerializer.Serialize(snapshot)), null,
-                    System.Security.Cryptography.DataProtectionScope.CurrentUser);
-                var tmp = StorePath + ".tmp";
-                File.WriteAllBytes(tmp, protectedBytes);
-                File.Move(tmp, StorePath, overwrite: true);
+                if (!_dirty) return;
+                string? tmp = null;
+                try
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(StorePath)!);
+                    if (_history.Count == 0)
+                    {
+                        if (File.Exists(StorePath)) File.Delete(StorePath);
+                        _dirty = false;
+                        return;
+                    }
+                    var bytes = System.Text.Encoding.UTF8.GetBytes(System.Text.Json.JsonSerializer.Serialize(_history));
+                    byte[] encrypted;
+                    try
+                    {
+                        encrypted = System.Security.Cryptography.ProtectedData.Protect(bytes, null,
+                            System.Security.Cryptography.DataProtectionScope.CurrentUser);
+                    }
+                    finally { System.Security.Cryptography.CryptographicOperations.ZeroMemory(bytes); }
+                    tmp = StorePath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+                    File.WriteAllBytes(tmp, encrypted);
+                    File.Move(tmp, StorePath, overwrite: true);
+                    _dirty = false;
+                }
+                catch (Exception ex) { System.Diagnostics.Trace.TraceError("Clipboard persistence failed: " + ex.Message); }
+                finally { if (tmp != null && File.Exists(tmp)) try { File.Delete(tmp); } catch { } }
             }
-            catch { }
         }
     }
 }

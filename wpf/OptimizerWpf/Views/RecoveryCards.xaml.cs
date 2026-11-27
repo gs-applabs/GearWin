@@ -269,12 +269,13 @@ namespace OptimizerWpf.Views
                 var from = TxtTransferFrom.Text;
                 var to = TxtTransferTo.Text;
                 TxtTransferStatus.Text = Translation("Έλεγχος φακέλων…", "Checking folders…");
-                var result = await System.Threading.Tasks.Task.Run(() => TransferPreflight.Inspect(from, to));
+                var result = await TransferPreflight.InspectAsync(from, to);
                 TxtTransferStatus.Text = (result.Ready
                     ? Translation("Έλεγχος ολοκληρώθηκε: ", "Preflight passed: ")
                     : Translation("Ο έλεγχος δεν ολοκληρώθηκε: ", "Preflight blocked: ")) +
                     $"{result.FileCount:N0} files, {result.ByteCount:N0} bytes. {result.Message}";
             }
+            catch (System.Exception ex) { TxtTransferStatus.Text = ex.Message; }
             finally { BtnTransferCheck.IsEnabled = true; }
         }
 
@@ -300,7 +301,7 @@ namespace OptimizerWpf.Views
             try
             {
                 TxtTransferStatus.Text = Translation("Απογραφή εφαρμογών…", "Reading installed applications…");
-                var inventory = await System.Threading.Tasks.Task.Run(GearWin.Migration.ApplicationDiscovery.InspectHost);
+                var inventory = await GearWinCore.RunAsync(CoreWork.TransferScan, () => System.Threading.Tasks.Task.Run(GearWin.Migration.ApplicationDiscovery.InspectHost));
                 var options = new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web)
                 {
                     WriteIndented = true,
@@ -308,12 +309,13 @@ namespace OptimizerWpf.Views
                         System.Text.Json.JsonNamingPolicy.CamelCase, allowIntegerValues: false) },
                 };
                 string json = System.Text.Json.JsonSerializer.Serialize(inventory, options);
-                await File.WriteAllTextAsync(picker.FileName, json);
+                await GearWinCore.RunAsync(CoreWork.Backup, () => System.Threading.Tasks.Task.Run(() =>
+                    AppSettingsService.WriteIfChanged(Path.GetFullPath(picker.FileName), json, null)));
                 TxtTransferStatus.Text = Translation(
                     $"Εξήχθησαν {inventory.Applications.Count:N0} εφαρμογές: {picker.FileName}",
                     $"Exported {inventory.Applications.Count:N0} applications: {picker.FileName}");
             }
-            catch (System.Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+            catch (System.Exception ex)
             {
                 TxtTransferStatus.Text = ex.Message;
             }

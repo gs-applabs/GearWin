@@ -20,11 +20,57 @@ namespace OptimizerWpf.Services
     public static class SensorService
     {
         private static Computer? _computer;
-        private static bool _openFailed;
+        private static long _openFailedAt;
+        private static readonly System.Collections.Generic.HashSet<string> FailedHardware = new();
+        private static readonly object SensorGate = new();
+        private static long _lastRefresh;
+        private static bool _closed;
+
+        private static readonly object SnapshotGate = new();
+        private static System.Threading.Tasks.Task<(int? Cpu, int? Gpu, int? Ram, string? Pawn)>? _temperatureTask;
+        private static System.Threading.Tasks.Task<int?>? _diskTask;
+        private static string? _diskTaskDrive;
+
+        internal static System.Threading.Tasks.Task<(int? Cpu, int? Gpu, int? Ram, string? Pawn)> ReadHomeTemperaturesAsync()
+        {
+            lock (SnapshotGate)
+            {
+                if (_temperatureTask is { IsCompleted: false }) return _temperatureTask;
+                return _temperatureTask = System.Threading.Tasks.Task.Run(() => (
+                    GetCpuTemperatureCelsius(), GetGpuTemperatureCelsius(),
+                    GetRamTemperatureCelsius(), GetPawnIoVersion()));
+            }
+        }
+
+        internal static System.Threading.Tasks.Task<int?> ReadHomeDiskAsync(string drive)
+        {
+            lock (SnapshotGate)
+            {
+                // A slow native request is not canceled by starting more native requests.
+                // Different selections retry on their existing UI refresh tick.
+                if (_diskTask is { IsCompleted: false })
+                    return string.Equals(_diskTaskDrive, drive, StringComparison.OrdinalIgnoreCase)
+                        ? _diskTask : System.Threading.Tasks.Task.FromResult<int?>(null);
+                _diskTaskDrive = drive;
+                return _diskTask = System.Threading.Tasks.Task.Run(() => StorageTemperatureService.Read(drive));
+            }
+        }
+
+        internal static bool RefreshDue(long now, long last) => last == 0 || now - last >= 3000;
+
+        public static void Close()
+        {
+            lock (SensorGate)
+            {
+                _closed = true;
+                try { _computer?.Close(); } catch { }
+                _computer = null;
+            }
+        }
 
         private static Computer? GetComputer()
         {
-            if (_openFailed) return null;
+            if (_closed || (_openFailedAt != 0 && Environment.TickCount64 - _openFailedAt < 60000)) return null;
             if (_computer != null) return _computer;
             try
             {
@@ -44,18 +90,20 @@ namespace OptimizerWpf.Services
                 // πολιτική antivirus/Group Policy που μπλοκάρει drivers, ή απουσία elevation σε
                 // ασυνήθιστη περίπτωση) - υποβαθμίζεται σε "καμία θερμοκρασία διαθέσιμη" αντί να
                 // ρίξει την εφαρμογή.
-                _openFailed = true;
+                _openFailedAt = Environment.TickCount64;
+                try { _computer?.Close(); } catch { }
+                _computer = null;
                 return null;
             }
         }
 
         private static void RefreshAll(Computer computer)
         {
-            foreach (var hw in computer.Hardware)
-            {
-                hw.Update();
-                foreach (var sub in hw.SubHardware) sub.Update();
-            }
+            var now = Environment.TickCount64;
+            if (!RefreshDue(now, _lastRefresh)) return;
+            FailedHardware.Clear();
+            foreach (var hw in computer.Hardware) UpdateTree(hw);
+            _lastRefresh = now;
         }
 
         // ΔΙΟΡΘΩΣΗ (χρήστης ανέφερε: "η θερμοκρασία... φαίνεται η ίδια σε CPU/GPU"): "Package" από
@@ -64,7 +112,31 @@ namespace OptimizerWpf.Services
         // `sensors.FirstOrDefault()` (ΟΠΟΙΟΣΔΗΠΟΤΕ αισθητήρας θερμοκρασίας βρεθεί πρώτος, μπορεί να
         // είναι ασήμαντος - π.χ. VRM/SoC αντί για τον πυρήνα). Τώρα δοκιμάζει πολλαπλά γνωστά
         // ονόματα (Intel ΚΑΙ AMD) με τη σειρά.
-        private static readonly string[] CpuPackageNames = { "Package", "Tctl", "Tdie", "CPU Die", "Core Average", "Core Max" };
+        private static void UpdateTree(IHardware hardware)
+        {
+            try { hardware.Update(); } catch { FailedHardware.Add(hardware.Identifier.ToString()); }
+            foreach (var child in hardware.SubHardware) UpdateTree(child);
+        }
+
+        private static System.Collections.Generic.IEnumerable<IHardware> HardwareTree(IHardware hardware)
+        {
+            yield return hardware;
+            foreach (var child in hardware.SubHardware)
+                foreach (var item in HardwareTree(child)) yield return item;
+        }
+
+        internal static bool IsValidTemperature(double value) => double.IsFinite(value) && value > 1 && value <= 150;
+
+        // DIMM thermal limits, VRM, SOC and other unrelated readings are never a substitute.
+        internal static bool IsLiveTemperatureName(string name) =>
+            !name.Contains("limit", StringComparison.OrdinalIgnoreCase) &&
+            !name.Contains("threshold", StringComparison.OrdinalIgnoreCase) &&
+            !name.Contains("resolution", StringComparison.OrdinalIgnoreCase) &&
+            !name.Contains("maximum", StringComparison.OrdinalIgnoreCase) &&
+            !name.Contains("critical", StringComparison.OrdinalIgnoreCase) &&
+            !name.Contains("warning", StringComparison.OrdinalIgnoreCase);
+
+        private static readonly string[] CpuPackageNames = { "CPU Package", "Package", "Tctl", "Tdie", "CPU Die", "Core Average", "Core Max", "Core #" };
         private static readonly string[] GpuCoreNames = { "GPU Core", "Core", "Hot Spot", "Junction" };
 
         // ΔΙΟΡΘΩΣΗ (χρήστης ανέφερε: "CPU temp δεν φαίνεται, η Gigabyte έχει εφαρμογή που τη μετράει") -
@@ -74,6 +146,22 @@ namespace OptimizerWpf.Services
         // (ο κύριος, τεκμηριωμένος λόγος που εργαλεία σαν αυτό αποτυγχάνουν σιωπηλά σε πολλά σύγχρονα
         // Windows 11 συστήματα με VBS - ανεξάρτητα από elevation). Vendor εργαλεία (Gigabyte SIV/Control
         // Center κ.λπ.) συχνά έχουν το ΔΙΚΟ ΤΟΥΣ signed driver με διαφορετικό, εγκεκριμένο μονοπάτι.
+        internal static string? GetPawnIoVersion()
+        {
+            try
+            {
+                foreach (var view in new[] { RegistryView.Registry64, RegistryView.Registry32 })
+                {
+                    using var hive = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, view);
+                    using var key = hive.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\PawnIO");
+                    if (Version.TryParse(key?.GetValue("DisplayVersion") as string, out var version))
+                        return version.ToString();
+                }
+            }
+            catch { }
+            return null;
+        }
+
         public static bool IsHvciActive()
         {
             try
@@ -104,12 +192,25 @@ namespace OptimizerWpf.Services
         // στο System32 - flat, τεκμηριωμένο C API, P/Invoke-able απευθείας όπως το NVML. Το Ryzen
         // Master Monitoring SDK (CPU AMD) ΠΑΡΑΜΕΝΕΙ εκτός πεδίου - αυτό ΔΕΝ εγκαθίσταται αυτόματα με
         // κανέναν οδηγό, χρειάζεται πραγματικά ξεχωριστό bundling/εγκατάσταση.
-        public static int? GetGpuTemperatureCelsius() =>
-            GetTemperature(HardwareType.GpuNvidia, GpuCoreNames) ??
-            GetTemperature(HardwareType.GpuAmd, GpuCoreNames) ??
-            GetTemperature(HardwareType.GpuIntel, GpuCoreNames) ??
-            GetNvidiaTemperatureViaNvml() ??
-            GetAmdTemperatureViaAdl();
+        private static long _gpuTemperatureAt;
+        private static int? _gpuTemperature;
+
+        public static int? GetGpuTemperatureCelsius()
+        {
+            lock (SensorGate)
+            {
+                if (_closed) return null;
+                long now = Environment.TickCount64;
+                if (_gpuTemperatureAt != 0 && now - _gpuTemperatureAt < 3000) return _gpuTemperature;
+                _gpuTemperature = GetTemperature(HardwareType.GpuNvidia, GpuCoreNames) ??
+                    GetTemperature(HardwareType.GpuAmd, GpuCoreNames) ??
+                    GetTemperature(HardwareType.GpuIntel, GpuCoreNames) ??
+                    GetNvidiaTemperatureViaNvml() ??
+                    GetAmdTemperatureViaAdl();
+                _gpuTemperatureAt = Environment.TickCount64;
+                return _gpuTemperature;
+            }
+        }
 
         // ΝΕΟ - ρητό αίτημα χρήστη: "πρόσθεσε και το voltage της GPU" (στο Widget Επιφάνειας Εργασίας) -
         // ίδιο μοτίβο/αισθητήρες ονόματα με το GetGpuTemperatureCelsius παραπάνω, απλά SensorType.Voltage
@@ -124,18 +225,21 @@ namespace OptimizerWpf.Services
 
         private static double? GetVoltage(HardwareType type, string[]? preferredNames)
         {
-            var computer = GetComputer();
-            if (computer == null) return null;
-            try
+            lock (SensorGate)
             {
-                RefreshAll(computer);
-                var hw = computer.Hardware.FirstOrDefault(h => h.HardwareType == type);
-                if (hw == null) return null;
-                return PickVoltage(hw, preferredNames);
-            }
-            catch
-            {
-                return null;
+                var computer = GetComputer();
+                if (computer == null) return null;
+                try
+                {
+                    RefreshAll(computer);
+                    var hw = computer.Hardware.FirstOrDefault(h => h.HardwareType == type);
+                    if (hw == null) return null;
+                    return PickVoltage(hw, preferredNames);
+                }
+                catch
+                {
+                    return null;
+                }
             }
         }
 
@@ -167,7 +271,7 @@ namespace OptimizerWpf.Services
                     for (var i = 0; i < count; i++)
                     {
                         var temp = new AdlTemperature { iSize = System.Runtime.InteropServices.Marshal.SizeOf<AdlTemperature>() };
-                        if (Adl.ADL_Overdrive5_Temperature_Get(i, 0, ref temp) == 0 && temp.iTemperature > 0)
+                        if (Adl.ADL_Overdrive5_Temperature_Get(i, 0, ref temp) == 0 && IsValidTemperature(temp.iTemperature / 1000.0))
                             return temp.iTemperature / 1000; // millidegrees -> whole °C
                     }
                     return null;
@@ -199,15 +303,19 @@ namespace OptimizerWpf.Services
         // API, εγκαθίσταται μαζί με κάθε driver AMD GPU (Catalyst/Adrenalin).
         private static class Adl
         {
+            [System.Runtime.InteropServices.DefaultDllImportSearchPaths(System.Runtime.InteropServices.DllImportSearchPath.System32)]
             [System.Runtime.InteropServices.DllImport("atiadlxx.dll")]
             public static extern int ADL_Main_Control_Create(AdlMainMallocCallback callback, int enumConnectedAdapters);
 
+            [System.Runtime.InteropServices.DefaultDllImportSearchPaths(System.Runtime.InteropServices.DllImportSearchPath.System32)]
             [System.Runtime.InteropServices.DllImport("atiadlxx.dll")]
             public static extern int ADL_Main_Control_Destroy();
 
+            [System.Runtime.InteropServices.DefaultDllImportSearchPaths(System.Runtime.InteropServices.DllImportSearchPath.System32)]
             [System.Runtime.InteropServices.DllImport("atiadlxx.dll")]
             public static extern int ADL_Adapter_NumberOfAdapters_Get(out int numAdapters);
 
+            [System.Runtime.InteropServices.DefaultDllImportSearchPaths(System.Runtime.InteropServices.DllImportSearchPath.System32)]
             [System.Runtime.InteropServices.DllImport("atiadlxx.dll")]
             public static extern int ADL_Overdrive5_Temperature_Get(int adapterIndex, int thermalControllerIndex, ref AdlTemperature temperature);
         }
@@ -219,9 +327,16 @@ namespace OptimizerWpf.Services
                 if (Nvml.nvmlInit_v2() != 0) return null;
                 try
                 {
-                    if (Nvml.nvmlDeviceGetHandleByIndex_v2(0, out var device) != 0) return null;
-                    if (Nvml.nvmlDeviceGetTemperature(device, 0 /* NVML_TEMPERATURE_GPU */, out var temp) != 0) return null;
-                    return (int)temp;
+                    if (Nvml.nvmlDeviceGetCount_v2(out uint count) != 0) return null;
+                    int? highest = null;
+                    for (uint index = 0; index < Math.Min(count, 64u); index++)
+                    {
+                        if (Nvml.nvmlDeviceGetHandleByIndex_v2(index, out var device) != 0 ||
+                            Nvml.nvmlDeviceGetTemperature(device, 0, out var temp) != 0 ||
+                            !IsValidTemperature(temp)) continue;
+                        highest = Math.Max(highest ?? 0, (int)temp);
+                    }
+                    return highest;
                 }
                 finally
                 {
@@ -242,15 +357,23 @@ namespace OptimizerWpf.Services
         // τεκμηριωμένη επίσημη βιβλιοθήκη, εγκαθίσταται μαζί με κάθε πρόσφατο NVIDIA driver.
         private static class Nvml
         {
+            [System.Runtime.InteropServices.DefaultDllImportSearchPaths(System.Runtime.InteropServices.DllImportSearchPath.System32)]
             [System.Runtime.InteropServices.DllImport("nvml.dll")]
             public static extern int nvmlInit_v2();
 
+            [System.Runtime.InteropServices.DefaultDllImportSearchPaths(System.Runtime.InteropServices.DllImportSearchPath.System32)]
+            [System.Runtime.InteropServices.DllImport("nvml.dll")]
+            public static extern int nvmlDeviceGetCount_v2(out uint count);
+
+            [System.Runtime.InteropServices.DefaultDllImportSearchPaths(System.Runtime.InteropServices.DllImportSearchPath.System32)]
             [System.Runtime.InteropServices.DllImport("nvml.dll")]
             public static extern int nvmlDeviceGetHandleByIndex_v2(uint index, out IntPtr device);
 
+            [System.Runtime.InteropServices.DefaultDllImportSearchPaths(System.Runtime.InteropServices.DllImportSearchPath.System32)]
             [System.Runtime.InteropServices.DllImport("nvml.dll")]
             public static extern int nvmlDeviceGetTemperature(IntPtr device, int sensorType, out uint temp);
 
+            [System.Runtime.InteropServices.DefaultDllImportSearchPaths(System.Runtime.InteropServices.DllImportSearchPath.System32)]
             [System.Runtime.InteropServices.DllImport("nvml.dll")]
             public static extern int nvmlShutdown();
         }
@@ -272,41 +395,66 @@ namespace OptimizerWpf.Services
         // (ένας μόνο φυσικός δίσκος στο σύστημα).
         public static int? GetDiskTemperatureCelsius(string? modelHint)
         {
-            var computer = GetComputer();
-            if (computer == null) return null;
-            try
+            lock (SensorGate)
             {
-                RefreshAll(computer);
-                var storageHw = computer.Hardware.Where(h => h.HardwareType == HardwareType.Storage).ToList();
-                if (storageHw.Count == 0) return null;
-
-                var match = !string.IsNullOrWhiteSpace(modelHint)
-                    ? storageHw.FirstOrDefault(h => h.Name.Contains(modelHint, StringComparison.OrdinalIgnoreCase))
-                    : null;
-                match ??= storageHw[0];
-
-                return PickTemperature(match, null);
+                var computer = GetComputer();
+                if (computer == null) return null;
+                try
+                {
+                    RefreshAll(computer);
+                    var storageHw = computer.Hardware.SelectMany(HardwareTree).Where(h => h.HardwareType == HardwareType.Storage).ToList();
+                    if (storageHw.Count == 0) return null;
+    
+                    if (string.IsNullOrWhiteSpace(modelHint)) return null;
+                    var matches = storageHw.Where(h => string.Equals(h.Name.Trim(), modelHint.Trim(), StringComparison.OrdinalIgnoreCase)).ToArray();
+                    if (matches.Length != 1) return null;
+                    var match = matches[0];
+                    return PickTemperature(match, null);
+                }
+                catch
+                {
+                    return null;
+                }
             }
-            catch
+        }
+
+        // LibreHardwareMonitor 0.9.6 StorageDevice identifiers end with the actual
+        // DiskInfoToolkit DriveNumber (verified upstream at tag v0.9.6).
+        internal static int? GetDiskTemperatureByNumber(uint number)
+        {
+            lock (SensorGate)
             {
-                return null;
+                var computer = GetComputer();
+                if (computer == null) return null;
+                try
+                {
+                    RefreshAll(computer);
+                    var suffix = "/" + number.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                    var matches = computer.Hardware.SelectMany(HardwareTree)
+                        .Where(h => h.HardwareType == HardwareType.Storage &&
+                            h.Identifier.ToString().EndsWith(suffix, StringComparison.Ordinal)).ToArray();
+                    return matches.Length == 1 ? PickTemperature(matches[0], new[] { "Composite Temperature", "Temperature" }) : null;
+                }
+                catch { return null; }
             }
         }
 
         private static int? GetTemperature(HardwareType type, string[]? preferredNames)
         {
-            var computer = GetComputer();
-            if (computer == null) return null;
-            try
+            lock (SensorGate)
             {
-                RefreshAll(computer);
-                var hw = computer.Hardware.FirstOrDefault(h => h.HardwareType == type);
-                if (hw == null) return null;
-                return PickTemperature(hw, preferredNames);
-            }
-            catch
-            {
-                return null;
+                var computer = GetComputer();
+                if (computer == null) return null;
+                try
+                {
+                    RefreshAll(computer);
+                    return computer.Hardware.SelectMany(HardwareTree).Where(h => h.HardwareType == type)
+                        .Select(h => PickTemperature(h, preferredNames)).Max();
+                }
+                catch
+                {
+                    return null;
+                }
             }
         }
 
@@ -324,19 +472,21 @@ namespace OptimizerWpf.Services
         // παραπλανητικό ψεύτικο 0°C στον χρήστη.
         private static int? PickTemperature(IHardware hw, string[]? preferredNames)
         {
-            var sensors = hw.Sensors.Where(s => s.SensorType == SensorType.Temperature && s.Value.HasValue && s.Value.Value > 1).ToList();
+            if (FailedHardware.Contains(hw.Identifier.ToString())) return null;
+            var sensors = hw.Sensors.Where(s => s.SensorType == SensorType.Temperature && s.Value.HasValue && IsValidTemperature(s.Value.Value) && IsLiveTemperatureName(s.Name)).ToList();
             if (sensors.Count == 0) return null;
 
             if (preferredNames != null)
             {
                 foreach (var name in preferredNames)
                 {
-                    var match = sensors.FirstOrDefault(s => s.Name.Contains(name, StringComparison.OrdinalIgnoreCase));
-                    if (match != null) return (int)Math.Round(match.Value!.Value);
+                    var matches = sensors.Where(s => s.Name.Contains(name, StringComparison.OrdinalIgnoreCase)).ToArray();
+                    if (matches.Length != 0) return (int)Math.Round(matches.Max(s => s.Value!.Value));
                 }
             }
 
-            return (int)Math.Round(sensors[0].Value!.Value);
+            if (preferredNames != null) return null;
+            return (int)Math.Round(sensors.Max(s => s.Value!.Value));
         }
     }
 }

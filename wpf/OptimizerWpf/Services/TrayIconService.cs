@@ -35,6 +35,14 @@ namespace OptimizerWpf.Services
         // Πραγματική έξοδος (το X του παραθύρου απλώς κρύβει στο tray) - tray μενού ΚΑΙ κλασικό μενού.
         public static void ExitApplication()
         {
+            if (!GearWinCore.TryStopWhenSafe())
+            {
+                var greek = LanguageService.Current == "el";
+                var message = greek ? "Εκτελείται ή αναμένει βαριά εργασία. Ολοκληρώστε την πριν από την έξοδο." : "A heavy operation is active or waiting. Finish it before exiting.";
+                StatusService.Report(message);
+                ShowNotificationBalloon("GearWin", message);
+                return;
+            }
             IsExiting = true;
             System.Windows.Application.Current.Shutdown();
         }
@@ -127,10 +135,9 @@ namespace OptimizerWpf.Services
 
         private static void ToggleWidget()
         {
-            if (DesktopWidgetService.IsRunning) { DesktopWidgetService.Stop(persistDisabled: true); return; }
-            DesktopWidgetService.Start();
-            AppSettingsService.Current.DesktopWidgetEnabled = true;
+            AppSettingsService.Current.DesktopWidgetEnabled = !DesktopWidgetService.IsRunning;
             AppSettingsService.Save();
+            CoreFeatureLifecycle.Apply();
         }
 
         private static async System.Threading.Tasks.Task RunQuickCleanAsync()
@@ -140,10 +147,7 @@ namespace OptimizerWpf.Services
             _icon.Text = LanguageService.T("Tray_QuickCleanRunning");
             try
             {
-                var items = await QuickCleanService.ScanAsync();
-                var keys = items.Where(i => i.Recommended).Select(i => i.Key).ToList();
-                var freed = await QuickCleanService.CleanAsync(keys);
-                ImpactTrackingService.RecordBytesFreed(freed);
+                var freed = await SystemMaintenanceService.QuickCleanAsync();
                 _icon.ShowBalloonTip(4000, "GearWin - Complete PC Care",
                     $"{LanguageService.T("Tray_QuickCleanDonePrefix")}{QuickCleanService.FormatSize(freed)}", ToolTipIcon.Info);
             }

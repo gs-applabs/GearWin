@@ -20,8 +20,28 @@ namespace OptimizerWpf.Services
     {
         // ===== Συντήρηση & Διάγνωση Συστήματος (10 ενέργειες) =====
 
-        public static void FullMaintenance() => RunPsDetached(
-            "Remove-Item \\\"$env:TEMP\\*\\\" -Recurse -Force -ErrorAction SilentlyContinue; sfc /scannow; DISM /Online /Cleanup-Image /RestoreHealth");
+        private static readonly System.Threading.SemaphoreSlim FullMaintenanceGate = new(1, 1);
+
+        public static async Task<(bool Success, string Output)> FullMaintenanceAsync()
+        {
+            if (!await FullMaintenanceGate.WaitAsync(0))
+                return (false, "Maintenance is already running.");
+            try
+            {
+                var removed = await SystemMaintenanceService.QuickCleanAsync();
+                // Repair the component store before using it as the SFC repair source.
+                var dism = await HealthCleanupService.RunDismRestoreHealthAsync();
+                if (!dism.Success)
+                    return (false, $"Cleanup: {QuickCleanService.FormatSize(removed)}; DISM failed.\\n{dism.Output}");
+                var sfc = await HealthCleanupService.RunSfcScanAsync();
+                return (sfc.Success, $"Cleanup: {QuickCleanService.FormatSize(removed)}\\nDISM: {dism.Output}\\nSFC: {sfc.Output}");
+            }
+            finally
+            {
+                HealthScoreService.Invalidate();
+                FullMaintenanceGate.Release();
+            }
+        }
 
         public static bool EnablePrivilege(string privilege) => TokenPrivilege.Enable(privilege);
 
@@ -320,12 +340,12 @@ namespace OptimizerWpf.Services
         {
             // 6.1.0 - XML εργασία (TaskSchedulerService) αντί για `schtasks /Create` ορίσματα: οι εργασίες
             // του CLI δεν τρέχουν σε laptop με μπαταρία (προεπιλεγμένος περιορισμός).
-            if (!enabled) { await TaskSchedulerService.DeleteAsync(ScheduledMaintenanceTaskName); return true; }
+            if (!enabled) return await TaskSchedulerService.DeleteAsync(ScheduledMaintenanceTaskName);
 
             var exePath = Process.GetCurrentProcess().MainModule?.FileName ?? "";
             if (string.IsNullOrEmpty(exePath)) return false;
             // Εργασία HighestAvailable χωρίς UAC: το exe πρέπει να είναι σε φάκελο που δεν τροποποιούν απλοί χρήστες (βλ. SecureStorage).
-            if (!SecureStorage.IsDirectoryAdminOnlyWritable(Path.GetDirectoryName(exePath))) return false;
+            if (!SecureStorage.IsProtectedExecutable(exePath)) return false;
             var xml = TaskSchedulerService.BuildWeeklyTaskXml(exePath, "--auto-maintenance", TaskSchedulerService.CurrentUserId(), "GearWin - weekly maintenance");
             return await TaskSchedulerService.CreateAsync(ScheduledMaintenanceTaskName, xml);
         }
@@ -336,25 +356,25 @@ namespace OptimizerWpf.Services
         // με απλό αρχείο καταγραφής αφού δεν υπάρχει UI να δείξει τι έγινε.
         public static void RunScheduledMaintenance()
         {
+            if (!AppSettingsService.Current.ScheduledMaintenanceEnabled) return;
             var log = new System.Text.StringBuilder();
             log.AppendLine($"=== OptimizerWpf scheduled maintenance - {DateTime.Now:yyyy-MM-dd HH:mm} ===");
             try
             {
-                var result = HealthScoreService.Compute();
-                log.AppendLine($"Health score before: {result.Score}");
-                var cleanedTemp = false;
-                foreach (var issue in result.Issues)
+                var result = HealthScoreService.ComputeAsync(priority: CorePriority.Background).GetAwaiter().GetResult();
+                log.AppendLine($"Health score before: {result.DisplayScore}");
+                if (!AppSettingsService.Current.ScheduledMaintenanceEnabled) return;
+                if (result.Issues.Any(issue => issue.FixType == "Storage"))
                 {
-                    if (issue.FixType != "Storage") continue;
-                    var temp = Environment.GetEnvironmentVariable("TEMP");
-                    if (string.IsNullOrEmpty(temp)) continue;
-                    foreach (var f in Directory.EnumerateFileSystemEntries(temp))
+                    if (MaintenancePaths.VerifiedUserTemp() is string temp)
                     {
-                        try { if (Directory.Exists(f)) Directory.Delete(f, true); else File.Delete(f); } catch { }
+                        // Unattended cleanup is deliberately limited to old files directly in the verified user temp.
+                        var removed = SystemMaintenanceService.ScheduledCleanAsync().GetAwaiter().GetResult();
+                        log.AppendLine($"Deleted logical bytes: {removed}. Active, recent, redirected and inaccessible files skipped.");
                     }
-                    cleanedTemp = true;
+                    else log.AppendLine("Skipped: user temp root could not be verified.");
                 }
-                log.AppendLine(cleanedTemp ? "Temp files cleaned." : "No storage issue found - nothing to clean.");
+                else log.AppendLine("No storage issue found - nothing to clean.");
             }
             catch (Exception ex) { log.AppendLine($"Error: {ex.Message}"); }
 
@@ -362,7 +382,10 @@ namespace OptimizerWpf.Services
             {
                 var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "OptimizerWpf");
                 Directory.CreateDirectory(dir);
-                File.AppendAllText(Path.Combine(dir, "ScheduledMaintenanceLog.txt"), log + "\n");
+                var path = Path.Combine(dir, "ScheduledMaintenanceLog.txt");
+                if (File.Exists(path) && new FileInfo(path).Length > 1024 * 1024)
+                    File.Move(path, path + ".previous", overwrite: true);
+                File.AppendAllText(path, log + "\n");
             }
             catch { }
         }
