@@ -25,7 +25,7 @@ namespace OptimizerWpf.Services
         private const long MaxVaultBytes = MaxPlainBytes + 8L * 1024 * 1024 + HeaderBytes;
 
         public static Task LockFolderAsync(string folderPath, string password, IProgress<string>? progress = null) =>
-            Task.Run(() => CreateVaultAsync(folderPath, password, progress));
+            GearWinCore.RunAsync(CoreWork.FileProtection, () => Task.Run(() => CreateVaultAsync(folderPath, password, progress)));
 
         private static async Task CreateVaultAsync(string folderPath, string password, IProgress<string>? progress)
         {
@@ -41,6 +41,7 @@ namespace OptimizerWpf.Services
                 progress?.Report(LanguageService.T("FolderLock_Compressing"));
                 using (var ms = new MemoryStream())
                 {
+                    var buffer = new byte[81920];
                     long total = 0;
                     int count = 0;
                     var pending = new System.Collections.Generic.Stack<string>();
@@ -66,7 +67,6 @@ namespace OptimizerWpf.Services
                                 if (input.Length > MaxPlainBytes - total) throw new IOException("Vault input exceeds the 64 MiB safety limit.");
                                 var entry = zip.CreateEntry(Path.GetRelativePath(folderPath, file).Replace('\\', '/'), CompressionLevel.Optimal);
                                 using var output = entry.Open();
-                                var buffer = new byte[81920];
                                 int read;
                                 while ((read = input.Read(buffer, 0, buffer.Length)) > 0)
                                 {
@@ -79,6 +79,7 @@ namespace OptimizerWpf.Services
                     }
                     if (ms.Length > MaxVaultBytes - HeaderBytes) throw new IOException("Vault exceeds the safety limit.");
                     plain = ms.ToArray();
+                    if (ms.TryGetBuffer(out var segment)) CryptographicOperations.ZeroMemory(segment.AsSpan());
                 }
 
                 progress?.Report(LanguageService.T("FolderLock_Encrypting"));
@@ -146,7 +147,7 @@ namespace OptimizerWpf.Services
         }
 
         public static Task UnlockFolderAsync(string vaultPath, string password, string destinationFolder, IProgress<string>? progress = null) =>
-            Task.Run(async () =>
+            GearWinCore.RunAsync(CoreWork.FileProtection, () => Task.Run(async () =>
             {
                 destinationFolder = Path.GetFullPath(destinationFolder);
                 var parent = Path.GetDirectoryName(destinationFolder);
@@ -183,7 +184,7 @@ namespace OptimizerWpf.Services
                     // Never recursively delete an unverified directory on failure.
                     // A partial staging directory may remain; original vault is never removed.
                 }
-            });
+            }));
 
         private static bool IsProtectedFolder(string folderPath)
         {
