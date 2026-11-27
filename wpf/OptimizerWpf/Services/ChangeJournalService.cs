@@ -22,8 +22,9 @@ namespace OptimizerWpf.Services
         public DateTime Time { get; }
         public string Description { get; }
         public bool IsUndone { get; internal set; }
-        public bool CanUndo => UndoAction != null && !IsUndone;
-        internal Func<Task>? UndoAction { get; }
+        public bool CanUndo => UndoAction != null && !IsUndone && System.Threading.Volatile.Read(ref UndoInFlight) == 0;
+        internal int UndoInFlight;
+        internal Func<Task>? UndoAction { get; set; }
         public override string ToString() => $"[{Time:HH:mm:ss}] {Description}{(IsUndone ? " ↩" : "")}";
     }
 
@@ -59,12 +60,19 @@ namespace OptimizerWpf.Services
         // true αν η αναίρεση ολοκληρώθηκε χωρίς σφάλμα. Η ίδια η αναίρεση ΔΕΝ καταγράφεται ως νέα αλλαγή.
         public static async Task<bool> UndoAsync(ChangeEntry entry)
         {
-            if (!entry.CanUndo) return false;
-            try { await entry.UndoAction!(); }
+            if (!entry.CanUndo || System.Threading.Interlocked.CompareExchange(ref entry.UndoInFlight, 1, 0) != 0) return false;
+            try
+            {
+                var undo = entry.UndoAction;
+                if (undo == null || entry.IsUndone) return false;
+                await undo();
+                entry.IsUndone = true;
+                entry.UndoAction = null;
+                Changed?.Invoke();
+                return true;
+            }
             catch { return false; }
-            entry.IsUndone = true;
-            Changed?.Invoke();
-            return true;
+            finally { System.Threading.Volatile.Write(ref entry.UndoInFlight, 0); }
         }
 
         public static void Clear()
