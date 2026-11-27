@@ -48,8 +48,8 @@ namespace OptimizerWpf.Views
         // timer. Ξεχωριστός, πολύ πιο αραιός timer (20s) μόνο για τον δίσκο - CPU/RAM/GPU παραμένουν
         // στο γρήγορο 1s timer (αυτά ΕΙΝΑΙ πραγματικά live).
         private readonly DispatcherTimer _diskRefreshTimer;
-        private PerformanceCounter? _cpuCounter;
-        private PerformanceCounter[]? _gpuCounters;
+        private IDisposable? _gpuSubscription;
+        private bool _gpuReading;
         private readonly List<string> _drives = new();
         private int _driveIndex;
 
@@ -74,7 +74,7 @@ namespace OptimizerWpf.Views
             // background thread ώστε να μην καθυστερούν το πρώτο paint του κύριου παραθύρου - τα πεδία
             // _cpuCounter/_gpuCounters είναι ήδη null-checked στο RefreshCpuRamGpu (παρακάτω), οπότε
             // απλά παραλείπεται το CPU%/GPU% για τα πρώτα ticks μέχρι να ολοκληρωθεί η αρχικοποίηση.
-            _ = InitializeCountersAsync();
+
 
             _refreshTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(PerformanceProfileService.Current.HomeRefreshSeconds) };
             _refreshTimer.Tick += (_, _) => { RefreshCpuRamGpu(); RefreshNetworkGraph(); };
@@ -90,8 +90,10 @@ namespace OptimizerWpf.Views
                 {
                     _refreshTimer.Stop();
                     _diskRefreshTimer.Stop();
+                    DisposeCounters();
                     return;
                 }
+                _gpuSubscription ??= SharedTelemetryService.SubscribeGpu();
                 _refreshTimer.Interval = TimeSpan.FromSeconds(PollSeconds(
                     PerformanceProfileService.Current.HomeRefreshSeconds, parentWindow.IsActive));
                 if (!_refreshTimer.IsEnabled) _refreshTimer.Start();
@@ -340,38 +342,25 @@ namespace OptimizerWpf.Views
 
         private bool _unloaded;
 
-        private async Task InitializeCountersAsync()
-        {
-            // Publish the counters on the dispatcher only after initialization. This avoids
-            // a worker publishing a counter after Unloaded has disposed the old view.
-            var result = await Task.Run(() =>
-            {
-                PerformanceCounter? cpu = null;
-                PerformanceCounter[]? gpu = null;
-                try
-                {
-                    cpu = new PerformanceCounter("Processor", "% Processor Time", "_Total");
-                    cpu.NextValue();
-                }
-                catch { cpu?.Dispose(); cpu = null; }
-                try { gpu = GpuInfoService.CreateUsageCounters(); } catch { }
-                return (cpu, gpu);
-            });
-            if (_unloaded)
-            {
-                result.cpu?.Dispose();
-                if (result.gpu != null) foreach (var counter in result.gpu) counter.Dispose();
-                return;
-            }
-            _cpuCounter = result.cpu;
-            _gpuCounters = result.gpu;
-        }
-
         private void DisposeCounters()
         {
-            var cpu = _cpuCounter; _cpuCounter = null; cpu?.Dispose();
-            var gpu = _gpuCounters; _gpuCounters = null;
-            if (gpu != null) foreach (var c in gpu) { try { c.Dispose(); } catch { } }
+            _gpuSubscription?.Dispose();
+            _gpuSubscription = null;
+        }
+
+        private async Task RefreshSharedGpuAsync()
+        {
+            if (_gpuReading || _gpuSubscription == null || _unloaded) return;
+            _gpuReading = true;
+            try
+            {
+                var value = await SharedTelemetryService.ReadGpuAsync();
+                if (_unloaded || _gpuSubscription == null) return;
+                TxtGpuPercent.Text = value.HasValue ? $"{value}%" : "—";
+                if (value.HasValue) AnimateBar(BarGpu, value.Value);
+            }
+            catch { }
+            finally { _gpuReading = false; }
         }
 
         // ΝΕΟ v3.2.0 (χρήστης ζήτησε: "δείκτης κατάστασης δικτύου στην Αρχική") - βλ.
@@ -600,15 +589,12 @@ namespace OptimizerWpf.Views
         // Live κάθε 1s - CPU/RAM/GPU αλλάζουν πραγματικά μέσα σε δευτερόλεπτα.
         private void RefreshCpuRamGpu()
         {
-            if (_cpuCounter != null)
+            var cpu = PerformanceProfileService.SampleCpu();
+            if (cpu >= 0)
             {
-                try
-                {
-                    var cpu = (int)Math.Round(_cpuCounter.NextValue());
-                    TxtCpuPercent.Text = $"{cpu}%";
-                    AnimateBar(BarCpu, cpu);
-                }
-                catch { /* counter can throw if it becomes invalid mid-run - skip this tick */ }
+                var value = (int)Math.Round(cpu);
+                TxtCpuPercent.Text = $"{value}%";
+                AnimateBar(BarCpu, value);
             }
 
             if (NativeMethods.GlobalMemoryStatusEx(out var memStatus))
@@ -621,16 +607,7 @@ namespace OptimizerWpf.Views
                 TxtRamDetail.Text = $"{usedGb:0.0} / {totalGb:0.0} GB";
             }
 
-            if (_gpuCounters != null)
-            {
-                try
-                {
-                    var gpu = GpuInfoService.SampleUsagePercent(_gpuCounters);
-                    TxtGpuPercent.Text = $"{gpu}%";
-                    AnimateBar(BarGpu, gpu);
-                }
-                catch { /* an engine instance can disappear mid-run (its process exited) */ }
-            }
+            _ = RefreshSharedGpuAsync();
         }
 
         // ΔΙΟΡΘΩΣΗ (ρητό αίτημα χρήστη: "η ανανέωση των δίσκων να γίνεται όταν αλλάζει το ποσοστό,
