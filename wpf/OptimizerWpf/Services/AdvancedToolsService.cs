@@ -20,8 +20,28 @@ namespace OptimizerWpf.Services
     {
         // ===== Συντήρηση & Διάγνωση Συστήματος (10 ενέργειες) =====
 
-        public static void FullMaintenance() => RunPsDetached(
-            "Remove-Item \\\"$env:TEMP\\*\\\" -Recurse -Force -ErrorAction SilentlyContinue; sfc /scannow; DISM /Online /Cleanup-Image /RestoreHealth");
+        private static readonly System.Threading.SemaphoreSlim FullMaintenanceGate = new(1, 1);
+
+        public static async Task<(bool Success, string Output)> FullMaintenanceAsync()
+        {
+            if (!await FullMaintenanceGate.WaitAsync(0))
+                return (false, "Maintenance is already running.");
+            try
+            {
+                var removed = await SystemMaintenanceService.QuickCleanAsync();
+                // Repair the component store before using it as the SFC repair source.
+                var dism = await HealthCleanupService.RunDismRestoreHealthAsync();
+                if (!dism.Success)
+                    return (false, $"Cleanup: {QuickCleanService.FormatSize(removed)}; DISM failed.\\n{dism.Output}");
+                var sfc = await HealthCleanupService.RunSfcScanAsync();
+                return (sfc.Success, $"Cleanup: {QuickCleanService.FormatSize(removed)}\\nDISM: {dism.Output}\\nSFC: {sfc.Output}");
+            }
+            finally
+            {
+                HealthScoreService.Invalidate();
+                FullMaintenanceGate.Release();
+            }
+        }
 
         public static bool EnablePrivilege(string privilege) => TokenPrivilege.Enable(privilege);
 
@@ -341,13 +361,13 @@ namespace OptimizerWpf.Services
             try
             {
                 var result = HealthScoreService.Compute();
-                log.AppendLine($"Health score before: {result.Score}");
+                log.AppendLine($"Health score before: {result.DisplayScore}");
                 if (result.Issues.Any(issue => issue.FixType == "Storage"))
                 {
                     if (MaintenancePaths.VerifiedUserTemp() is string temp)
                     {
                         // Unattended cleanup is deliberately limited to old files directly in the verified user temp.
-                        var removed = MaintenancePaths.CleanFiles(temp, TimeSpan.FromDays(7), recursive: false);
+                        var removed = SystemMaintenanceService.ScheduledCleanAsync().GetAwaiter().GetResult();
                         log.AppendLine($"Deleted logical bytes: {removed}. Active, recent, redirected and inaccessible files skipped.");
                     }
                     else log.AppendLine("Skipped: user temp root could not be verified.");
