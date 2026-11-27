@@ -8,12 +8,12 @@ Baseline: `0d36ba06ffd5b1f90676d546d8abdfafe1062fbf`; review branch `release/7.1
 |---|---:|---:|---:|---|
 | UMP01 source audit | 3 test/measurement coverage gaps | 1 infrastructure mitigation (measurement workflow added) | 0 | open |
 | UMP02 safety, batches 1–10 | 85 safety/correctness findings | 85 addressed at least in part in source | 0 operation-level certifications | open |
-| UMP03 core/resources, batches 1–7 | 53 findings | 53 addressed at least in part in source | 0 | open |
+| UMP03 core/resources, batches 1–8 | 61 findings | 61 addressed at least in part in source | 0 | open |
 | UMP04 unified maintenance, batches 1–2 | 24 findings | 24 addressed at least in part in source | 0 | open |
 | UMP05 central operation core, batches 1–5 | 25 findings | 25 addressed at least in part in source | 0 | open |
 | UMP06 status and navigation, batch 1 | 9 findings | 9 addressed at least in part in source | 0 | open |
 | UMP07 early artwork fix | 8 distinct icon/UI findings | 8 addressed at least in part in source | 0 visual certifications | open |
-| Total | 207 | 205 at least partly addressed | 0 operation-level certifications | open |
+| Total | 215 | 213 at least partly addressed | 0 operation-level certifications | open |
 
 The earlier manual review also identified deferred issues in profiles, resources, backups and navigation. These will be assigned stable IDs in their owning passes; do not inflate totals by counting them again. Full tracked-source lexical inventory completed; manual semantic review remains pending. The 7.0.0 baseline Windows build reported 391 desktop + 42 migration tests on 2026-11-27; the Linux job logs available are from 2026-11-23 (5 synthetic clone tests). Six CI jobs reported success in the run; an opt-in test can report pass without doing clicks. Baseline success is not a new branch test result.
 
@@ -449,3 +449,20 @@ R50: Home read temperatures only at construction, no retry while visible; batch 
 19 new test cases (7 valid-range, 6 sensor-name, 4 descriptor value, 1 malformed descriptor, 1 volume extent). 148 cumulative newly authored cases; 129 included in previously passed tests. New sensor changes through 5bddbc4c28f27e5c203b60fac5ecafcea0c0ce0e require compile and physical-device validation.
 
 References: Microsoft Windows IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS, IOCTL_STORAGE_QUERY_PROPERTY, STORAGE_TEMPERATURE_DATA_DESCRIPTOR/INFO, MSFT_DiskToStorageReliabilityCounter; upstream LibreHardwareMonitor v0.9.6 StorageDevice.cs (identifier constructed from DriveNumber, SMART composite/threshold sensor names) and PawnIo.cs (installation registry metadata). Official driver https://pawnio.eu/ . No driver installation, unsigned modules, protection disablement, privileged write commands or new bundled dependencies. Driver version metadata does not prove service is functional. Official signed PawnIO can be installed separately with explicit consent and GearWin restart, but not guaranteed compatible with every machine/security policy. LHM package remains v0.9.6. Source license review: LHM upstream MPL-2.0 plus third-party components; do not describe entire dependency as MIT. No actual temperature measurements from physical hardware available in GitHub VM; test matrix must include Intel/AMD CPU, NVIDIA/AMD/Intel GPU, DIMM with/without thermal sensor, NVMe/SATA/USB, two identical disks, spanned volume, HVCI on and missing/installed official PawnIO. GPU temperature remains a representative single tile, not guaranteed every GPU measured. ADL legacy enumeration, vendor-specific CPU SDKs, newer unsupported CPU families, native I/O hangs, and disk hotplug remapping remain open. No merge or release.
+
+## UMP03 — eighth resource batch: anti-pile-up RAM and CPU
+
+| ID | Finding | Source mitigation |
+|---|---|---|
+| R54 | Concurrent automatic health requests from recreated views each entered the core queue | one shared pending/active non-forced health snapshot |
+| R55 | Process history bounded samples per name but not number of names | 512 identities, 20 samples each, LRU eviction and synchronized snapshots |
+| R56 | Repeated GPU consumer disposal could enqueue workers behind a slow driver | one coalesced disposal request with demand recheck |
+| R57 | Repeated Undo clicks could enqueue duplicate mutations and successful undo retained closure | atomic per-entry in-flight guard, release successful closure |
+| R58 | Repeated status publication created duplicate history and queued UI callbacks | consecutive dedup and one pending dispatcher refresh |
+| R59 | Old automatic update sequence could continue after service stop or disable | generation invalidation and checks between providers |
+| R60 | Per-view sensor guard did not protect across Home recreation | process-wide shared CPU/GPU/RAM read and one disk read; different disk retries on existing timer |
+| R61 | Tweak undo closure directly retained detached row | weak row reference, retain model only |
+
+Three new regression cases: 2048+ process identities, 100 duplicate undo requests, 10,000 optional background attempts during backup. Cumulative 151 authored cases; 129 included in previously confirmed CI (563 tests). The sensor CI run 46002677976 was canceled during tests by later commits. Do not claim sensor or anti-pile-up tests passed yet.
+
+Independent endurance workflow .github/workflows/gearwin-endurance.yml, introduced at 968f15069805b879e07dab00845091ed137a9313, measures 61 samples each (15 minutes after one minute warmup) in normal and tray mode, CPU machine-normalized, private/working-set change, handles, threads, process I/O, raw process tree. Separate concurrency group does not cancel when subsequent ordinary commits arrive; push triggers only when workflow file changes, otherwise manual dispatch. This is a short endurance screening, not 24-hour certification, active UI churn, real hardware or physical SSD endurance. No forced memory trimming, no new always-on monitoring, no interruption of user backup/repair; existing queue limit 32 and optional nonqueued admission remain. Driver calls may still hang and retain waiting view continuations until completion; bounded work is not proof of zero leaks. Explicit user refresh is not coalesced into stale data. New threshold 512 process names and 15-minute windows are design choices. No merge or release.
