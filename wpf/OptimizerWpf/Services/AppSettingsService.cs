@@ -178,74 +178,115 @@ namespace OptimizerWpf.Services
             return Array.IndexOf(SupportedLanguages, code) >= 0 ? code : "el";
         }
 
+        private static readonly object PersistenceGate = new();
+        private static string? _lastPersisted;
+        private static bool _loadFailed;
+
         public static AppSettings Current
         {
             get
             {
-                if (_cache != null) return _cache;
-                var fileExists = File.Exists(StorePath);
-                try
+                lock (PersistenceGate)
                 {
-                    if (fileExists)
+                    if (_cache != null) return _cache;
+                    var exists = File.Exists(StorePath);
+                    try
                     {
-                        _cache = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(StorePath));
+                        if (exists)
+                        {
+                            var text = File.ReadAllText(StorePath);
+                            _cache = JsonSerializer.Deserialize<AppSettings>(text);
+                            if (_cache == null) throw new InvalidDataException("Null settings.");
+                            _lastPersisted = JsonSerializer.Serialize(_cache);
+                        }
                     }
+                    catch (Exception ex)
+                    {
+                        _loadFailed = true;
+                        System.Diagnostics.Trace.TraceError("Settings read failed: " + ex.Message);
+                    }
+                    if (_cache == null)
+                    {
+                        _cache = new AppSettings();
+                        if (!exists) _cache.Language = DetectSystemLanguage();
+                    }
+                    return _cache;
                 }
-                catch { }
-                if (_cache == null)
-                {
-                    _cache = new AppSettings();
-                    if (!fileExists) _cache.Language = DetectSystemLanguage();
-                }
-                return _cache;
+            }
+        }
+
+        internal static bool WriteIfChanged(string path, string json, string? lastPersisted)
+        {
+            if (string.Equals(json, lastPersisted, StringComparison.Ordinal) && File.Exists(path)) return false;
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            var tmp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            try
+            {
+                File.WriteAllText(tmp, json);
+                File.Move(tmp, path, overwrite: true);
+                return true;
+            }
+            finally { if (File.Exists(tmp)) try { File.Delete(tmp); } catch { } }
+        }
+
+        private static bool SaveCore()
+        {
+            try
+            {
+                var json = JsonSerializer.Serialize(Current);
+                // Never replace an unreadable original with default settings.
+                if (_loadFailed) return false;
+                WriteIfChanged(StorePath, json, _lastPersisted);
+                _lastPersisted = json;
+                return true;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Trace.TraceError("Settings write failed: " + ex.Message);
+                return false;
             }
         }
 
         public static void Save()
         {
-            try
-            {
-                Directory.CreateDirectory(Path.GetDirectoryName(StorePath)!);
-                // Ατομική εγγραφή (tmp + move): το απλό WriteAllText κόβει πρώτα το αρχείο — μια διακοπή/crash στη
-                // μέση άφηνε κενό/μισό JSON, και η επόμενη εκκίνηση έπεφτε σιωπηλά σε ΠΡΟΕΠΙΛΕΓΜΕΝΕΣ ρυθμίσεις.
-                var tmp = StorePath + ".tmp";
-                File.WriteAllText(tmp, JsonSerializer.Serialize(Current));
-                File.Move(tmp, StorePath, overwrite: true);
-            }
-            catch { }
+            lock (PersistenceGate) SaveCore();
         }
 
-        // ΝΕΟ (πρόταση χρήστη): αντίγραφο ασφαλείας/επαναφορά των ρυθμίσεων της ΙΔΙΑΣ της εφαρμογής -
-        // χρήσιμο σε επανεγκατάσταση Windows/μετακόμιση σε νέο υπολογιστή. Save() πρώτα ώστε το
-        // εξαγόμενο αρχείο να αντανακλά την ΤΡΕΧΟΥΣΑ κατάσταση, όχι μια πιθανώς παλιά αποθηκευμένη.
         public static bool Export(string destinationPath)
         {
-            try
+            lock (PersistenceGate)
             {
-                Save();
-                File.Copy(StorePath, destinationPath, overwrite: true);
-                return true;
+                try
+                {
+                    if (!SaveCore()) return false;
+                    WriteIfChanged(Path.GetFullPath(destinationPath), JsonSerializer.Serialize(Current), null);
+                    return true;
+                }
+                catch { return false; }
             }
-            catch { return false; }
         }
 
-        // Επικυρώνει ότι το αρχείο πραγματικά αποσειριοποιείται σε AppSettings ΠΡΙΝ αντικαταστήσει το
-        // πραγματικό αρχείο ρυθμίσεων - ένα κατεστραμμένο/άσχετο αρχείο δεν πρέπει ποτέ να καταστρέψει
-        // τις υπάρχουσες ρυθμίσεις του χρήστη.
         public static bool Import(string sourcePath)
         {
-            try
+            lock (PersistenceGate)
             {
-                var text = File.ReadAllText(sourcePath);
-                if (JsonSerializer.Deserialize<AppSettings>(text) == null) return false;
-                Directory.CreateDirectory(Path.GetDirectoryName(StorePath)!);
-                var tmpImport = StorePath + ".tmp";
-                File.WriteAllText(tmpImport, text);
-                File.Move(tmpImport, StorePath, overwrite: true);
-                _cache = null;
-                return true;
+                try
+                {
+                    var text = File.ReadAllText(sourcePath);
+                    using var document = JsonDocument.Parse(text);
+                    if (document.RootElement.ValueKind != JsonValueKind.Object ||
+                        !document.RootElement.TryGetProperty(nameof(AppSettings.Language), out _)) return false;
+                    var settings = JsonSerializer.Deserialize<AppSettings>(text);
+                    if (settings == null) return false;
+                    var json = JsonSerializer.Serialize(settings);
+                    WriteIfChanged(StorePath, json, null);
+                    _cache = null;
+                    _lastPersisted = null;
+                    _loadFailed = false;
+                    return true;
+                }
+                catch { return false; }
             }
-            catch { return false; }
         }
     }
 }
