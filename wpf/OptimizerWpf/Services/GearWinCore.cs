@@ -123,8 +123,8 @@ internal static class GearWinCore
 
     internal static async Task<T> RunAsync<T>(CoreWork kind, Func<Task<T>> work, CorePriority priority = CorePriority.User, CancellationToken ct = default)
     {
-        using var lease = await EnterAsync(kind, priority, ct);
+        using var lease = await EnterAsync(kind, priority, ct).ConfigureAwait(false);
         ct.ThrowIfCancellationRequested();
-        return await work();
+        return await work().ConfigureAwait(false);
     }
 }
