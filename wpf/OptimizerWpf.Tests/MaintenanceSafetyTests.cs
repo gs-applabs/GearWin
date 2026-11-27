@@ -213,4 +213,31 @@ public class MaintenanceSafetyTests
     [InlineData(4000L, 1000L, true)]
     public void SensorRefreshIsCoalesced(long now, long last, bool expected)
         => Assert.Equal(expected, SensorService.RefreshDue(now, last));
+
+    [Theory]
+    [InlineData(14999L, 0L, true)]
+    [InlineData(15000L, 0L, false)]
+    [InlineData(1L, 2L, false)]
+    public void HealthSnapshotHasBoundedFreshness(long now, long previous, bool expected)
+        => Assert.Equal(expected, HealthScoreService.IsFresh(now, previous));
+
+    [Theory]
+    [InlineData(true, false, "UserTemp,ThumbnailCache")]
+    [InlineData(false, true, "BrowserCache")]
+    [InlineData(true, true, "UserTemp,ThumbnailCache,BrowserCache")]
+    [InlineData(false, false, "")]
+    public void UnifiedMaintenancePlanNeverIncludesRiskyCategories(bool space, bool browser, string expected)
+    {
+        var items = new[]
+        {
+            new QuickCleanItem("UserTemp", "", 100, true),
+            new QuickCleanItem("ThumbnailCache", "", 100, true),
+            new QuickCleanItem("BrowserCache", "", 100, false),
+            new QuickCleanItem("RecycleBin", "", 100, true),
+            new QuickCleanItem("WindowsTemp", "", 100, true),
+            new QuickCleanItem("WindowsUpdateCache", "", 100, true),
+            new QuickCleanItem("UserTemp", "", 100, true)
+        };
+        Assert.Equal(expected, string.Join(",", SystemMaintenanceService.BuildCleanupPlan(items, space, browser)));
+    }
 }
