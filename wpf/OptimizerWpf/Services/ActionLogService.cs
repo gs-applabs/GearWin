@@ -15,6 +15,8 @@ namespace OptimizerWpf.Services
         // InvalidOperationException "Collection was modified"). Τώρα: κλείδωμα, όριο 500 εγγραφών, snapshot στην ανάγνωση,
         // και το Changed φτάνει πάντα στο UI νήμα (οι συνδρομητές ενημερώνουν στοιχεία διεπαφής).
         private const int MaxEntries = 500;
+        internal const int MaxMessageChars = 2048;
+        internal static string BoundMessage(string message) => message.Length <= MaxMessageChars ? message : message[..(MaxMessageChars - 1)] + "…";
         private static readonly object Lock = new();
         private static readonly List<string> _entries = new();
         private static string? _lastMessage;
@@ -29,11 +31,13 @@ namespace OptimizerWpf.Services
                 lock (Lock)
                 {
                     if (!isBusy) { _lastMessage = null; return; }
+                    message = BoundMessage(message);
                     if (string.Equals(_lastMessage, message, StringComparison.Ordinal)) return;
                     _lastMessage = message;
                     _entries.Add($"[{DateTime.Now:HH:mm:ss}] {message}");
                     if (_entries.Count > MaxEntries) _entries.RemoveRange(0, _entries.Count - MaxEntries);
                 }
+                if (Changed == null) return; // history is retained; no UI dispatch without a consumer
                 var d = System.Windows.Application.Current?.Dispatcher;
                 if (d == null) { Changed?.Invoke(); return; }
                 if (d.HasShutdownStarted || d.HasShutdownFinished) return;

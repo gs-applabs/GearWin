@@ -58,14 +58,25 @@ namespace OptimizerWpf.Services
         // μετρητές πρέπει να παραμείνουν ζωντανοί ανάμεσα σε κλήσεις (το NextValue() της πρώτης
         // κλήσης πάντα επιστρέφει 0 - ίδιος περιορισμός με τον υπάρχοντα μετρητή CPU). Ο καλών
         // (HomeView) κρατάει το αποτέλεσμα και καλεί Sample() σε κάθε tick του υπάρχοντος 1s timer.
+        // Do not open an unbounded number of PDH handles on machines with
+        // high process churn. Refuse an incomplete aggregate, rather than silently
+        // reporting a subset as total GPU use.
+        internal const int MaxUsageCounters = 256;
+        internal static string[]? SelectEngineInstances(System.Collections.Generic.IEnumerable<string> names)
+        {
+            var selected = names.Where(n => n.Contains("engtype_3D", System.StringComparison.OrdinalIgnoreCase))
+                .Distinct(System.StringComparer.OrdinalIgnoreCase).Take(MaxUsageCounters + 1).ToArray();
+            return selected.Length == 0 || selected.Length > MaxUsageCounters ? null : selected;
+        }
+
         public static PerformanceCounter[]? CreateUsageCounters()
         {
             try
             {
                 if (!PerformanceCounterCategory.Exists("GPU Engine")) return null;
                 var category = new PerformanceCounterCategory("GPU Engine");
-                var instances = category.GetInstanceNames().Where(n => n.Contains("engtype_3D")).ToArray();
-                if (instances.Length == 0) return null;
+                var instances = SelectEngineInstances(category.GetInstanceNames());
+                if (instances == null) return null;
 
                 var counters = instances
                     .Select(n =>
@@ -90,14 +101,27 @@ namespace OptimizerWpf.Services
             }
         }
 
-        public static int SampleUsagePercent(PerformanceCounter[] counters)
+        internal static int? AggregateUsage(System.Collections.Generic.IEnumerable<float> values)
         {
             double sum = 0;
+            int valid = 0;
+            foreach (var value in values)
+            {
+                if (!float.IsFinite(value) || value < 0) continue;
+                sum += value;
+                valid++;
+            }
+            return valid == 0 ? null : (int)System.Math.Round(System.Math.Min(100, sum));
+        }
+
+        public static int? SampleUsagePercent(PerformanceCounter[] counters)
+        {
+            var values = new System.Collections.Generic.List<float>(counters.Length);
             foreach (var c in counters)
             {
-                try { sum += c.NextValue(); } catch { /* instance can disappear mid-run (process exited) */ }
+                try { values.Add(c.NextValue()); } catch { /* instance can disappear mid-run */ }
             }
-            return (int)System.Math.Round(System.Math.Min(100, sum));
+            return AggregateUsage(values);
         }
     }
 }

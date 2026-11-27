@@ -97,7 +97,12 @@ namespace OptimizerWpf.Services
 
             public void Update(string message)
             {
-                lock (_lock) { if (_ended) return; _entry.Message = message; _notice = ""; }
+                lock (_lock)
+                {
+                    if (_ended || (_entry.Message == message && _notice.Length == 0)) return;
+                    _entry.Message = message;
+                    _notice = "";
+                }
                 Publish();
             }
 
