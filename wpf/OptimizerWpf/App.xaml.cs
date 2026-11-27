@@ -262,6 +262,7 @@ public partial class App : Application
         }
 
         // ΝΕΟ - roadmap "Mini widget / system tray live view" - ενεργό όσο τρέχει η εφαρμογή.
+        Exit += (_, _) => Services.GearWinCore.Stop();
         Services.TrayIconService.Start(main);
         Exit += (_, _) => Services.TrayIconService.Stop();
 
