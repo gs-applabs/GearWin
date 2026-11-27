@@ -93,6 +93,11 @@ namespace OptimizerWpf.Views
                     DisposeCounters();
                     return;
                 }
+                if (!_initializedVisible)
+                {
+                    _initializedVisible = true;
+                    InitializeVisibleView();
+                }
                 _gpuSubscription ??= SharedTelemetryService.SubscribeGpu();
                 _refreshTimer.Interval = TimeSpan.FromSeconds(PollSeconds(
                     PerformanceProfileService.Current.HomeRefreshSeconds, parentWindow.IsActive));
@@ -127,7 +132,6 @@ namespace OptimizerWpf.Views
                 IsVisibleChanged += visibilityChanged;
                 PerformanceProfileService.Changed += perfChanged;
                 UpdatePolling();
-                InitializeVisibleView();
             };
             Unloaded += (_, _) =>
             {
@@ -146,6 +150,7 @@ namespace OptimizerWpf.Views
             Unloaded += (_, _) =>
             {
                 _unloaded = true;
+                _initializedVisible = false;
                 var lifetime = _viewLifetime;
                 _viewLifetime = null;
                 if (lifetime != null) { lifetime.Cancel(); lifetime.Dispose(); }
@@ -344,6 +349,7 @@ namespace OptimizerWpf.Views
             active ? Math.Max(2, configuredSeconds) : Math.Max(8, configuredSeconds);
 
         private bool _unloaded = true;
+        private bool _initializedVisible;
         private System.Threading.CancellationTokenSource? _viewLifetime;
         private System.Threading.CancellationToken ViewToken => _viewLifetime?.Token ?? new System.Threading.CancellationToken(true);
 
@@ -865,7 +871,7 @@ namespace OptimizerWpf.Views
             // παραμένει στην καρτέλα Σύστημα). GetSmartHealthy κάνει WMI ερωτήματα - εκτελείται off the
             // UI thread, ίδιο μοτίβο με το HealthScoreService.Compute() παραπάνω.
             var sysDrive = System.IO.Path.GetPathRoot(Environment.SystemDirectory) ?? "C:\\";
-            var smartHealthy = await Task.Run(() => DriveTypeService.GetSmartHealthy(sysDrive)).WaitAsync(token);
+            var smartHealthy = await HomeDiskMetadataService.ReadSystemSmartAsync(sysDrive).WaitAsync(token);
             if (token.IsCancellationRequested || _unloaded) return;
             if (smartHealthy.HasValue)
             {
