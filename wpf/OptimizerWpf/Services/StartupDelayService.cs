@@ -34,11 +34,17 @@ namespace OptimizerWpf.Services
         public static async Task<bool> ApplyDelayAsync(StartupItem item, int seconds)
         {
             using var lease = await GearWinCore.EnterAsync(CoreWork.StartupChange);
+            // HKLM Run executes for all users; a single-user delayed task is not equivalent.
+            if (item.Location != "HKCU" || item.IsDisabled || Delays.ContainsKey(item.Name)) return false;
+            if (seconds < 5 || seconds > 3600) return false;
             var task = BuildTaskName(item.Name);
+            if (await TaskSchedulerService.ExistsAsync(task)) return false;
             var (exe, args) = TaskSchedulerService.SplitCommand(item.Command);
-            if (exe.Length == 0) return false;
+            if (!System.IO.Path.IsPathFullyQualified(exe) || !System.IO.File.Exists(exe) ||
+                !string.Equals(System.IO.Path.GetExtension(exe), ".exe", StringComparison.OrdinalIgnoreCase) ||
+                !MaintenancePaths.IsOrdinaryLocalPath(exe)) return false;
             var xml = TaskSchedulerService.BuildLogonTaskXml(exe, args, Math.Clamp(seconds, 5, 3600), TaskSchedulerService.CurrentUserId(),
-                "GearWin - delayed startup: " + item.Name);
+                "GearWin - delayed startup: " + item.Name, elevated: false);
             if (!await TaskSchedulerService.CreateAsync(task, xml)) return false;
             // Απενεργοποίηση της αρχικής καταχώρησης ΜΟΝΟ αφού η εργασία δημιουργήθηκε (αλλιώς το πρόγραμμα χάνεται).
             if (!item.IsDisabled && !SystemService.SetStartupItemEnabled(item, false))
@@ -54,8 +60,11 @@ namespace OptimizerWpf.Services
         public static async Task<bool> RemoveDelayAsync(StartupItem item)
         {
             using var lease = await GearWinCore.EnterAsync(CoreWork.StartupChange);
-            if (!await TaskSchedulerService.DeleteAsync(BuildTaskName(item.Name))) return false;
-            var ok = SystemService.SetStartupItemEnabled(item, true);
+            if (item.Location != "HKCU" || !item.IsDisabled || !Delays.ContainsKey(item.Name)) return false;
+            // Restore the original first, so a failed restoration cannot lose the only startup path.
+            if (!SystemService.SetStartupItemEnabled(item, true)) return false;
+            var ok = await TaskSchedulerService.DeleteAsync(BuildTaskName(item.Name));
+            if (!ok) { SystemService.SetStartupItemEnabled(item, false); return false; }
             if (ok)
             {
                 AppSettingsService.Current.DelayedStartupSeconds.Remove(item.Name);
