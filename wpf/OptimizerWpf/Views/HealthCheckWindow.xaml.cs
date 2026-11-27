@@ -20,6 +20,9 @@ namespace OptimizerWpf.Views
         private readonly ObservableCollection<ScanChecklistRow> _checklist = new();
         private readonly ObservableCollection<ResultCardVm> _results = new();
         private bool _cancelled;
+        private bool _scanning;
+        private bool _applying;
+        private MemoryCleanerService.MemoryStats _memory;
 
         // Ευρήματα από τη σάρωση - διατηρούνται για να τα εφαρμόσει το BtnOptimizeNow_Click.
         private IReadOnlyList<QuickCleanItem> _spaceItems = Array.Empty<QuickCleanItem>();
@@ -44,6 +47,7 @@ namespace OptimizerWpf.Views
             Loaded += async (_, _) => await RunScanAsync();
             // Κλείσιμο με το X (όχι μόνο το Ακύρωση) πρέπει επίσης να σταματά τη σάρωση/ενημέρωση UI.
             Closed += (_, _) => _cancelled = true;
+            Closing += (_, e) => { if (_applying) e.Cancel = true; };
         }
 
         private void SetPillState(FrameworkElement pill, bool active)
@@ -54,6 +58,15 @@ namespace OptimizerWpf.Views
         }
 
         private async Task RunScanAsync()
+        {
+            if (_scanning || _cancelled) return;
+            _scanning = true;
+            using var busy = StatusService.BeginScope(LanguageService.T("HealthCheck_Scanning"));
+            try { await RunScanCoreAsync(); }
+            finally { _scanning = false; }
+        }
+
+        private async Task RunScanCoreAsync()
         {
             var stages = new (System.Windows.Controls.Border Pill, string TitleKey, string DescKey, Func<Task> Run)[]
             {
@@ -80,7 +93,7 @@ namespace OptimizerWpf.Views
                 var stage = stages[i];
                 TxtCurrentStage.Text = $"{LanguageService.T("HealthCheck_Scanning")}{LanguageService.T(stage.TitleKey)}...";
                 SetPillState(stage.Pill, true);
-                var stageStarted = DateTime.UtcNow;
+
 
                 // ΔΙΟΡΘΩΣΗ - roadmap "Καμία επαναφορά progress bar σε exception": πριν, μια εξαίρεση
                 // σε ΟΠΟΙΟΔΗΠΟΤΕ στάδιο (π.χ. QuickCleanService.ScanAsync μέσα στο ScanSpaceAsync)
@@ -99,24 +112,14 @@ namespace OptimizerWpf.Views
                     return;
                 }
 
-                // ΔΙΟΡΘΩΣΗ (χρήστης ανέφερε: "το γραφικό στον έλεγχο υγείας μένει για πολύ λίγο ενεργό
-                // ως παράθυρο") - τα πραγματικά scans (ScanNetworkAsync/ScanRestoreAsync/κ.λπ.) συχνά
-                // ολοκληρώνονται μέσα σε μερικά ms σε ένα γρήγορο σύστημα - το pill άναβε και έσβηνε
-                // ΤΟΣΟ γρήγορα που ο χρήστης δεν πρόλαβε καν να το δει, ακυρώνοντας ουσιαστικά τον λόγο
-                // ύπαρξης του γραφικού (ρητό αίτημα: "ανάλογα τι σκανάρεται εκείνη τη στιγμή να
-                // φωτίζεται" - χρειάζεται να ΦΑΙΝΕΤΑΙ). Ελάχιστη ορατή διάρκεια ανά στάδιο, ΜΟΝΟ όταν
-                // το πραγματικό scan ήταν πιο γρήγορο - ΚΑΜΙΑ επιβράδυνση σε αργά στάδια/συστήματα.
-                var elapsed = DateTime.UtcNow - stageStarted;
-                var minStageDuration = TimeSpan.FromMilliseconds(650);
-                if (elapsed < minStageDuration) await Task.Delay(minStageDuration - elapsed);
-
+                if (_cancelled) return;
                 SetPillState(stage.Pill, false);
                 _checklist[i].MarkDone();
                 BarScanProgress.Value = i + 1;
             }
 
             if (_cancelled) return;
-            try { _scoreResult = await Task.Run(HealthScoreService.Compute); }
+            try { _scoreResult = await Task.Run(HealthScoreService.ComputeFresh); }
             catch { _scoreResult = null; }
             if (_cancelled) return;
             // ΝΕΟ - roadmap ιδέα #7 (ρητό αίτημα χρήστη: "κάνε τα 4-7") - βλ.
@@ -124,6 +127,9 @@ namespace OptimizerWpf.Views
             // HealthScoreHistoryService που τροφοδοτεί το sparkline της Αρχικής), ίδιο μοτίβο με το
             // Disk Trend (Health tab).
             if (_scoreResult != null) HealthScoreDailyHistoryService.RecordIfNeeded(_scoreResult.Score, _scoreResult.Issues?.Count ?? 0);
+            _memory = await Task.Run(MemoryCleanerService.Snapshot);
+            if (_cancelled) return;
+            _results.Clear();
             BuildResults();
             ScanPanel.Visibility = Visibility.Collapsed;
             ResultPanel.Visibility = Visibility.Visible;
@@ -149,7 +155,7 @@ namespace OptimizerWpf.Views
         {
             _spaceItems = await QuickCleanService.ScanAsync();
             _browserCacheBytes = _spaceItems.FirstOrDefault(i => i.Key == "BrowserCache")?.SizeBytes ?? 0;
-            _spaceFreeableBytes = _spaceItems.Where(i => i.Recommended).Sum(i => i.SizeBytes) + _browserCacheBytes;
+            _spaceFreeableBytes = _spaceItems.Where(i => SystemMaintenanceService.BuildCleanupPlan(new[] { i }, true, false).Count > 0).Sum(i => i.SizeBytes);
         }
 
         private async Task ScanTracesAsync()
@@ -168,17 +174,27 @@ namespace OptimizerWpf.Views
 
         private void BuildResults()
         {
-            var anyIssue = _spaceFreeableBytes > 1024 * 1024 || _tracesCount > 0;
+            bool memoryPressure = MemoryCleanerService.NeedsMaintenance(_memory);
+            var anyIssue = _spaceFreeableBytes > 1024 * 1024 || _tracesCount > 0 || memoryPressure || (_scoreResult?.Issues.Count ?? 0) > 0;
+            bool greek = LanguageService.Current == "el";
             TxtResultHeadline.Text = LanguageService.T(anyIssue ? "HealthCheck_HeadlineIssues" : "HealthCheck_HeadlineGood");
 
-            var score = _scoreResult?.Score ?? 100;
-            TxtScoreBadge.Text = score.ToString();
+            var score = _scoreResult?.Score ?? 0;
+            TxtScoreBadge.Text = _scoreResult == null ? "—" : score.ToString();
             ScoreBadge.Background = new SolidColorBrush(score >= 80 ? Color.FromRgb(0x4C, 0xAF, 0x50) : score >= 50 ? Color.FromRgb(0xFF, 0x98, 0x00) : Color.FromRgb(0xE5, 0x39, 0x35));
-            TxtScoreLine.Text = $"{LanguageService.T("HealthCheck_ScorePrefix")}{score}/100";
+            TxtScoreLine.Text = _scoreResult == null ? (greek ? "Βαθμολογία μη διαθέσιμη" : "Score unavailable") : $"{LanguageService.T("HealthCheck_ScorePrefix")}{score}/100";
+            if (_scoreResult == null) TxtResultHeadline.Text = greek ? "Ο έλεγχος δεν ολοκληρώθηκε πλήρως" : "Check incomplete";
 
             _results.Add(new ResultCardVm("Space", LanguageService.T("HealthCheck_CardSpaceTitlePrefix") + QuickCleanService.FormatSize(_spaceFreeableBytes),
                 LanguageService.T("HealthCheck_CardSpaceDesc"), _spaceFreeableBytes > 1024 * 1024, canSelect: true, isSelected: _spaceFreeableBytes > 1024 * 1024,
                 actionLabel: null));
+
+            _results.Add(new ResultCardVm("Browser", (greek ? "Cache περιηγητών: " : "Browser cache: ") + QuickCleanService.FormatSize(_browserCacheBytes),
+                greek ? "Προαιρετικός καθαρισμός μόνο επιτρεπόμενων φακέλων cache." : "Optional cleanup of allowlisted cache folders only.",
+                false, canSelect: _browserCacheBytes > 0, isSelected: false, actionLabel: null));
+            _results.Add(new ResultCardVm("Memory", (greek ? "Διαθέσιμη RAM: " : "Available RAM: ") + $"{_memory.AvailableGb:0.0} GB",
+                greek ? "Προαιρετική συντήρηση μόνο όταν υπάρχει πίεση μνήμης." : "Optional maintenance only under memory pressure.",
+                memoryPressure, canSelect: memoryPressure, isSelected: false, actionLabel: null));
 
             _results.Add(new ResultCardVm("Traces", $"{_tracesCount} {LanguageService.T("HealthCheck_CardTracesTitleSuffix")}",
                 LanguageService.T("HealthCheck_CardTracesDesc"), _tracesCount > 0, canSelect: false, isSelected: false,
@@ -206,7 +222,7 @@ namespace OptimizerWpf.Views
             var extraIssues = _scoreResult?.Issues ?? Array.Empty<HealthIssue>();
             var scoreDesc = extraIssues.Count > 0
                 ? $"{LanguageService.T("HealthCheck_CardScoreDesc")} {string.Join("  •  ", extraIssues.Select(i => i.Title))}"
-                : LanguageService.T("HealthCheck_CardScoreAllGood");
+                : _scoreResult == null ? (greek ? "Δεν υπάρχουν πλήρη δεδομένα." : "Complete data unavailable.") : LanguageService.T("HealthCheck_CardScoreAllGood");
             // ΝΕΟ - roadmap "HealthScoreService ευρήματα - ενέργεια διόρθωσης": ίδιο πνεύμα με την
             // κάρτα "Apps" - κουμπί που πηγαίνει κατευθείαν στην καρτέλα Σύστημα (καλύπτει Startup Apps
             // + Σημεία Επαναφοράς, 2 από τα 4 πιθανά είδη ευρήματος) αντί για καμία ενέργεια. Το Defender
@@ -223,7 +239,7 @@ namespace OptimizerWpf.Views
             try
             {
                 var sb = new System.Text.StringBuilder();
-                sb.AppendLine($"{LanguageService.T("HealthCheck_ScorePrefix")}{_scoreResult?.Score ?? 100}/100");
+                sb.AppendLine($"{LanguageService.T("HealthCheck_ScorePrefix")}{(_scoreResult == null ? "—" : _scoreResult.Score + "/100")}");
                 sb.AppendLine();
                 foreach (var card in _results)
                 {
@@ -264,7 +280,9 @@ namespace OptimizerWpf.Views
         {
             // ΝΕΟ (6.1.0) - dry-run/προεπισκόπηση: πριν αλλάξει οτιδήποτε, ο χρήστης βλέπει ακριβώς τι θα
             // γίνει (επιλεγμένες κάρτες + μεγέθη/πλήθη από την ήδη ολοκληρωμένη σάρωση) και επιβεβαιώνει.
-            var planned = _results.Where(r => r.IsSelected && r.Key == "Space").ToList();
+            if (_applying || _scanning || _cancelled) return;
+            var planned = _results.Where(r => r.IsSelected && r.CanSelect && r.Key is "Space" or "Browser" or "Memory").ToList();
+            if (planned.Count == 0) { TxtOptimizeResult.Text = LanguageService.T("HealthCheck_NothingSelected"); return; }
             if (planned.Count > 0)
             {
                 var preview = new System.Text.StringBuilder(LanguageService.T("DryRun_Intro")).AppendLine().AppendLine();
@@ -273,47 +291,29 @@ namespace OptimizerWpf.Views
                 if (ThemedMessageBox.Show(preview.ToString(), LanguageService.T("DryRun_Title"), MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
             }
 
+            _applying = true;
             BtnOptimizeNow.IsEnabled = false;
             TxtOptimizeResult.Text = LanguageService.T("HealthCheck_Optimizing");
-            StatusService.SetBusy(LanguageService.T("HealthCheck_Optimizing"));
+            using var busy = StatusService.BeginScope(LanguageService.T("HealthCheck_Optimizing"));
 
             try
             {
             // UMP02: this entry point must never mutate registry/tweaks. Dedicated tools retain explicit review.
             var summary = new List<string>();
-            var spaceCleaned = false;
-
-            var spaceCard = _results.FirstOrDefault(r => r.Key == "Space");
-            if (spaceCard is { IsSelected: true })
+            bool space = planned.Any(r => r.Key == "Space");
+            bool browser = planned.Any(r => r.Key == "Browser");
+            bool memory = planned.Any(r => r.Key == "Memory");
+            if (space || browser)
             {
-                var keys = _spaceItems.Where(i => i.Recommended).Select(i => i.Key).ToList();
-                var freed = await QuickCleanService.CleanAsync(keys);
-                if (_browserCacheBytes > 0)
-                {
-                    foreach (var browser in HealthCleanupService.DetectBrowsers())
-                        freed += await HealthCleanupService.ClearBrowserCacheAsync(browser);
-                }
-                ImpactTrackingService.RecordBytesFreed(freed);
+                var freed = await SystemMaintenanceService.CleanSelectedAsync(_spaceItems, space, browser);
                 summary.Add(string.Format(LanguageService.T("HealthCheck_SummarySpace"), QuickCleanService.FormatSize(freed)));
-                spaceCleaned = true;
+                await ScanSpaceAsync();
             }
-
-            // ΝΕΟ - ρητό αίτημα χρήστη: "όταν ελευθερώνονται τα στοιχεία να ενημερώνονται αυτόματα τα
-            // πλακίδια με τα νέα αποτελέσματα" - πριν, οι κάρτες αποτελεσμάτων (_results) χτίζονταν ΜΙΑ
-            // φορά στο BuildResults() μετά την αρχική σάρωση και ΠΟΤΕ δεν ξαναχτίζονταν - το πραγματικό
-            // καθάρισμα ΓΙΝΟΤΑΝ (επιβεβαιωμένο: αρχεία/registry ΟΝΤΩΣ διαγράφονταν), αλλά οι κάρτες
-            // συνέχιζαν να δείχνουν τους ΠΑΛΙΟΥΣ αριθμούς πριν τον καθαρισμό - φαινομενικά "δεν έγινε
-            // τίποτα". Ξανατρέχουν εδώ ΜΟΝΟ τα στάδια που πραγματικά καθαρίστηκαν, μετά ξαναχτίζονται
-            // όλες οι κάρτες (καθαρό _results.Clear() + BuildResults(), ίδιο helper με την αρχική
-            // σάρωση - καμία διπλή υλοποίηση) ώστε τα πλακίδια να δείχνουν τα φρέσκα, μετά-τον-καθαρισμό
-            // αποτελέσματα (π.χ. "0 καταχωρήσεις registry" αντί για το παλιό "19").
-            if (spaceCleaned)
-            {
-                if (spaceCleaned) await ScanSpaceAsync();
-                _scoreResult = await Task.Run(HealthScoreService.Compute);
-                _results.Clear();
-                BuildResults();
-            }
+            if (memory) summary.Add(MemoryCleanerService.Describe(await MemoryCleanerService.CleanAsync()));
+            _memory = await Task.Run(MemoryCleanerService.Snapshot);
+            _scoreResult = await Task.Run(HealthScoreService.ComputeFresh);
+            _results.Clear();
+            BuildResults();
 
             TxtOptimizeResult.Text = summary.Count > 0 ? string.Join("  •  ", summary) : LanguageService.T("HealthCheck_NothingSelected");
             BtnOptimizeNow.Content = LanguageService.T("HealthCheck_Done");
@@ -324,7 +324,7 @@ namespace OptimizerWpf.Views
             }
             finally
             {
-                StatusService.SetIdle(LanguageService.T("Ready"));
+                _applying = false;
                 BtnOptimizeNow.IsEnabled = true;
             }
         }
@@ -333,7 +333,7 @@ namespace OptimizerWpf.Views
         {
             if (sender is not System.Windows.Controls.Button { Tag: string tag }) return;
             if ((Owner as MainWindow ?? Application.Current.MainWindow as MainWindow) is not MainWindow mw) return;
-            if (tag is "Traces" or "Restore") { Close(); mw.Show(); mw.Activate(); }
+            if (_applying) return;
             switch (tag)
             {
                 case "Traces":
@@ -370,6 +370,7 @@ namespace OptimizerWpf.Views
 
         private void BtnCancel_Click(object sender, RoutedEventArgs e)
         {
+            if (_applying) return;
             _cancelled = true;
             Close();
         }
