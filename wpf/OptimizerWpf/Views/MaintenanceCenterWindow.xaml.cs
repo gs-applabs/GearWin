@@ -107,7 +107,9 @@ namespace OptimizerWpf.Views
                     })).ToList();
                 var warnings = items.Count(i => i.Level == SecurityLevel.Warning);
                 TxtSecurityStatus.Text = warnings == 0
-                    ? LanguageService.T("Center_SecurityAllGood")
+                    ? (items.Any(i => i.Detail == LanguageService.T("Sec_Unknown"))
+                        ? (LanguageService.Current == "el" ? "Ελλιπής έλεγχος ασφάλειας" : "Incomplete security check")
+                        : LanguageService.T("Center_SecurityAllGood"))
                     : string.Format(LanguageService.T("Center_SecurityWarnings"), warnings);
             }
             catch (Exception ex) { TxtSecurityStatus.Text = ex.Message; }
