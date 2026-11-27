@@ -243,3 +243,9 @@ The repository no longer contains a copy of the reference tool; some design idea
 text in the user's language (`installer/license_*.txt`).*
 
 **Το λογισμικό παρέχεται "ΩΣ ΕΧΕΙ", χωρίς καμία εγγύηση. / Provided "AS IS", without warranty of any kind.**
+
+
+## Current screenshot gallery / Νέα στιγμιότυπα
+
+[Browse application screenshots / Προβολή στιγμιοτύπων](docs/product-snapshots/README.md)
+
