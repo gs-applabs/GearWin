@@ -667,7 +667,7 @@ namespace OptimizerWpf.Views
             var manual = new List<string>();
             try
             {
-                var result = await Task.Run(HealthScoreService.ComputeFresh);
+                var result = await HealthScoreService.ComputeAsync(fresh: true);
                 foreach (var issue in result.Issues)
                 {
                     switch (issue.FixType)
@@ -835,7 +835,7 @@ namespace OptimizerWpf.Views
             // HealthScoreService.Compute() does several WMI queries (Defender status, AV product,
             // restore points) which can take a noticeable moment - runs off the UI thread so the
             // window stays responsive while it's working (see the async-UI rule this project follows).
-            var result = await Task.Run(HealthScoreService.Compute);
+            var result = await HealthScoreService.ComputeAsync();
             if (_unloaded) return;
 
             if (result.IsComplete) HealthScoreHistoryService.RecordSample(result.Score);
