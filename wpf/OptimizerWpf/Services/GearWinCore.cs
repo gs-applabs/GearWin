@@ -83,6 +83,20 @@ internal sealed class OperationCoordinator
         return lease;
     }
 
+    // Optional periodic work must not accumulate queued requests or delay the user.
+    internal IDisposable? TryAcquireBackground(CoreWork kind)
+    {
+        lock (_gate)
+        {
+            if (_stopping || _active.Count >= Math.Clamp(_capacity(), 1, 3) ||
+                _active.Any(a => Conflicts(a.Kind, kind)) ||
+                _pending.Any(p => p.Priority == CorePriority.User || Conflicts(p.Kind, kind))) return null;
+            var request = new Request(kind, CorePriority.Background);
+            _active.Add(request);
+            return new Lease(this, request);
+        }
+    }
+
     private void Release(Request request)
     {
         lock (_gate)
@@ -133,6 +147,7 @@ internal static class GearWinCore
     static GearWinCore() => PerformanceProfileService.Changed += Coordinator.PolicyChanged;
 
     internal static void Stop() => Coordinator.StopAccepting();
+    internal static IDisposable? TryEnterBackground(CoreWork kind) => Coordinator.TryAcquireBackground(kind);
 
     internal static Task<IDisposable> EnterAsync(CoreWork kind, CorePriority priority = CorePriority.User, CancellationToken ct = default)
         => Coordinator.AcquireAsync(kind, priority, ct);
