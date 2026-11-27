@@ -21,10 +21,25 @@ namespace OptimizerWpf.Services
     {
         private static Computer? _computer;
         private static bool _openFailed;
+        private static readonly object SensorGate = new();
+        private static long _lastRefresh;
+        private static bool _closed;
+
+        internal static bool RefreshDue(long now, long last) => last == 0 || now - last >= 3000;
+
+        public static void Close()
+        {
+            lock (SensorGate)
+            {
+                _closed = true;
+                try { _computer?.Close(); } catch { }
+                _computer = null;
+            }
+        }
 
         private static Computer? GetComputer()
         {
-            if (_openFailed) return null;
+            if (_closed || _openFailed) return null;
             if (_computer != null) return _computer;
             try
             {
@@ -45,17 +60,22 @@ namespace OptimizerWpf.Services
                 // ασυνήθιστη περίπτωση) - υποβαθμίζεται σε "καμία θερμοκρασία διαθέσιμη" αντί να
                 // ρίξει την εφαρμογή.
                 _openFailed = true;
+                try { _computer?.Close(); } catch { }
+                _computer = null;
                 return null;
             }
         }
 
         private static void RefreshAll(Computer computer)
         {
+            var now = Environment.TickCount64;
+            if (!RefreshDue(now, _lastRefresh)) return;
             foreach (var hw in computer.Hardware)
             {
                 hw.Update();
                 foreach (var sub in hw.SubHardware) sub.Update();
             }
+            _lastRefresh = now;
         }
 
         // ΔΙΟΡΘΩΣΗ (χρήστης ανέφερε: "η θερμοκρασία... φαίνεται η ίδια σε CPU/GPU"): "Package" από
@@ -124,18 +144,21 @@ namespace OptimizerWpf.Services
 
         private static double? GetVoltage(HardwareType type, string[]? preferredNames)
         {
-            var computer = GetComputer();
-            if (computer == null) return null;
-            try
+            lock (SensorGate)
             {
-                RefreshAll(computer);
-                var hw = computer.Hardware.FirstOrDefault(h => h.HardwareType == type);
-                if (hw == null) return null;
-                return PickVoltage(hw, preferredNames);
-            }
-            catch
-            {
-                return null;
+                var computer = GetComputer();
+                if (computer == null) return null;
+                try
+                {
+                    RefreshAll(computer);
+                    var hw = computer.Hardware.FirstOrDefault(h => h.HardwareType == type);
+                    if (hw == null) return null;
+                    return PickVoltage(hw, preferredNames);
+                }
+                catch
+                {
+                    return null;
+                }
             }
         }
 
@@ -272,41 +295,48 @@ namespace OptimizerWpf.Services
         // (ένας μόνο φυσικός δίσκος στο σύστημα).
         public static int? GetDiskTemperatureCelsius(string? modelHint)
         {
-            var computer = GetComputer();
-            if (computer == null) return null;
-            try
+            lock (SensorGate)
             {
-                RefreshAll(computer);
-                var storageHw = computer.Hardware.Where(h => h.HardwareType == HardwareType.Storage).ToList();
-                if (storageHw.Count == 0) return null;
-
-                var match = !string.IsNullOrWhiteSpace(modelHint)
-                    ? storageHw.FirstOrDefault(h => h.Name.Contains(modelHint, StringComparison.OrdinalIgnoreCase))
-                    : null;
-                match ??= storageHw[0];
-
-                return PickTemperature(match, null);
-            }
-            catch
-            {
-                return null;
+                var computer = GetComputer();
+                if (computer == null) return null;
+                try
+                {
+                    RefreshAll(computer);
+                    var storageHw = computer.Hardware.Where(h => h.HardwareType == HardwareType.Storage).ToList();
+                    if (storageHw.Count == 0) return null;
+    
+                    var match = !string.IsNullOrWhiteSpace(modelHint)
+                        ? storageHw.FirstOrDefault(h => h.Name.Contains(modelHint, StringComparison.OrdinalIgnoreCase))
+                        : null;
+                    if (match == null && storageHw.Count != 1) return null;
+                    match ??= storageHw[0];
+    
+                    return PickTemperature(match, null);
+                }
+                catch
+                {
+                    return null;
+                }
             }
         }
 
         private static int? GetTemperature(HardwareType type, string[]? preferredNames)
         {
-            var computer = GetComputer();
-            if (computer == null) return null;
-            try
+            lock (SensorGate)
             {
-                RefreshAll(computer);
-                var hw = computer.Hardware.FirstOrDefault(h => h.HardwareType == type);
-                if (hw == null) return null;
-                return PickTemperature(hw, preferredNames);
-            }
-            catch
-            {
-                return null;
+                var computer = GetComputer();
+                if (computer == null) return null;
+                try
+                {
+                    RefreshAll(computer);
+                    var hw = computer.Hardware.FirstOrDefault(h => h.HardwareType == type);
+                    if (hw == null) return null;
+                    return PickTemperature(hw, preferredNames);
+                }
+                catch
+                {
+                    return null;
+                }
             }
         }
 
