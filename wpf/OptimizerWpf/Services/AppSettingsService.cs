@@ -105,6 +105,8 @@ namespace OptimizerWpf.Services
         // Views/DesktopWidgetWindow.xaml(.cs). Θέση null σημαίνει "δεν έχει μετακινηθεί ακόμα από τον
         // χρήστη" (προεπιλογή κάτω-δεξιά, ίδιο μοτίβο με το tray popup).
         public bool DesktopWidgetEnabled { get; set; }
+        // Explicit opt-in; previously this listener was always on.
+        public bool ClipboardHistoryEnabled { get; set; }
         public double? DesktopWidgetX { get; set; }
         public double? DesktopWidgetY { get; set; }
 
