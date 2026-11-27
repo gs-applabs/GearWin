@@ -63,7 +63,7 @@
     "id": "Winamp.Winamp",
     "name": "Winamp",
     "url": "https://raw.githubusercontent.com/chocolatey-community/chocolatey-packages/fd66d6390d7a1521a22aa1235dabff5eff38147b/icons/winamp.png",
-    "sha256": null
+    "sha256": "f7cab0cbd0dbf25f487456779d49f17ab079906bd847a30a8182060e3a92b2bb"
   },
   {
     "id": "CodecGuide.K-LiteCodecPack.Mega",
@@ -99,7 +99,7 @@
     "id": "Rakuten.Viber",
     "name": "Viber",
     "url": "https://raw.githubusercontent.com/mkevenaar/chocolatey-packages/3a055dbd4509673290e55aa9de2c53c9a4b6b7ed/icons/viber.png",
-    "sha256": null
+    "sha256": "fcfeb9392f023c859c06d0ca741e31d5388d698d78680ff4e4cd3b93c854eaff"
   },
   {
     "id": "Telegram.TelegramDesktop",
@@ -159,7 +159,7 @@
     "id": "Microsoft.DotNet.DesktopRuntime.8",
     "name": ".NET Desktop Runtime 8",
     "url": "https://raw.githubusercontent.com/dotnetcore-chocolatey/dotnetcore-chocolateypackages/5a90ffc61572e8403cb88c325f88cf6989de8c79/icons/dotnetcore.png",
-    "sha256": null
+    "sha256": "cbf89547c10f65cbe32415fc1d008640aae02dc3c15d4b3a32c2a52c0df117c0"
   },
   {
     "id": "Microsoft.DirectX",
@@ -171,7 +171,7 @@
     "id": "Microsoft.VCRedist.2015+.x64",
     "name": "Visual C++ Redistributable x64",
     "url": "https://raw.githubusercontent.com/chocolatey-community/chocolatey-packages/d8a28da83b3b9bf058e1fbbeed5ce74329b73245/icons/vcredist140.png",
-    "sha256": null
+    "sha256": "638b705e3f6a45a0e237b039ef47a7fcad3993d2c0ed18ea454997abfc23df6d"
   },
   {
     "id": "Opera.OperaGX",
