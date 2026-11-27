@@ -55,20 +55,24 @@ namespace OptimizerWpf.Services
             return total;
         }
 
-        public static Task<string> FullResetAsync() => RunConsoleAsync(
-            "netsh winsock reset & netsh int ip reset & ipconfig /release & ipconfig /renew & ipconfig /flushdns");
+        public static Task<string> FullResetAsync() => GearWinCore.RunAsync(CoreWork.NetworkChange, () => RunConsoleAsync(
+            "netsh winsock reset && netsh int ip reset && ipconfig /release && ipconfig /renew && ipconfig /flushdns"));
 
         public static Task<string> GetIpConfigAllAsync() => RunConsoleAsync("ipconfig /all");
         public static Task<string> GetRoutingTableAsync() => RunConsoleAsync("route print");
 
         public static Task<bool> RestartWifiAdaptersAsync() =>
-            RunPowerShellForSuccessAsync("Restart-NetAdapter -Name '*' -Confirm:$false -ErrorAction SilentlyContinue");
+            RunPowerShellForSuccessAsync("Get-NetAdapter -Physical | Where-Object { $_.NdisPhysicalMedium -in 1,9 } | Restart-NetAdapter -Confirm:$false -ErrorAction Stop");
 
         // ΝΕΟ - roadmap "Γρήγορη εναλλαγή DNS" - Set-DnsClientServerAddress εφαρμόζεται σε ΚΑΘΕ
         // ενεργό προσαρμογέα (Status -eq 'Up'), ίδια λογική με το ήδη υπάρχον RestartWifiAdaptersAsync
         // παραπάνω - χωρίς να χρειάζεται να μαντέψει η εφαρμογή ΠΟΙΟΣ είναι ο "κύριος" προσαρμογέας.
         public static Task<bool> SetDnsAsync(string primary, string? secondary = null)
         {
+            if (!System.Net.IPAddress.TryParse(primary, out var first) ||
+                (secondary != null && !System.Net.IPAddress.TryParse(secondary, out _))) return Task.FromResult(false);
+            primary = first.ToString();
+            if (secondary != null) secondary = System.Net.IPAddress.Parse(secondary).ToString();
             var servers = secondary is null ? $"'{primary}'" : $"'{primary}','{secondary}'";
             return RunPowerShellForSuccessAsync(
                 $"Get-NetAdapter | Where-Object Status -eq 'Up' | Set-DnsClientServerAddress -ServerAddresses {servers}");
@@ -285,7 +289,8 @@ namespace OptimizerWpf.Services
 
         private static async Task<bool> RunPowerShellForSuccessAsync(string command)
         {
-            var psi = new ProcessStartInfo("powershell.exe", PowerShellArgs.Command(command))
+            using var lease = await GearWinCore.EnterAsync(CoreWork.NetworkChange);
+            var psi = new ProcessStartInfo("powershell.exe", PowerShellArgs.Command("$ErrorActionPreference = 'Stop'; " + command))
             { UseShellExecute = false, CreateNoWindow = true };
             using var process = Process.Start(psi);
             if (process == null) return false;
@@ -301,7 +306,8 @@ namespace OptimizerWpf.Services
 
         private static async Task<bool> RunProcessForSuccessAsync(string fileName, string arguments)
         {
-            using var process = Process.Start(new ProcessStartInfo(fileName, arguments) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true });
+            using var lease = await GearWinCore.EnterAsync(CoreWork.NetworkChange);
+            using var process = Process.Start(new ProcessStartInfo(fileName, arguments) { UseShellExecute = false, CreateNoWindow = true });
             if (process == null) return false;
             await process.WaitForExitAsync();
             return process.ExitCode == 0;
