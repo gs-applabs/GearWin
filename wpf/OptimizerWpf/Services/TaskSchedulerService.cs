@@ -105,13 +105,25 @@ namespace OptimizerWpf.Services
         public static async Task<bool> CreateAsync(string taskName, string xml)
         {
             // ΑΣΦΑΛΕΙΑ: το XML ορίζει εντολή που τρέχει με Highest privileges - ΟΧΙ από %TEMP% (αντικαταστάσιμο πριν το διαβάσει το schtasks).
-            var tmp = SecureStorage.NewPrivateTempFile("task", ".xml");
+            string? tmp = null;
             try
             {
-                File.WriteAllText(tmp, xml, Encoding.Unicode); // UTF-16, όπως δηλώνει το XML
+                tmp = SecureStorage.NewPrivateTempFile("task", ".xml");
+                using (var stream = new FileStream(tmp, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                {
+                    using (var writer = new StreamWriter(stream, Encoding.Unicode, 4096, leaveOpen: true)) writer.Write(xml);
+                    stream.Flush(flushToDisk: true);
+                }
                 return await RunAsync("/Create", "/TN", taskName, "/XML", tmp, "/F");
             }
-            finally { try { Directory.Delete(Path.GetDirectoryName(tmp)!, true); } catch { } }
+            catch (Exception ex) { Trace.TraceError(ex.Message); return false; }
+            finally
+            {
+                if (tmp != null)
+                {
+                    try { File.Delete(tmp); Directory.Delete(Path.GetDirectoryName(tmp)!); } catch { }
+                }
+            }
         }
 
         public static Task<bool> DeleteAsync(string taskName) => RunAsync("/Delete", "/TN", taskName, "/F");
@@ -122,7 +134,7 @@ namespace OptimizerWpf.Services
         {
             try
             {
-                var psi = new ProcessStartInfo("schtasks.exe") { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
+                var psi = new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "schtasks.exe")) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
                 foreach (var a in args) psi.ArgumentList.Add(a);
                 using var p = Process.Start(psi);
                 if (p == null) return false;
