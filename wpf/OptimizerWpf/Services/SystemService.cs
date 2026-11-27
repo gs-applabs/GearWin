@@ -56,34 +56,33 @@ namespace OptimizerWpf.Services
         // ΔΙΟΡΘΩΣΗ (εξονυχιστικός έλεγχος εντόπισε): void, χωρίς try/catch - ένα κλειδωμένο/απαγορευμένο
         // HKLM κλειδί (π.χ. χωρίς αρκετά δικαιώματα σε ασυνήθιστη διαμόρφωση) θα πετούσε αδιαχείριστη
         // εξαίρεση. Επιστρέφει τώρα bool ώστε το UI να μπορεί να ενημερώσει/επαναφέρει τον διακόπτη.
+        internal static Task<bool> SetStartupItemEnabledAsync(StartupItem item, bool enabled) =>
+            GearWinCore.RunAsync(CoreWork.StartupChange, () => Task.Run(() => SetStartupItemEnabled(item, enabled)));
+
+        // Internal leaf also used inside the coordinated delayed-start transaction.
         public static bool SetStartupItemEnabled(StartupItem item, bool enabled)
         {
+            if (item.Location is not ("HKCU" or "HKLM") || string.IsNullOrEmpty(item.Name) ||
+                item.Name.StartsWith(DisabledPrefix, StringComparison.Ordinal)) return false;
             try
             {
                 var hive = item.Location == "HKCU" ? Registry.CurrentUser : Registry.LocalMachine;
                 using var key = hive.OpenSubKey(RunKeyPath, writable: true);
                 if (key == null) return false;
-                if (enabled)
-                {
-                    var disabledName = DisabledPrefix + item.Name;
-                    var value = key.GetValue(disabledName) as string;
-                    if (value == null) return false;
-                    key.SetValue(item.Name, value);
-                    key.DeleteValue(disabledName, throwOnMissingValue: false);
-                }
-                else
-                {
-                    var value = key.GetValue(item.Name) as string;
-                    if (value == null) return false;
-                    key.SetValue(DisabledPrefix + item.Name, value);
-                    key.DeleteValue(item.Name, throwOnMissingValue: false);
-                }
+                string from = enabled ? DisabledPrefix + item.Name : item.Name;
+                string to = enabled ? item.Name : DisabledPrefix + item.Name;
+                var raw = key.GetValue(from, null, RegistryValueOptions.DoNotExpandEnvironmentNames);
+                if (raw is not string command || !string.Equals(
+                    key.GetValue(from) as string, item.Command, StringComparison.Ordinal) ||
+                    key.GetValue(to, null, RegistryValueOptions.DoNotExpandEnvironmentNames) != null) return false;
+                var kind = key.GetValueKind(from);
+                if (kind is not (RegistryValueKind.String or RegistryValueKind.ExpandString)) return false;
+                key.SetValue(to, command, kind);
+                if (!Equals(key.GetValue(to, null, RegistryValueOptions.DoNotExpandEnvironmentNames), raw)) return false;
+                key.DeleteValue(from, throwOnMissingValue: true);
                 return true;
             }
-            catch
-            {
-                return false;
-            }
+            catch { return false; }
         }
 
         // ΝΕΟ - ROADMAP.md REQ-570-02/12 (ρητό αίτημα χρήστη: "εκκίνηση εφαρμογής με τα windows στο
@@ -583,38 +582,46 @@ namespace OptimizerWpf.Services
         });
 
         // Μόνο υπηρεσίες που ήταν ΗΔΗ Automatic αγγίζονται ποτέ - backup μέσω μοιρασμένου TweakBackupService.
-        public static Task<bool> SetServiceManualAsync(string serviceName) => Task.Run(() =>
+        public static Task<bool> SetServiceManualAsync(string serviceName) => GearWinCore.RunAsync(CoreWork.StartupChange, () => Task.Run(() =>
         {
+            if (!SafeServicesToOptimize.ContainsKey(serviceName)) return false;
             try
             {
                 using var searcher = new ManagementObjectSearcher($"SELECT * FROM Win32_Service WHERE Name='{serviceName.Replace("'", "''")}'");
-                var svc = searcher.Get().Cast<ManagementObject>().FirstOrDefault();
+                using var results = searcher.Get();
+                using var svc = results.Cast<ManagementObject>().FirstOrDefault();
                 if (svc == null) return false;
-                TweakBackupService.BackupIfNeeded($"SVC_{serviceName}", svc["StartMode"]?.ToString() ?? "Auto");
+                if (!string.Equals(svc["StartMode"]?.ToString(), "Auto", StringComparison.OrdinalIgnoreCase)) return false;
+                TweakBackupService.BackupIfNeeded($"SVC_{serviceName}", "Auto");
+                if (TweakBackupService.GetBackup($"SVC_{serviceName}") != "Auto") return false;
                 var result = svc.InvokeMethod("ChangeStartMode", new object[] { "Manual" });
                 return Convert.ToInt32(result) == 0;
             }
             catch { return false; }
-        });
+        }));
 
-        public static Task<bool> RestoreServiceStartModeAsync(string serviceName) => Task.Run(() =>
+        public static Task<bool> RestoreServiceStartModeAsync(string serviceName) => GearWinCore.RunAsync(CoreWork.StartupChange, () => Task.Run(() =>
         {
+            if (!SafeServicesToOptimize.ContainsKey(serviceName)) return false;
             try
             {
-                var original = TweakBackupService.GetBackup($"SVC_{serviceName}") ?? "Auto";
+                var original = TweakBackupService.GetBackup($"SVC_{serviceName}");
+                if (original == null) return false;
                 // Το Win32_Service.StartMode επιστρέφει "Auto", αλλά η μέθοδος ChangeStartMode δέχεται "Automatic" —
                 // με "Auto" επέστρεφε κωδικό σφάλματος (21) και η υπηρεσία ΠΟΤΕ δεν επανερχόταν σε αυτόματη εκκίνηση.
                 if (original.Equals("Auto", StringComparison.OrdinalIgnoreCase)) original = "Automatic";
                 using var searcher = new ManagementObjectSearcher($"SELECT * FROM Win32_Service WHERE Name='{serviceName.Replace("'", "''")}'");
-                var svc = searcher.Get().Cast<ManagementObject>().FirstOrDefault();
+                using var results = searcher.Get();
+                using var svc = results.Cast<ManagementObject>().FirstOrDefault();
                 if (svc == null) return false;
+                if (!string.Equals(svc["StartMode"]?.ToString(), "Manual", StringComparison.OrdinalIgnoreCase)) return false;
                 var result = svc.InvokeMethod("ChangeStartMode", new object[] { original });
                 var ok = Convert.ToInt32(result) == 0;
                 if (ok) TweakBackupService.Remove($"SVC_{serviceName}");
                 return ok;
             }
             catch { return false; }
-        });
+        }));
 
         // ===== Δοκιμή Ταχύτητας Δίσκου =====
 
