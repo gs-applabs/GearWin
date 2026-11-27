@@ -116,14 +116,14 @@ namespace OptimizerWpf.Services
             }
         }
 
-        private static async Task<byte[]> ReadVaultAsync(string path, string password)
+        private static async Task<byte[]> ReadVaultAsync(string path, string password, long maxBytes = MaxVaultBytes)
         {
             if (!MaintenancePaths.IsOrdinaryLocalPath(path)) throw new IOException("Unsafe vault path.");
             byte[] all;
             using (var input = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
             {
-                if (input.Length < HeaderBytes || input.Length > MaxVaultBytes)
-                    throw new InvalidDataException("Invalid vault size or 64 MiB safety limit exceeded.");
+                if (input.Length < HeaderBytes) throw new InvalidDataException("Invalid vault header size.");
+                if (input.Length > maxBytes) throw new IOException("Vault exceeds the safe available-memory limit. Restore on a PC with more free RAM.");
                 all = new byte[checked((int)input.Length)];
                 await input.ReadExactlyAsync(all);
             }
@@ -154,18 +154,23 @@ namespace OptimizerWpf.Services
                     Directory.Exists(destinationFolder) || File.Exists(destinationFolder))
                     throw new IOException("Restore requires a new folder in a safe local location.");
                 progress?.Report(LanguageService.T("FolderLock_Decrypting"));
-                var plain = await ReadVaultAsync(vaultPath, password);
+                // Older vaults may exceed the new creation limit. Preserve format compatibility
+                // and allow restoration when sufficient physical RAM is available.
+                var available = MemoryCleanerService.Snapshot().AvailableBytes;
+                var limit = Math.Min((long)Array.MaxLength - 4096, available / 4);
+                var plain = await ReadVaultAsync(vaultPath, password, limit);
                 var staged = destinationFolder + "." + Guid.NewGuid().ToString("N") + ".tmp";
                 try
                 {
                     progress?.Report(LanguageService.T("FolderLock_Extracting"));
                     using var ms = new MemoryStream(plain);
                     using var zip = new ZipArchive(ms, ZipArchiveMode.Read);
-                    if (zip.Entries.Count > MaxEntries) throw new InvalidDataException("Vault entry limit exceeded.");
+                    var free = new DriveInfo(Path.GetPathRoot(destinationFolder)!).AvailableFreeSpace;
+                    var budget = Math.Max(0, free - 64L * 1024 * 1024);
                     long expanded = 0;
                     foreach (var entry in zip.Entries)
                     {
-                        if (entry.Length > MaxPlainBytes - expanded) throw new InvalidDataException("Expanded vault exceeds the safety limit.");
+                        if (entry.Length > budget - expanded) throw new IOException("Insufficient space to restore the complete vault.");
                         expanded += entry.Length;
                     }
                     Directory.CreateDirectory(staged);
