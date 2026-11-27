@@ -79,7 +79,7 @@ namespace OptimizerWpf.Views
             _refreshTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(PerformanceProfileService.Current.HomeRefreshSeconds) };
             _refreshTimer.Tick += (_, _) => { RefreshCpuRamGpu(); RefreshNetworkGraph(); };
             _diskRefreshTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(20) };
-            _diskRefreshTimer.Tick += (_, _) => { RefreshDisk(); _ = RefreshNetworkStatusAsync(); };
+            _diskRefreshTimer.Tick += (_, _) => { RefreshDisk(); _ = RefreshNetworkStatusAsync(); _ = RefreshTemperaturesAsync(); };
 
             // Constructor-time Window.GetWindow is frequently null. Attach after Loaded.
             Window? parentWindow = null;
@@ -97,7 +97,7 @@ namespace OptimizerWpf.Views
                 _refreshTimer.Interval = TimeSpan.FromSeconds(PollSeconds(
                     PerformanceProfileService.Current.HomeRefreshSeconds, parentWindow.IsActive));
                 if (!_refreshTimer.IsEnabled) _refreshTimer.Start();
-                if (!_diskRefreshTimer.IsEnabled) _diskRefreshTimer.Start();
+                if (!_diskRefreshTimer.IsEnabled) { _diskRefreshTimer.Start(); _ = RefreshTemperaturesAsync(); }
             }
             Action perfChanged = () => Dispatcher.BeginInvoke(new Action(UpdatePolling));
             EventHandler windowChanged = (_, _) => UpdatePolling();
@@ -136,10 +136,7 @@ namespace OptimizerWpf.Views
             _ = UpdateDiskIconAsync();
             _ = RefreshHealthScoreAsync();
             CheckHealthCheckReminder();
-            _ = RefreshCpuTemperatureAsync();
 
-            _ = RefreshGpuTemperatureAsync();
-            _ = RefreshRamTemperatureAsync();
             _ = LoadGpuNameAsync();
 
             // ΝΕΟ - roadmap ""Τι έκανε πρόσφατα η εφαρμογή"" - βλ. ActionLogService (ήδη υπάρχον, hook
@@ -441,33 +438,48 @@ namespace OptimizerWpf.Views
 
         // Δεν αλλάζει σε δευτερόλεπτα σαν το CPU - αρκεί μία φορά στην εκκίνηση, καμία ανάγκη για
         // επαναλαμβανόμενο timer (ίδιο σκεπτικό "ελάφρυνση εφαρμογής" με τον δίσκο παραπάνω).
-        private async Task RefreshCpuTemperatureAsync()
+        private bool _temperatureReading;
+        private int _diskSelectionGeneration;
+
+        private async Task RefreshTemperaturesAsync()
         {
-            var temp = await Task.Run(SensorService.GetCpuTemperatureCelsius);
-            SetTempText(TxtCpuTemp, temp);
+            if (_temperatureReading || _unloaded || !IsVisible || !IsLoaded) return;
+            _temperatureReading = true;
+            var drive = CurrentDrive;
+            var generation = _diskSelectionGeneration;
+            try
+            {
+                var sample = await Task.Run(() => (
+                    Cpu: SensorService.GetCpuTemperatureCelsius(),
+                    Gpu: SensorService.GetGpuTemperatureCelsius(),
+                    Ram: SensorService.GetRamTemperatureCelsius(),
+                    Disk: drive == null ? null : StorageTemperatureService.Read(drive),
+                    Pawn: SensorService.GetPawnIoVersion()));
+                if (_unloaded || !IsVisible) return;
+                SetTempText(TxtCpuTemp, sample.Cpu, "CPU", sample.Pawn);
+                SetTempText(TxtGpuTemp, sample.Gpu, "GPU", sample.Pawn);
+                SetTempText(TxtRamTemp, sample.Ram, "RAM", sample.Pawn);
+                if (generation == _diskSelectionGeneration)
+                    SetTempText(TxtDiskTemp, sample.Disk, "Disk", sample.Pawn);
+            }
+            catch (Exception ex) { System.Diagnostics.Trace.TraceError(ex.Message); }
+            finally { _temperatureReading = false; }
         }
 
-        // ΔΙΟΡΘΩΣΗ (χρήστης ανέφερε: "CPU temp δεν φαίνεται, η Gigabyte έχει εφαρμογή που τη μετράει")
-        // - όταν η θερμοκρασία δεν βρέθηκε ΚΑΙ το VBS/Memory Integrity είναι ενεργό (ο κύριος λόγος
-        // που το LibreHardwareMonitorLib αποτυγχάνει σιωπηλά σε πολλά Windows 11 - βλ.
-        // SensorService.IsHvciActive), δείχνει 🔒 με επεξηγηματικό tooltip αντί για απλό "—" - ώστε ο
-        // χρήστης να καταλαβαίνει ΓΙΑΤΙ, όχι απλά ότι λείπει.
-        private static void SetTempText(System.Windows.Controls.TextBlock target, int? temp)
+        private static void SetTempText(System.Windows.Controls.TextBlock target, int? temp, string device, string? pawn)
         {
+            bool greek = LanguageService.Current == "el";
+            target.Text = temp.HasValue ? $"{temp}°C" : "—";
             if (temp.HasValue)
             {
-                target.Text = $"{temp}°C";
-                target.ToolTip = null;
+                target.ToolTip = device == "Disk" ? "Windows Storage API" : "Hardware sensor / vendor API";
                 return;
             }
-            if (SensorService.IsHvciActive())
-            {
-                target.Text = "🔒";
-                target.ToolTip = LanguageService.T("Home_TempLockedTip");
-                return;
-            }
-            target.Text = "—";
-            target.ToolTip = LanguageService.T("Home_TempNotFoundTip");
+            target.ToolTip = device == "Disk"
+                ? (greek ? "Ο επιλεγμένος δίσκος δεν επέστρεψε θερμοκρασία μέσω των Windows." : "Selected disk did not report a temperature through Windows.")
+                : (greek ? "Μη διαθέσιμη πραγματική μέτρηση. " : "No available sensor reading. ") +
+                    (pawn == null ? (greek ? "Ελέγξτε την επίσημη εγκατάσταση PawnIO (pawnio.eu)." : "Check the official PawnIO installation (pawnio.eu).")
+                    : "PawnIO " + pawn + (greek ? " εντοπίστηκε· ο αισθητήρας ή η πρόσβαση μπορεί να μην υποστηρίζεται." : " detected; sensor/access may be unsupported."));
         }
 
         // ΔΙΟΡΘΩΣΗ (ρητό αίτημα χρήστη): αντί για ComboBox, τα δύο βελάκια στο πλακίδιο του δίσκου
@@ -513,6 +525,9 @@ namespace OptimizerWpf.Views
         {
             if (_drives.Count == 0) return;
             _driveIndex = (_driveIndex + delta + _drives.Count) % _drives.Count;
+            _diskSelectionGeneration++;
+            TxtDiskTemp.Text = "—";
+            TxtDiskTemp.ToolTip = null;
             TxtDriveLabel.Text = _drives[_driveIndex];
             RefreshDisk();
             await UpdateDiskIconAsync();
@@ -527,7 +542,8 @@ namespace OptimizerWpf.Views
             var drive = CurrentDrive;
             if (drive == null) return;
 
-            StatusService.SetBusy($"{LanguageService.T("Home_DetectingDiskType")}{drive}...");
+            var generation = _diskSelectionGeneration;
+            using var busy = StatusService.BeginScope($"{LanguageService.T("Home_DetectingDiskType")}{drive}...");
             var model = await Task.Run(() => DriveTypeService.GetDiskModel(drive));
             var kind = await Task.Run(() => DriveTypeService.Detect(drive));
             var isGuess = false;
@@ -540,7 +556,7 @@ namespace OptimizerWpf.Views
                 var guessed = DriveTypeService.GuessFromModelName(model);
                 if (guessed != PhysicalDriveKind.Unknown) { kind = guessed; isGuess = true; }
             }
-            StatusService.SetIdle(LanguageService.T("Ready"));
+            if (_unloaded || generation != _diskSelectionGeneration) return;
             // ΔΙΟΡΘΩΣΗ (χρήστης ανέφερε: "ζήτησα διαφορετικά εικονίδια για κάθε είδος δίσκου όταν
             // γίνεται η εναλλαγή") - το "Unknown" (ανίχνευση τύπου απέτυχε) χρησιμοποιούσε ΤΟ ΙΔΙΟ
             // glyph+χρώμα με το HDD - αν ένας δίσκος ανιχνευόταν Unknown, η εναλλαγή σε/από αυτόν
@@ -569,23 +585,12 @@ namespace OptimizerWpf.Views
             // Μάρκα/περιγραφή δίσκου + θερμοκρασία (ρητό αίτημα χρήστη) - μαζί με το είδος δίσκου
             // εδώ, όχι στο γρήγορο 1s tick, αφού ΚΑΝΕΝΑ από τα δύο δεν αλλάζει ζωντανά.
             TxtDriveModel.Text = model ?? "";
-            var diskTemp = await Task.Run(() => SensorService.GetDiskTemperatureCelsius(model));
-            SetTempText(TxtDiskTemp, diskTemp);
+            var diskTemp = await Task.Run(() => StorageTemperatureService.Read(drive));
+            if (!_unloaded && generation == _diskSelectionGeneration)
+                SetTempText(TxtDiskTemp, diskTemp, "Disk", null);
         }
 
         // Δεν αλλάζει σε δευτερόλεπτα σαν το ποσοστό χρήσης - αρκεί μία φορά στην εκκίνηση.
-        private async Task RefreshGpuTemperatureAsync()
-        {
-            var temp = await Task.Run(SensorService.GetGpuTemperatureCelsius);
-            SetTempText(TxtGpuTemp, temp);
-        }
-
-        private async Task RefreshRamTemperatureAsync()
-        {
-            var temp = await Task.Run(SensorService.GetRamTemperatureCelsius);
-            SetTempText(TxtRamTemp, temp);
-        }
-
         // Live κάθε 1s - CPU/RAM/GPU αλλάζουν πραγματικά μέσα σε δευτερόλεπτα.
         private void RefreshCpuRamGpu()
         {
