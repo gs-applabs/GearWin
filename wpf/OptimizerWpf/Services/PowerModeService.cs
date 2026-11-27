@@ -18,7 +18,7 @@ namespace OptimizerWpf.Services
 
         private sealed record Setting(bool Machine, string Path, string Name, int Applied);
         private sealed record Previous(bool Exists, int Value);
-        private sealed record Snapshot(string Mode, Guid OriginalPlan, Previous[] Values);
+        private sealed record Snapshot(string Mode, Guid OriginalPlan, Previous[] Values, bool? Committed = null);
 
         // Security policy, desktop appearance, menu delays, HAGS and capture settings
         // are independent user choices, not prerequisites for a performance profile.
@@ -103,14 +103,17 @@ namespace OptimizerWpf.Services
 
         private static Snapshot? Load(string path)
         {
-            if (!File.Exists(path)) return null;
+            try { _ = File.GetAttributes(path); }
+            catch (FileNotFoundException) { return null; }
+            if (!SecureStorage.IsProtectedFile(path) || new FileInfo(path).Length > 65536)
+                throw new IOException("Unsafe profile snapshot.");
             var state = JsonSerializer.Deserialize<Snapshot>(File.ReadAllText(path)) ?? throw new InvalidDataException("Invalid profile snapshot.");
             if (state.OriginalPlan == Guid.Empty || state.Values == null || state.Values.Length != Settings(state.Mode).Length)
                 throw new InvalidDataException("Invalid profile snapshot.");
             return state;
         }
 
-        private static void Persist(string path, Snapshot state)
+        private static void Persist(string path, Snapshot state, bool replace = false)
         {
             var tmp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
             try
@@ -120,7 +123,7 @@ namespace OptimizerWpf.Services
                     JsonSerializer.Serialize(stream, state);
                     stream.Flush(flushToDisk: true);
                 }
-                File.Move(tmp, path, overwrite: false);
+                File.Move(tmp, path, overwrite: replace);
             }
             finally { if (File.Exists(tmp)) File.Delete(tmp); }
         }
@@ -139,6 +142,17 @@ namespace OptimizerWpf.Services
             File.Delete(path);
         }
 
+        private static bool MatchesApplied(Snapshot state)
+        {
+            if (GetPlan() != Target(state.Mode)) return false;
+            return Settings(state.Mode).All(setting => Read(setting) == new Previous(true, setting.Applied));
+        }
+
+        // Old snapshots have no commit marker. Do not silently overwrite an externally
+        // changed profile or assume that a pre-crash partial application was successful.
+        internal static bool IsConfirmedActive(bool? committed, bool matchesApplied) =>
+            committed != false && matchesApplied;
+
         private static void Enable(string mode)
         {
             lock (Gate)
@@ -147,11 +161,14 @@ namespace OptimizerWpf.Services
                 var existing = Load(path);
                 if (existing != null)
                 {
-                    if (existing.Mode == mode) return;
+                    if (existing.Mode == mode && IsConfirmedActive(existing.Committed, MatchesApplied(existing))) return;
+                    if (existing.Committed != false && existing.Mode == mode)
+                        throw new IOException("Profile differs from its saved state. Disable it explicitly before reapplying.");
+                    // Pending journal: rollback only values still matching our applied value.
                     Restore(path, existing);
                 }
                 var settings = Settings(mode);
-                var state = new Snapshot(mode, GetPlan(), settings.Select(Read).ToArray());
+                var state = new Snapshot(mode, GetPlan(), settings.Select(Read).ToArray(), false);
                 Persist(path, state);
                 try
                 {
@@ -159,6 +176,8 @@ namespace OptimizerWpf.Services
                     for (var i = 0; i < settings.Length; i++)
                         if (state.Values[i] != new Previous(true, settings[i].Applied))
                             Write(settings[i], new Previous(true, settings[i].Applied));
+                    if (!MatchesApplied(state)) throw new IOException("Profile activation could not be verified.");
+                    Persist(path, state with { Committed = true }, replace: true);
                 }
                 catch
                 {
@@ -182,7 +201,11 @@ namespace OptimizerWpf.Services
         // Read persisted ownership after a failed switch; UI must not claim the old mode survived.
         public static string? ReadActiveProfile()
         {
-            lock (Gate) return Load(SnapshotPath())?.Mode;
+            lock (Gate)
+            {
+                var state = Load(SnapshotPath());
+                return state != null && IsConfirmedActive(state.Committed, MatchesApplied(state)) ? state.Mode : null;
+            }
         }
 
         internal static async System.Threading.Tasks.Task ApplyManualProfileAsync(string mode, bool enabled)
