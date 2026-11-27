@@ -231,4 +231,62 @@ public class GearWinCoreTests
     [InlineData("", 0, null)]
     public void ProbeDistinguishesAbsenceFromFailure(string output, int exitCode, bool? expected)
         => Assert.Equal(expected, BloatwareService.InterpretProbe(output, exitCode, "Google.Chrome"));
+
+    [Theory]
+    [InlineData((int)CoreWork.FileProtection, (int)CoreWork.Backup)]
+    [InlineData((int)CoreWork.TransferScan, (int)CoreWork.Cleanup)]
+    [InlineData((int)CoreWork.TweakChange, (int)CoreWork.ProfileChange)]
+    public void RecoveryDomainsConflictWithCompetingWork(int a, int b)
+        => Assert.True(OperationCoordinator.Conflicts((CoreWork)a, (CoreWork)b));
+
+    [Fact]
+    public async Task ProcessLeaseTimesOutAndReleasesWithoutPolling()
+    {
+        string name = @"Local\GearWin.Test." + Guid.NewGuid().ToString("N");
+        using var first = await CoreProcessLease.AcquireAsync(name, TimeSpan.FromSeconds(2));
+        await Assert.ThrowsAsync<TimeoutException>(() => CoreProcessLease.AcquireAsync(name, TimeSpan.FromMilliseconds(100)));
+        first.Dispose();
+        using var second = await CoreProcessLease.AcquireAsync(name, TimeSpan.FromSeconds(2));
+    }
+
+    [Fact]
+    public async Task ProcessLeaseWaitingCanBeCanceled()
+    {
+        string name = @"Local\GearWin.Test." + Guid.NewGuid().ToString("N");
+        using var first = await CoreProcessLease.AcquireAsync(name, TimeSpan.FromSeconds(2));
+        using var cancel = new CancellationTokenSource(100);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            CoreProcessLease.AcquireAsync(name, TimeSpan.FromSeconds(3), cancel.Token));
+        first.Dispose();
+        using var second = await CoreProcessLease.AcquireAsync(name, TimeSpan.FromSeconds(2));
+    }
+
+    [Fact]
+    public async Task NamedMutexCoordinatesWithSeparateWindowsProcess()
+    {
+        string name = @"Local\GearWin.Test." + Guid.NewGuid().ToString("N");
+        var psi = new System.Diagnostics.ProcessStartInfo("powershell.exe")
+        {
+            UseShellExecute = false, CreateNoWindow = true,
+            RedirectStandardOutput = true, RedirectStandardError = true
+        };
+        var script = "$m=[System.Threading.Mutex]::new($false,'" + name +
+                     "'); if($m.WaitOne(5000)){ [Console]::WriteLine('ready'); Start-Sleep -Seconds 20 }";
+        foreach (var arg in new[] { "-NoProfile", "-NonInteractive", "-EncodedCommand",
+            Convert.ToBase64String(System.Text.Encoding.Unicode.GetBytes(script)) }) psi.ArgumentList.Add(arg);
+        using var child = System.Diagnostics.Process.Start(psi)!;
+        try
+        {
+            Assert.Equal("ready", await child.StandardOutput.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(10)));
+            await Assert.ThrowsAsync<TimeoutException>(() => CoreProcessLease.AcquireAsync(name, TimeSpan.FromMilliseconds(100)));
+            var waiting = CoreProcessLease.AcquireAsync(name, TimeSpan.FromSeconds(5));
+            child.Kill(entireProcessTree: true);
+            await child.WaitForExitAsync();
+            using var afterExit = await waiting;
+        }
+        finally
+        {
+            if (!child.HasExited) { child.Kill(entireProcessTree: true); await child.WaitForExitAsync(); }
+        }
+    }
 }
