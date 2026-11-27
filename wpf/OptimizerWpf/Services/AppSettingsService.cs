@@ -191,17 +191,17 @@ namespace OptimizerWpf.Services
                 lock (PersistenceGate)
                 {
                     if (_cache != null) return _cache;
-                    var exists = File.Exists(StorePath);
+                    bool missing = false;
                     try
                     {
-                        if (exists)
-                        {
-                            var text = File.ReadAllText(StorePath);
-                            _cache = JsonSerializer.Deserialize<AppSettings>(text);
-                            if (_cache == null) throw new InvalidDataException("Null settings.");
-                            _lastPersisted = JsonSerializer.Serialize(_cache);
-                        }
+                        ValidateStorePath();
+                        var text = ReadSettingsFile(StorePath);
+                        _cache = JsonSerializer.Deserialize<AppSettings>(text);
+                        if (_cache == null) throw new InvalidDataException("Null settings.");
+                        _lastPersisted = JsonSerializer.Serialize(_cache);
                     }
+                    catch (FileNotFoundException) { missing = true; }
+                    catch (DirectoryNotFoundException) { missing = true; }
                     catch (Exception ex)
                     {
                         _loadFailed = true;
@@ -210,11 +210,46 @@ namespace OptimizerWpf.Services
                     if (_cache == null)
                     {
                         _cache = new AppSettings();
-                        if (!exists) _cache.Language = DetectSystemLanguage();
+                        if (missing) _cache.Language = DetectSystemLanguage();
                     }
                     return _cache;
                 }
             }
+        }
+
+        private static void ValidateStorePath()
+        {
+            if (!Path.IsPathFullyQualified(StorePath)) throw new IOException("Relative settings path.");
+            var full = Path.GetFullPath(StorePath);
+            // Check every existing ancestor before any directory creation.
+            for (var dir = new DirectoryInfo(Path.GetDirectoryName(full)!); dir != null; dir = dir.Parent)
+            {
+                try
+                {
+                    _ = File.GetAttributes(dir.FullName);
+                    if (!MaintenancePaths.IsOrdinaryLocalPath(dir.FullName) || !Directory.Exists(dir.FullName))
+                        throw new IOException("Unsafe settings directory.");
+                    break;
+                }
+                catch (DirectoryNotFoundException) { }
+                catch (FileNotFoundException) { }
+            }
+            try
+            {
+                var attributes = File.GetAttributes(full);
+                if ((attributes & FileAttributes.Directory) != 0 || !MaintenancePaths.IsOrdinaryLocalPath(full))
+                    throw new IOException("Unsafe settings file.");
+            }
+            catch (FileNotFoundException) { }
+            catch (DirectoryNotFoundException) { }
+        }
+
+        internal static string ReadSettingsFile(string path)
+        {
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+            if (stream.Length > 16 * 1024 * 1024) throw new InvalidDataException("Settings file exceeds 16 MiB.");
+            using var reader = new StreamReader(stream);
+            return reader.ReadToEnd();
         }
 
         internal static bool WriteIfChanged(string path, string json, string? lastPersisted)
@@ -224,7 +259,12 @@ namespace OptimizerWpf.Services
             var tmp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
             try
             {
-                File.WriteAllText(tmp, json);
+                using (var stream = new FileStream(tmp, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                {
+                    using (var writer = new StreamWriter(stream, new System.Text.UTF8Encoding(false), 4096, leaveOpen: true))
+                        writer.Write(json);
+                    stream.Flush(flushToDisk: true);
+                }
                 File.Move(tmp, path, overwrite: true);
                 return true;
             }
@@ -238,6 +278,7 @@ namespace OptimizerWpf.Services
                 var json = JsonSerializer.Serialize(Current);
                 // Never replace an unreadable original with default settings.
                 if (_loadFailed) return false;
+                ValidateStorePath();
                 WriteIfChanged(StorePath, json, _lastPersisted);
                 _lastPersisted = json;
                 return true;
@@ -274,13 +315,14 @@ namespace OptimizerWpf.Services
             {
                 try
                 {
-                    var text = File.ReadAllText(sourcePath);
+                    var text = ReadSettingsFile(sourcePath);
                     using var document = JsonDocument.Parse(text);
                     if (document.RootElement.ValueKind != JsonValueKind.Object ||
                         !document.RootElement.TryGetProperty(nameof(AppSettings.Language), out _)) return false;
                     var settings = JsonSerializer.Deserialize<AppSettings>(text);
-                    if (settings == null) return false;
+                    if (settings == null || Array.IndexOf(SupportedLanguages, settings.Language) < 0) return false;
                     var json = JsonSerializer.Serialize(settings);
+                    ValidateStorePath();
                     WriteIfChanged(StorePath, json, null);
                     _cache = null;
                     _lastPersisted = null;
