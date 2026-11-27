@@ -54,11 +54,12 @@ namespace OptimizerWpf.Tests
         {
             Assert.True(LogoCacheService.HasLogoSource("Microsoft.Edge"));
             Assert.True(LogoCacheService.HasLogoSource("Microsoft.Teams"));
-            var f = typeof(LogoCacheService).GetField("DomainByKey", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
-            var map = (Dictionary<string, string>)f.GetValue(null)!;
-            Assert.NotEqual("microsoft.com", map["Microsoft.Edge"]);
-            Assert.NotEqual("microsoft.com", map["Microsoft.Teams"]);
-            Assert.NotEqual(map["Microsoft.Edge"], map["Microsoft.Teams"]);
+            var edge = LogoCacheService.SourceFor("Microsoft.Edge")!;
+            var teams = LogoCacheService.SourceFor("Microsoft.Teams")!;
+            Assert.NotEqual(edge.Url, teams.Url);
+            Assert.NotEqual(edge.Sha256, teams.Sha256);
+            Assert.Contains("microsoft.microsoftedge.stable.png", edge.Url);
+            Assert.Contains("msteams.png", teams.Url);
         }
 
         [Fact]
