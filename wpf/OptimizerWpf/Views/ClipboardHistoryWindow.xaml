@@ -30,9 +30,13 @@
                         Click="BtnClose_Click" AutomationProperties.Name="{tr:Tr Close}"/>
             </Grid>
 
-            <TextBox Grid.Row="1" x:Name="TxtSearch" Height="30" Padding="8,4" VerticalContentAlignment="Center" Margin="0,0,0,8"
+            <StackPanel Grid.Row="1">
+            <CheckBox x:Name="ChkCaptureEnabled" Margin="0,0,0,8" Foreground="{DynamicResource TextBrush}"
+                      Click="ChkCaptureEnabled_Click"/>
+            <TextBox x:Name="TxtSearch" Height="30" Padding="8,4" VerticalContentAlignment="Center" Margin="0,0,0,8"
                      Background="{DynamicResource CardBgBrush}" Foreground="{DynamicResource TextBrush}" BorderBrush="{DynamicResource CardBorderBrush}"
                      TextChanged="TxtSearch_TextChanged" ToolTip="{tr:Tr Bloatware_SearchAppTooltip}"/>
+            </StackPanel>
 
             <Border Grid.Row="2" Background="{DynamicResource CardBgBrush}" CornerRadius="6" Padding="2">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
