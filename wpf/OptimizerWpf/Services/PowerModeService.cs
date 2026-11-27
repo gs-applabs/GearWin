@@ -3,6 +3,7 @@ using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Security.Principal;
+using System.Security.AccessControl;
 using System.Text.Json;
 using Microsoft.Win32;
 
@@ -123,6 +124,11 @@ namespace OptimizerWpf.Services
                     JsonSerializer.Serialize(stream, state);
                     stream.Flush(flushToDisk: true);
                 }
+                var info = new FileInfo(tmp);
+                var security = info.GetAccessControl(System.Security.AccessControl.AccessControlSections.Owner);
+                security.SetOwner(new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null));
+                info.SetAccessControl(security);
+                if (!SecureStorage.IsProtectedFile(tmp)) throw new IOException("Profile journal is not protected.");
                 File.Move(tmp, path, overwrite: replace);
             }
             finally { if (File.Exists(tmp)) File.Delete(tmp); }
