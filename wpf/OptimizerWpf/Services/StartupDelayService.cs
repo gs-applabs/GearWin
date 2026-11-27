@@ -79,7 +79,9 @@ namespace OptimizerWpf.Services
             // Restore the original first, so a failed restoration cannot lose the only startup path.
             if (!SystemService.SetStartupItemEnabled(item, true)) return false;
             var ok = await TaskSchedulerService.DeleteAsync(task);
-            if (!ok) { SystemService.SetStartupItemEnabled(item, false); return false; }
+            // A scheduler timeout may have removed the task despite a failure response.
+            // Keep the original registration enabled rather than risk losing both routes.
+            if (!ok) return false;
             if (ok)
             {
                 AppSettingsService.Current.DelayedStartupSeconds.Remove(item.Name);
