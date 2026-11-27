@@ -135,4 +135,31 @@ public class MaintenanceSafetyTests
         }
         finally { System.IO.Directory.Delete(root, true); }
     }
+
+    [Theory]
+    [InlineData("Opera")]
+    [InlineData("OperaGX")]
+    public async System.Threading.Tasks.Task BrowserCleanupNeverDeletesProfileData(string browser)
+    {
+        var root = System.IO.Path.Combine(System.IO.Path.GetTempPath(), System.Guid.NewGuid().ToString("N"));
+        System.IO.Directory.CreateDirectory(root);
+        try
+        {
+            var cache = System.IO.Directory.CreateDirectory(System.IO.Path.Combine(root, "Cache")).FullName;
+            var cached = System.IO.Path.Combine(cache, "old-cache");
+            var bookmarks = System.IO.Path.Combine(root, "Bookmarks");
+            var logins = System.IO.Path.Combine(root, "Login Data");
+            foreach (var file in new[] { cached, bookmarks, logins })
+            {
+                System.IO.File.WriteAllBytes(file, new byte[64]);
+                System.IO.File.SetLastWriteTimeUtc(file, System.DateTime.UtcNow.AddDays(-10));
+            }
+            var entry = new BrowserCacheEntry(browser, browser, new[] { root });
+            Assert.Equal(64L, await HealthCleanupService.ClearBrowserCacheAsync(entry));
+            Assert.False(System.IO.File.Exists(cached));
+            Assert.True(System.IO.File.Exists(bookmarks));
+            Assert.True(System.IO.File.Exists(logins));
+        }
+        finally { System.IO.Directory.Delete(root, true); }
+    }
 }
