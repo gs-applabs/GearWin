@@ -263,21 +263,32 @@ try {{
         public static async Task<IReadOnlyList<UwpAppInfo>> ScanUwpAppsAsync()
         {
             using var lease = await GearWinCore.EnterAsync(CoreWork.UpdateScan);
-            const string script = "Get-AppxPackage | Where-Object { -not $_.IsFramework -and -not $_.IsResourcePackage -and $_.SignatureKind -eq 'Store' } | " +
+            const string script = "$ErrorActionPreference = 'Stop'; Get-AppxPackage | Where-Object { -not $_.IsFramework -and -not $_.IsResourcePackage -and -not $_.NonRemovable -and $_.SignatureKind -eq 'Store' } | " +
                                    "Select-Object Name, PackageFullName | Sort-Object Name | ConvertTo-Json -Compress";
             var output = await RunPsCaptureAsync(script);
             if (string.IsNullOrWhiteSpace(output)) return Array.Empty<UwpAppInfo>();
-            try
-            {
-                var root = System.Text.Json.JsonDocument.Parse(output).RootElement;
-                var elements = root.ValueKind == System.Text.Json.JsonValueKind.Array ? root.EnumerateArray() : new[] { root }.AsEnumerable();
-                return elements.Select(e => new UwpAppInfo(e.GetProperty("Name").GetString() ?? "", e.GetProperty("PackageFullName").GetString() ?? "")).ToList();
-            }
-            catch { return Array.Empty<UwpAppInfo>(); }
+            using var document = System.Text.Json.JsonDocument.Parse(output);
+            var root = document.RootElement;
+            var elements = root.ValueKind == System.Text.Json.JsonValueKind.Array ? root.EnumerateArray() : new[] { root }.AsEnumerable();
+            return elements.Select(e => new UwpAppInfo(e.GetProperty("Name").GetString() ?? "", e.GetProperty("PackageFullName").GetString() ?? ""))
+                .Where(e => IsValidUwpPackageIdentity(e.PackageFullName)).ToList();
         }
 
-        public static Task<bool> RemoveUwpAppAsync(string packageFullName) =>
-            RunPsForSuccessAsync($"Remove-AppxPackage -Package '{packageFullName}'");
+        internal static bool IsValidUwpPackageIdentity(string? name) =>
+            name != null && System.Text.RegularExpressions.Regex.IsMatch(name,
+                @"\A[A-Za-z0-9][A-Za-z0-9.-]{0,49}_[0-9]{1,5}\.[0-9]{1,5}\.[0-9]{1,5}\.[0-9]{1,5}_(?:x86|x64|arm|arm64|neutral|x86a64)_[A-Za-z0-9.-]{0,30}_[A-Za-z0-9]{13}\z",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+        public static Task<bool> RemoveUwpAppAsync(string packageFullName)
+        {
+            if (!IsValidUwpPackageIdentity(packageFullName)) return Task.FromResult(false);
+            // Revalidate exact current-user package and eligibility inside the mutation.
+            var script = $"$ErrorActionPreference = 'Stop'; $id = '{packageFullName}'; " +
+                "$p = @(Get-AppxPackage | Where-Object { $_.PackageFullName -eq $id -and $_.SignatureKind -eq 'Store' -and -not $_.IsFramework -and -not $_.IsResourcePackage -and -not $_.NonRemovable }); " +
+                "if ($p.Count -ne 1) { exit 1 }; Remove-AppxPackage -Package $p[0].PackageFullName -ErrorAction Stop; " +
+                "if (@(Get-AppxPackage | Where-Object { $_.PackageFullName -eq $id }).Count -ne 0) { exit 1 }; exit 0";
+            return RunPsForSuccessAsync(script);
+        }
 
         // ===== Βαθιά Απεγκατάσταση =====
 
@@ -354,7 +365,7 @@ try {{
             using var lease = await GearWinCore.EnterAsync(CoreWork.SoftwareChange);
             try
             {
-                using var process = Process.Start(new ProcessStartInfo("powershell.exe", PowerShellArgs.Command(command))
+                using var process = Process.Start(new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, @"WindowsPowerShell\v1.0\powershell.exe"), PowerShellArgs.Command(command))
                 { UseShellExecute = false, CreateNoWindow = true });
                 if (process == null) return false;
                 await process.WaitForExitAsync();
@@ -365,12 +376,24 @@ try {{
 
         private static async Task<string> RunPsCaptureAsync(string command)
         {
-            using var process = Process.Start(new ProcessStartInfo("powershell.exe", PowerShellArgs.Command(command))
-            { RedirectStandardOutput = true, UseShellExecute = false, CreateNoWindow = true, StandardOutputEncoding = System.Text.Encoding.UTF8 });
-            if (process == null) return "";
-            var output = await process.StandardOutput.ReadToEndAsync();
-            await process.WaitForExitAsync();
-            return output;
+            using var process = Process.Start(new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, @"WindowsPowerShell\v1.0\powershell.exe"), PowerShellArgs.Command(command))
+            { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true, StandardOutputEncoding = System.Text.Encoding.UTF8 });
+            if (process == null) throw new InvalidOperationException("PowerShell did not start.");
+            using var timeout = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(30));
+            try
+            {
+                var output = process.StandardOutput.ReadToEndAsync(timeout.Token);
+                var errors = process.StandardError.ReadToEndAsync(timeout.Token);
+                await Task.WhenAll(output, errors, process.WaitForExitAsync(timeout.Token));
+                if (process.ExitCode != 0) throw new InvalidOperationException("App inventory failed (exit " + process.ExitCode + ").");
+                return await output;
+            }
+            catch (OperationCanceledException) when (timeout.IsCancellationRequested)
+            {
+                // This helper is for read-only inventory, never servicing mutations.
+                try { if (!process.HasExited) process.Kill(entireProcessTree: true); } catch { }
+                throw new TimeoutException("App inventory exceeded the time limit.");
+            }
         }
 
         private static async Task<bool> RunProcessForSuccessAsync(string fileName, string arguments)
