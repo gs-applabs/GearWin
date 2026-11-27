@@ -3,6 +3,8 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 Push-Location $root
 try {
+    # Release builds require the pinned application icon assets; never fetch them in the running app.
+    & "$PSScriptRoot/prepare-recommended-icons.ps1"
     dotnet publish wpf/OptimizerWpf/OptimizerWpf.csproj -c Release -r win-x64 --self-contained true -o wpf/OptimizerWpf/publish/win-x64
     if ($LASTEXITCODE -ne 0) { throw 'dotnet publish failed' }
     dotnet publish migration/GearWin.Migration.Cli -c Release -r win-x64 --self-contained true -o wpf/OptimizerWpf/publish/win-x64/migration
