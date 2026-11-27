@@ -8,12 +8,12 @@ Baseline: `0d36ba06ffd5b1f90676d546d8abdfafe1062fbf`; review branch `release/7.1
 |---|---:|---:|---:|---|
 | UMP01 source audit | 3 test/measurement coverage gaps | 1 infrastructure mitigation (measurement workflow added) | 0 | open |
 | UMP02 safety, batches 1–10 | 85 safety/correctness findings | 85 addressed at least in part in source | 0 operation-level certifications | open |
-| UMP03 core/resources, batches 1–8 | 61 findings | 61 addressed at least in part in source | 0 | open |
+| UMP03 core/resources, batches 1–9 | 78 findings | 78 addressed at least in part in source | 0 | open |
 | UMP04 unified maintenance, batches 1–2 | 24 findings | 24 addressed at least in part in source | 0 | open |
 | UMP05 central operation core, batches 1–5 | 25 findings | 25 addressed at least in part in source | 0 | open |
 | UMP06 status and navigation, batch 1 | 9 findings | 9 addressed at least in part in source | 0 | open |
 | UMP07 early artwork fix | 8 distinct icon/UI findings | 8 addressed at least in part in source | 0 visual certifications | open |
-| Total | 215 | 213 at least partly addressed | 0 operation-level certifications | open |
+| Total | 232 | 230 at least partly addressed | 0 operation-level certifications | open |
 
 The earlier manual review also identified deferred issues in profiles, resources, backups and navigation. These will be assigned stable IDs in their owning passes; do not inflate totals by counting them again. Full tracked-source lexical inventory completed; manual semantic review remains pending. The 7.0.0 baseline Windows build reported 391 desktop + 42 migration tests on 2026-11-27; the Linux job logs available are from 2026-11-23 (5 synthetic clone tests). Six CI jobs reported success in the run; an opt-in test can report pass without doing clicks. Baseline success is not a new branch test result.
 
@@ -466,3 +466,29 @@ References: Microsoft Windows IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS, IOCTL_STORAG
 Three new regression cases: 2048+ process identities, 100 duplicate undo requests, 10,000 optional background attempts during backup. Cumulative 151 authored cases; 129 included in previously confirmed CI (563 tests). The sensor CI run 46002677976 was canceled during tests by later commits. Do not claim sensor or anti-pile-up tests passed yet.
 
 Independent endurance workflow .github/workflows/gearwin-endurance.yml, introduced at 968f15069805b879e07dab00845091ed137a9313, measures 61 samples each (15 minutes after one minute warmup) in normal and tray mode, CPU machine-normalized, private/working-set change, handles, threads, process I/O, raw process tree. Separate concurrency group does not cancel when subsequent ordinary commits arrive; push triggers only when workflow file changes, otherwise manual dispatch. This is a short endurance screening, not 24-hour certification, active UI churn, real hardware or physical SSD endurance. No forced memory trimming, no new always-on monitoring, no interruption of user backup/repair; existing queue limit 32 and optional nonqueued admission remain. Driver calls may still hang and retain waiting view continuations until completion; bounded work is not proof of zero leaks. Explicit user refresh is not coalesced into stale data. New threshold 512 process names and 15-minute windows are design choices. No merge or release.
+
+## UMP03 — ninth resource batch: navigation lifecycle and anti-pile-up
+
+| ID | Finding | Source mitigation |
+|---|---|---|
+| R62 | Device-summary cache invalidation could race ongoing publication, and translated snapshot stayed indefinitely | generation-aware publication, 120s cache, language check, existing single-flight coordinated via Diagnostics |
+| R63 | Home/security-center concurrent security reads each created a task | one shared pending/active security read |
+| R64 | Process enumeration started independently on each SystemView opening/refresh | one coordinated pending/active process scan |
+| R65 | Process enumeration exception could skip final handle disposal; ranked rows reread working set | dispose entire enumeration in finally, use measured ranking value, tolerate process exit |
+| R66 | Detached SystemView continued awaiting device and process scans | view lifetime token, cancellation of consumer waits, initial work deferred to Loaded |
+| R67 | Concurrent process refresh could append duplicate rows after both cleared before awaiting | per-view guard, clear after snapshot arrives; ignore repeated device refresh while busy |
+| R68 | GPU name WMI query repeated at each Home construction | shared in-flight metadata task with 120s freshness |
+| R69 | GPU name and storage WMI collection/selected-object handles not disposed deterministically | using declarations in affected providers |
+| R70 | Rapid disk-selection changes or Home reconstruction could queue multiple model/type reads | one process-wide metadata slot, cache limited to 26 letter keys, different selection retries on existing slow timer |
+| R71 | Home performed expensive initial reads before visibility/attachment, including tray launch | first-visible initialization, reattach lifecycle on Loaded |
+| R72 | Detached Home awaiting shared health/sensor/GPU/network/metadata tasks retained view continuations | cancel obsolete consumer waits using per-load token; shared underlying task is not terminated |
+| R73 | Hidden/minimized Home retained live action/update/impact event subscriptions | detach while hidden, resubscribe and refresh once when visible |
+| R74 | Tweaks constructor launched four independent state scans | one batched detection at Loaded |
+| R75 | Detached Tweaks/pinned rows could leave queued detection work | cancel queued admission and stop between model detections; worker captures models rather than view rows |
+| R76 | Rapid subpage switching scheduled repeated deferred accessibility tree traversals | one pending dispatcher operation, abort on unload, traverse current page only |
+| R77 | Repeated Home health views triggered independent SMART WMI scans | shared system SMART task with 60s freshness |
+| R78 | Repeated performance-policy events queued redundant Home polling callbacks | coalesce one dispatcher refresh |
+
+Ten new deterministic fixture cases in DriveMetadataSlotTests: eight key normalization cases, one 1000-iteration same/different drive contention with canceled consumer, one 26-key cache/1000 invalid identities/expiry case. 161 cumulative newly authored cases; 129 included in previously confirmed CI (563 tests). The preceding sensor/anti-pile-up run 46003291557 canceled during build/test, so no additional verified count yet. New source through b5b8c8cc05499091e268e99291f4774dc2a063a8 is not yet compiled. CI audit concurrency changed to cancel-in-progress false to preserve active Windows validation when new commits arrive; no verification of new endurance run yet (available connector returns PR-triggered workflow runs only). No installer release.
+
+Remaining: SystemView still constructs fonts and may initialize both process/device groups even if a composite removes sections; further section-demand mapping needed. Metadata TTL can temporarily retain a stale name after drive hotplug; physical temperature identity uses separate path. A refresh requested while an existing shared device summary is in flight can join that existing read; invalidated results do not repopulate cache. A native WMI/driver call may still hang; cancellation detaches the UI consumer, does not kill the native call. Timers, external process supervision, UI churn, all skins and long endurance remain unverified. New 120/60-second metadata TTLs and drive-letter bound are design choices; no forced memory trims. No new user-visible feature, no merge or release.
