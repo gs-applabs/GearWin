@@ -277,38 +277,23 @@ namespace OptimizerWpf.Services
             return total;
         });
 
-        private static long GetDirectorySize(string dir)
-        {
-            if (!Directory.Exists(dir)) return 0;
-            long size = 0;
-            foreach (var f in SafeEnumerateFilesTopDown(dir))
-            {
-                try { size += new FileInfo(f).Length; } catch { }
-            }
-            foreach (var d in SafeEnumerateDirectories(dir)) size += GetDirectorySize(d);
-            return size;
-        }
+        private static long GetDirectorySize(string dir) => QuickCleanService.DirSize(dir);
 
-        public static Task ClearBrowserCacheAsync(BrowserCacheEntry browser) => Task.Run(() =>
+        public static Task<long> ClearBrowserCacheAsync(BrowserCacheEntry browser) => Task.Run(() =>
         {
+            long removed = 0;
             foreach (var basePath in browser.Paths)
             {
+                if (!MaintenancePaths.IsOrdinaryLocalPath(basePath)) continue;
                 if (browser.Name is "Chrome" or "Edge" or "Brave" or "Vivaldi")
                 {
-                    // Κάθε προφίλ (Default, Profile 1, ...) έχει δικό του Cache/Code Cache/GPUCache υποφάκελο.
                     foreach (var profileDir in SafeEnumerateDirectories(basePath))
-                    {
                         foreach (var cacheSub in new[] { "Cache", "Code Cache", "GPUCache" })
-                        {
-                            DeleteDirectoryContents(Path.Combine(profileDir, cacheSub));
-                        }
-                    }
+                            removed += MaintenancePaths.CleanFiles(Path.Combine(profileDir, cacheSub), TimeSpan.FromDays(2));
                 }
-                else
-                {
-                    DeleteDirectoryContents(basePath);
-                }
+                else removed += MaintenancePaths.CleanFiles(basePath, TimeSpan.FromDays(2));
             }
+            return removed;
         });
 
         public static Task<WinREStatus> GetWinREStatusAsync() => Task.Run(() =>
@@ -521,20 +506,7 @@ Write-Output $brokenCount
 
         private static IEnumerable<string> SafeEnumerateDirectories(string root)
         {
-            try { return Directory.EnumerateDirectories(root); } catch { return Array.Empty<string>(); }
-        }
-
-        private static void DeleteDirectoryContents(string dir)
-        {
-            if (!Directory.Exists(dir)) return;
-            foreach (var f in SafeEnumerateFilesTopDown(dir))
-            {
-                try { File.Delete(f); } catch { }
-            }
-            foreach (var d in SafeEnumerateDirectories(dir))
-            {
-                try { Directory.Delete(d, true); } catch { }
-            }
+            try { return MaintenancePaths.IsOrdinaryLocalPath(root) ? Directory.GetDirectories(root) : Array.Empty<string>(); } catch { return Array.Empty<string>(); }
         }
 
         private static IEnumerable<string> SafeEnumerateFilesTopDown(string dir)
