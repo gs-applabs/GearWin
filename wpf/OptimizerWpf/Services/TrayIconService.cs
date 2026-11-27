@@ -140,10 +140,7 @@ namespace OptimizerWpf.Services
             _icon.Text = LanguageService.T("Tray_QuickCleanRunning");
             try
             {
-                var items = await QuickCleanService.ScanAsync();
-                var keys = items.Where(i => i.Recommended).Select(i => i.Key).ToList();
-                var freed = await QuickCleanService.CleanAsync(keys);
-                ImpactTrackingService.RecordBytesFreed(freed);
+                var freed = await SystemMaintenanceService.QuickCleanAsync();
                 _icon.ShowBalloonTip(4000, "GearWin - Complete PC Care",
                     $"{LanguageService.T("Tray_QuickCleanDonePrefix")}{QuickCleanService.FormatSize(freed)}", ToolTipIcon.Info);
             }
