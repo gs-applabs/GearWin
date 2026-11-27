@@ -9,7 +9,7 @@ namespace OptimizerWpf.Services;
 // The existing PerformanceProfileService remains the only adaptive governor.
 // This coordinator has no timer, polling thread, or persistent activity log.
 // Leases are acquired at service boundaries, never recursively inside a lease.
-internal enum CoreWork { CleanupScan, Cleanup, Memory, Repair, UpdateScan, Backup, Registry, HardwareScan, HealthScan, SoftwareChange, ProfileChange, NetworkChange, StartupChange, Diagnostics, Benchmark }
+internal enum CoreWork { CleanupScan, Cleanup, Memory, Repair, UpdateScan, Backup, Registry, HardwareScan, HealthScan, SoftwareChange, ProfileChange, NetworkChange, StartupChange, Diagnostics, Benchmark, FileProtection, TransferScan, TweakChange }
 internal enum CorePriority { Background, User }
 
 internal sealed class OperationCoordinator
@@ -40,7 +40,7 @@ internal sealed class OperationCoordinator
     internal long SoftwareEpoch => Interlocked.Read(ref _softwareEpoch);
     internal OperationCoordinator(Func<int> capacity) => _capacity = capacity;
 
-    internal static bool IsHeavyMutation(CoreWork kind) => kind is CoreWork.Cleanup or CoreWork.Memory or CoreWork.Repair or CoreWork.Backup or CoreWork.Registry or CoreWork.SoftwareChange or CoreWork.ProfileChange or CoreWork.NetworkChange or CoreWork.StartupChange or CoreWork.Benchmark;
+    internal static bool IsHeavyMutation(CoreWork kind) => kind is CoreWork.Cleanup or CoreWork.Memory or CoreWork.Repair or CoreWork.Backup or CoreWork.Registry or CoreWork.SoftwareChange or CoreWork.ProfileChange or CoreWork.NetworkChange or CoreWork.StartupChange or CoreWork.Benchmark or CoreWork.FileProtection or CoreWork.TweakChange;
 
     // Conservative first policy: do not run a heavy mutation alongside another heavy
     // operation or a competing scan. Hardware alerts retain an independent read-only slot.
@@ -155,6 +155,13 @@ internal static class GearWinCore
 
     internal static Task<IDisposable> EnterAsync(CoreWork kind, CorePriority priority = CorePriority.User, CancellationToken ct = default)
         => Coordinator.AcquireAsync(kind, priority, ct);
+
+    internal static async Task RunAsync(CoreWork kind, Func<Task> work, CorePriority priority = CorePriority.User, CancellationToken ct = default)
+    {
+        using var lease = await EnterAsync(kind, priority, ct).ConfigureAwait(false);
+        ct.ThrowIfCancellationRequested();
+        await work().ConfigureAwait(false);
+    }
 
     internal static async Task<T> RunAsync<T>(CoreWork kind, Func<Task<T>> work, CorePriority priority = CorePriority.User, CancellationToken ct = default)
     {
