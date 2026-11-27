@@ -9,7 +9,7 @@ namespace OptimizerWpf.Services;
 // The existing PerformanceProfileService remains the only adaptive governor.
 // This coordinator has no timer, polling thread, or persistent activity log.
 // Leases are acquired at service boundaries, never recursively inside a lease.
-internal enum CoreWork { CleanupScan, Cleanup, Memory, Repair, UpdateScan, Backup, Registry, HardwareScan, HealthScan, SoftwareChange, ProfileChange, NetworkChange, StartupChange, Diagnostics }
+internal enum CoreWork { CleanupScan, Cleanup, Memory, Repair, UpdateScan, Backup, Registry, HardwareScan, HealthScan, SoftwareChange, ProfileChange, NetworkChange, StartupChange, Diagnostics, Benchmark }
 internal enum CorePriority { Background, User }
 
 internal sealed class OperationCoordinator
@@ -40,7 +40,7 @@ internal sealed class OperationCoordinator
     internal long SoftwareEpoch => Interlocked.Read(ref _softwareEpoch);
     internal OperationCoordinator(Func<int> capacity) => _capacity = capacity;
 
-    internal static bool IsHeavyMutation(CoreWork kind) => kind is CoreWork.Cleanup or CoreWork.Memory or CoreWork.Repair or CoreWork.Backup or CoreWork.Registry or CoreWork.SoftwareChange or CoreWork.ProfileChange or CoreWork.NetworkChange or CoreWork.StartupChange;
+    internal static bool IsHeavyMutation(CoreWork kind) => kind is CoreWork.Cleanup or CoreWork.Memory or CoreWork.Repair or CoreWork.Backup or CoreWork.Registry or CoreWork.SoftwareChange or CoreWork.ProfileChange or CoreWork.NetworkChange or CoreWork.StartupChange or CoreWork.Benchmark;
 
     // Conservative first policy: do not run a heavy mutation alongside another heavy
     // operation or a competing scan. Hardware alerts retain an independent read-only slot.
