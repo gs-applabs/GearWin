@@ -250,6 +250,14 @@ namespace OptimizerWpf.Views
             }
             catch (Exception ex)
             {
+                try
+                {
+                    var mode = await Task.Run(PowerModeService.ReadActiveProfile);
+                    AppSettingsService.Current.OfficeModeActive = mode == "Office";
+                    AppSettingsService.Current.GamingModeActive = mode == "Gaming";
+                    AppSettingsService.Save();
+                }
+                catch { /* retain last known state; original failure is still displayed */ }
                 ToggleOfficeMode.IsChecked = AppSettingsService.Current.OfficeModeActive;
                 ToggleGamingMode.IsChecked = AppSettingsService.Current.GamingModeActive;
                 StatusService.SetIdle(ex.Message);
@@ -299,6 +307,14 @@ namespace OptimizerWpf.Views
             }
             catch (Exception ex)
             {
+                try
+                {
+                    var mode = await Task.Run(PowerModeService.ReadActiveProfile);
+                    AppSettingsService.Current.OfficeModeActive = mode == "Office";
+                    AppSettingsService.Current.GamingModeActive = mode == "Gaming";
+                    AppSettingsService.Save();
+                }
+                catch { /* retain last known state; original failure is still displayed */ }
                 ToggleOfficeMode.IsChecked = AppSettingsService.Current.OfficeModeActive;
                 ToggleGamingMode.IsChecked = AppSettingsService.Current.GamingModeActive;
                 StatusService.SetIdle(ex.Message);
