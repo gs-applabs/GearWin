@@ -38,7 +38,7 @@ internal static class StorageTemperatureService
                 || used < 32 || BinaryPrimitives.ReadUInt32LittleEndian(extents) != 1) return null;
             uint number = BinaryPrimitives.ReadUInt32LittleEndian(extents.AsSpan(8));
             using var disk = Open(@"\\.\PhysicalDrive" + number);
-            if (disk.IsInvalid) return ReadReliabilityCounter(number);
+            if (disk.IsInvalid) return SensorService.GetDiskTemperatureByNumber(number) ?? ReadReliabilityCounter(number);
             // Device first; adapter property is not used as a substitute for device temperature.
             var query = new byte[12];
             BinaryPrimitives.WriteUInt32LittleEndian(query, 52);
@@ -46,7 +46,7 @@ internal static class StorageTemperatureService
             var reading = DeviceIoControl(disk, StorageQueryProperty, query, query.Length, buffer, buffer.Length,
                 out used, IntPtr.Zero) && used >= 0 && used <= buffer.Length
                 ? ParseDescriptor(buffer.AsSpan(0, used)) : null;
-            return reading ?? ReadReliabilityCounter(number);
+            return reading ?? SensorService.GetDiskTemperatureByNumber(number) ?? ReadReliabilityCounter(number);
         }
         catch { return null; }
     }
