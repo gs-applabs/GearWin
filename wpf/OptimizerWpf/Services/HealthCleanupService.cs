@@ -593,38 +593,63 @@ Write-Output $brokenCount
         // λεπτά (ειδικά DISM RestoreHealth), γι' αυτό Task.Run + καμία timeout εδώ (ο καλών code-behind
         // δείχνει StatusService.SetBusy όσο περιμένει).
         private static Task<(bool Success, string Output)> RunCommandCaptureAsync(string fileName, string arguments, string? stdin = null, System.Threading.CancellationToken ct = default) =>
-            GearWinCore.RunAsync(CoreWork.Repair, () => Task.Run(() =>
+            GearWinCore.RunAsync(CoreWork.Repair, async () =>
             {
+                // Cancellation is an admission decision, not a forced termination of servicing.
+                ct.ThrowIfCancellationRequested();
                 try
                 {
-                    var psi = new ProcessStartInfo(fileName, arguments)
+                    var psi = new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, fileName), arguments)
                     {
                         UseShellExecute = false,
                         CreateNoWindow = true,
                         RedirectStandardOutput = true,
+                        RedirectStandardError = true,
                         RedirectStandardInput = stdin != null,
                         StandardOutputEncoding = System.Text.Encoding.UTF8,
                     };
                     using var process = Process.Start(psi);
                     if (process == null) return (false, LanguageService.T("HealthSvc_ProcessStartFailed"));
+                    var stdout = ReadBoundedOutputAsync(process.StandardOutput);
+                    var stderr = ReadBoundedOutputAsync(process.StandardError);
                     if (stdin != null)
                     {
-                        process.StandardInput.Write(stdin);
-                        process.StandardInput.Close();
+                        try { await process.StandardInput.WriteAsync(stdin); }
+                        catch (IOException) { /* child already closed its input */ }
+                        finally { process.StandardInput.Close(); }
                     }
-                    // Ακύρωση χρήστη: τερματίζει ΟΛΟ το δέντρο διεργασιών (sfc/DISM ξεκινούν παιδιά) - το
-                    // ReadToEnd επιστρέφει μόλις κλείσει το pipe.
-                    using var cancelReg = ct.Register(() => { try { process.Kill(entireProcessTree: true); } catch { } });
-                    var output = process.StandardOutput.ReadToEnd();
-                    process.WaitForExit();
-                    if (ct.IsCancellationRequested) return (false, LanguageService.T("Health_ToolCancelled"));
+                    // Keep the repair lease until the actual transaction process exits.
+                    await process.WaitForExitAsync();
+                    await Task.WhenAll(stdout, stderr);
+                    var output = await stdout;
+                    var error = await stderr;
+                    if (!string.IsNullOrWhiteSpace(error)) output += Environment.NewLine + error;
                     return (process.ExitCode == 0, output);
                 }
                 catch (Exception ex)
                 {
                     return (false, $"{LanguageService.T("HealthSvc_ErrorPrefix")}{ex.Message}");
                 }
-            }), ct: ct);
+            }, ct: ct);
+
+        internal static async Task<string> ReadBoundedOutputAsync(TextReader reader, int limit = 32768)
+        {
+            if (limit < 1 || limit > 65536) throw new ArgumentOutOfRangeException(nameof(limit));
+            var buffer = new char[4096];
+            var output = new System.Text.StringBuilder(Math.Min(limit, 4096));
+            bool truncated = false;
+            int count;
+            // Keep draining even when the display buffer is full so the child cannot block on its pipe.
+            while ((count = await reader.ReadAsync(buffer, 0, buffer.Length).ConfigureAwait(false)) != 0)
+            {
+                int remaining = Math.Max(0, limit - output.Length);
+                int take = Math.Min(remaining, count);
+                if (take > 0) output.Append(buffer, 0, take);
+                if (take < count) truncated = true;
+            }
+            if (truncated) output.Append("\n[Output truncated]");
+            return output.ToString();
+        }
 
         private static async Task<string> RunPowerShellScriptAsync(string script)
         {
