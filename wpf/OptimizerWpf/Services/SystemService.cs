@@ -55,19 +55,23 @@ namespace OptimizerWpf.Services
         internal static Task<bool> SetStartupItemEnabledAsync(StartupItem item, bool enabled) =>
             GearWinCore.RunAsync(CoreWork.StartupChange, () => Task.Run(() => SetStartupItemEnabled(item, enabled)));
 
+        internal static (string Source, string Destination) StartupMovePaths(bool enabled) =>
+            enabled ? (DisabledStartupKeyPath, RunKeyPath) : (RunKeyPath, DisabledStartupKeyPath);
+
         public static bool SetStartupItemEnabled(StartupItem item, bool enabled)
         {
             if (item.Location is not ("HKCU" or "HKLM") || string.IsNullOrEmpty(item.Name)) return false;
             try
             {
                 var hive = item.Location == "HKCU" ? Registry.CurrentUser : Registry.LocalMachine;
-                using var source = hive.OpenSubKey(enabled ? DisabledStartupKeyPath : RunKeyPath, writable: true);
+                var (sourcePath, destinationPath) = StartupMovePaths(enabled);
+                using var source = hive.OpenSubKey(sourcePath, writable: true);
                 if (source == null) return false;
                 var raw = source.GetValue(item.Name, null, RegistryValueOptions.DoNotExpandEnvironmentNames);
                 if (raw is not string command || !string.Equals(source.GetValue(item.Name) as string, item.Command, StringComparison.Ordinal)) return false;
                 var kind = source.GetValueKind(item.Name);
                 if (kind is not (RegistryValueKind.String or RegistryValueKind.ExpandString)) return false;
-                using var destination = hive.CreateSubKey(enabled ? RunKeyPath : DisabledStartupKeyPath);
+                using var destination = hive.CreateSubKey(destinationPath);
                 if (destination == null || destination.GetValue(item.Name, null, RegistryValueOptions.DoNotExpandEnvironmentNames) != null) return false;
                 destination.SetValue(item.Name, command, kind);
                 destination.Flush();
