@@ -265,10 +265,14 @@ namespace OptimizerWpf.Views
             // πριν/μετά τον καθαρισμό, ώστε ο χρήστης να βλέπει το πραγματικό όφελος, όχι μόνο "έγινε".
             TxtBrowserCacheStatus.Text = $"{LanguageService.T("Health_ClearingCacheForPrefix")}{browser.Label}...";
             using var busy = BusyScope.Begin($"{LanguageService.T("Health_ClearingCachePrefix")}{browser.Label}...");
-            var removed = await HealthCleanupService.ClearBrowserCacheAsync(browser);
-            if (removed > 0) ImpactTrackingService.RecordBytesFreed(removed);
-            TxtBrowserCacheStatus.Text = $"{browser.Label} · {QuickCleanService.FormatSize(removed)} " +
-                (LanguageService.Current == "el" ? "λογικού μεγέθους αρχείων αφαιρέθηκαν" : "logical bytes removed");
+            try
+            {
+                var removed = await HealthCleanupService.ClearBrowserCacheAsync(browser);
+                if (removed > 0) ImpactTrackingService.RecordBytesFreed(removed);
+                TxtBrowserCacheStatus.Text = $"{browser.Label} · {QuickCleanService.FormatSize(removed)} " +
+                    (LanguageService.Current == "el" ? "λογικού μεγέθους αρχείων αφαιρέθηκαν" : "logical bytes removed");
+            }
+            catch (Exception ex) { TxtBrowserCacheStatus.Text = ex.Message; }
         }
 
         private async void BtnWinRERefresh_Click(object sender, RoutedEventArgs e) => await RefreshWinREAsync();
