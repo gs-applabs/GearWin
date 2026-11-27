@@ -18,15 +18,34 @@ namespace OptimizerWpf.Services
         // ΚΑΙ διακριτή (dGPU) κάρτα γραφικών - `Win32_VideoController` τις επιστρέφει ΟΛΕΣ, οπότε
         // εδώ ενώνονται όλα τα ονόματα αντί να κρατηθεί μόνο το πρώτο (που ΔΕΝ είναι εγγυημένα η
         // "κύρια" κάρτα - η σειρά επιστροφής της WMI δεν είναι αξιόπιστη ένδειξη προτεραιότητας).
+        private static readonly object NameGate = new();
+        private static System.Threading.Tasks.Task<string>? _nameTask;
+        private static long _nameAt;
+
+        internal static System.Threading.Tasks.Task<string> GetNameAsync()
+        {
+            lock (NameGate)
+            {
+                if (_nameTask is { IsCompleted: false }) return _nameTask;
+                var now = System.Environment.TickCount64;
+                if (_nameTask is { IsCompletedSuccessfully: true } && now - _nameAt < 120000) return _nameTask;
+                _nameAt = now;
+                return _nameTask = System.Threading.Tasks.Task.Run(GetName);
+            }
+        }
+
         public static string GetName()
         {
             try
             {
                 using var searcher = new ManagementObjectSearcher("SELECT Name FROM Win32_VideoController");
-                var names = searcher.Get().Cast<ManagementBaseObject>()
-                    .Select(o => o["Name"]?.ToString())
-                    .Where(n => !string.IsNullOrWhiteSpace(n))
-                    .ToList();
+                using var results = searcher.Get();
+                var names = new System.Collections.Generic.List<string>();
+                foreach (ManagementBaseObject item in results)
+                {
+                    using (item)
+                        if (item["Name"]?.ToString() is string name && !string.IsNullOrWhiteSpace(name)) names.Add(name);
+                }
                 return names.Count == 0 ? "GPU" : string.Join(" + ", names);
             }
             catch
