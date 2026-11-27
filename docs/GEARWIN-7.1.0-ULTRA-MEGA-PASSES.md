@@ -8,10 +8,11 @@ Baseline: `0d36ba06ffd5b1f90676d546d8abdfafe1062fbf`; review branch `release/7.1
 |---|---:|---:|---:|---|
 | UMP01 source audit | 3 test/measurement coverage gaps | 1 infrastructure mitigation (measurement workflow added) | 0 | open |
 | UMP02 safety, batches 1–5 | 46 safety/correctness findings | 46 addressed at least in part in source | 0 operation-level certifications | open |
-| UMP03 core/resources, batches 1–2 | 29 findings | 29 addressed at least in part in source | 0 | open |
+| UMP03 core/resources, batches 1–3 | 36 findings | 36 addressed at least in part in source | 0 | open |
+| UMP04 unified maintenance, batch 1 | 12 findings | 12 addressed at least in part in source | 0 | open |
 | UMP06 early status fix | 1 finding | 1 addressed in source | 0 | open |
 | UMP07 early artwork fix | 8 distinct icon/UI findings | 8 addressed at least in part in source | 0 visual certifications | open |
-| Total | 87 | 85 at least partly addressed | 0 operation-level certifications | open |
+| Total | 106 | 104 at least partly addressed | 0 operation-level certifications | open |
 
 The earlier manual review also identified deferred issues in profiles, resources, backups and navigation. These will be assigned stable IDs in their owning passes; do not inflate totals by counting them again. Full tracked-source lexical inventory completed; manual semantic review remains pending. The 7.0.0 baseline Windows build reported 391 desktop + 42 migration tests on 2026-11-27; the Linux job logs available are from 2026-11-23 (5 synthetic clone tests). Six CI jobs reported success in the run; an opt-in test can report pass without doing clicks. Baseline success is not a new branch test result.
 
@@ -198,3 +199,36 @@ Run 45992282312: 31/31 icon assets prepared and verified against all pinned SHA-
 | R29 | Failed GPU counter priming leaked initialized counter | dispose on exception |
 
 Seven additional fixture cases (4 Home polling floor and 3 sensor refresh coalescing), 57 cumulative new cases authored, 50 included in completed prior test stages. Actual runtime visibility, all six skin identities, long soak, hardware driver compatibility, concurrent sensor closure, repeated unload/reload behavior, GPU usage accuracy, scheduler and scan cancellation still need integration tests. A single shared sensor refresh lock reduces concurrent work but cannot guarantee a stuck vendor driver returns; shutdown timeout remains open. Manual scan joining does not re-run the announcement option. No guarantee of CPU/RAM reduction until comparable VM samples. Prior operation-level safety restrictions remain interim; no merge or release. 
+
+## UMP03 — third batch (7 additional findings)
+
+| ID | Finding | Source mitigation |
+|---|---|---|
+| R30 | Home, PC Manager hero and shell health badge repeated the same WMI checks | shared 15-second language-aware health snapshot, fresh explicit scans, nonblocking invalidation |
+| R31 | HealthScoreService PLINQ disregarded configured parallel-scan tier | degree bounded by existing performance profile |
+| R32 | Pending reboot registry handles not disposed | using declarations |
+| R33 | Security Center WMI collection not disposed | using collection |
+| R34 | Routing to a subpage of the current composite tab reconstructed the entire composite | reuse active composite and select existing subpage |
+| R35 | Composite cache retained detached live views that could have disposed their resources on unload | retain only current page, reconstruct on genuine page change |
+| R36 | Tab fade animation retained a completed animation clock, including across profile changes | remove prior clock and use FillBehavior.Stop |
+
+This is a targeted lifecycle change, not complete lazy construction: the selected composite page still builds original views before filtering sections. Losing detached view-local state is a possible regression; preserve user selection/input where needed in subsequent UI work. Health snapshots are not long-running historical records; WMI calls that hang and partial/unknown individual checks are not yet fully handled.
+
+## UMP04 — first unified maintenance batch (12 additional findings)
+
+| ID | Finding | Source mitigation |
+|---|---|---|
+| M01 | Health Check, Home Fix All and tray Quick Clean selected categories independently | shared SystemMaintenanceService plan |
+| M02 | Browser cache implicitly included in Health Check storage consent despite optional category | separate unchecked browser card |
+| M03 | SystemView Free RAM bypassed pressure-gated MemoryCleanerService | call same service as Boost |
+| M04 | Full Health Check lacked RAM condition/selection within the unified workflow | available-memory measurement and optional pressure-gated RAM card |
+| M05 | Concurrent QuickClean requests could mutate same paths simultaneously | common semaphore for QuickCleanService entry points |
+| M06 | Duplicate category IDs could be applied repeatedly | copy and deduplicate plan |
+| M07 | Artificial 650ms per-stage delay | remove minimum delay, retain actual stage completion |
+| M08 | Failed overall health score calculation rendered 100/100 | unavailable label and report rather than invented score |
+| M09 | Registry/tweak review route closed dialog twice | single close after navigation |
+| M10 | Scan/apply lifecycle did not guard overlapping invocations or closing during mutation | scan/apply flags, block closing during apply, stop later stage presentation after close |
+| M11 | Home Fix All left a busy status entry unmatched | existing per-operation scopes in Home and Health Check |
+| M12 | Result headline ignored health-score issues | include actual score findings and memory pressure |
+
+Shared plan automatic allowlist: UserTemp, ThumbnailCache only when recommended and nonzero. BrowserCache requires explicit opt-in; recycle bin, Windows servicing caches, registry, personal tweaks and startup are outside this plan. Existing dedicated tools remain separate. The existing scheduled maintenance and manual per-browser cleanup are not yet under the same operation gate; no claim of global coordination. Preview sizes still represent scanned logical bytes, not precisely reclaimable bytes; per-file manifest and per-stage cancellation/partial-failure semantics remain pending. Individual failed health checks still need explicit Unknown status, not merely aggregate exception handling. Seven new fixture cases (3 cache freshness, 4 plan selections); 64 cumulative authored cases. Latest previously verified stages: 442 desktop +42 migration. Run 45993105064 was pending and returned no jobs during this pass. New commits through 2be7990482b15ae346ce7f2777fb93d8112e4107 need compile/tests. New labels currently Greek/English fallback. No merge or release.
