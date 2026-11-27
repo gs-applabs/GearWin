@@ -122,6 +122,9 @@ namespace OptimizerWpf.Services
         private static readonly List<double> Samples = new();
         private static ulong _lastIdle, _lastKernel, _lastUser;
         private static int _powerTicks;
+        private static readonly object CpuGate = new();
+        private static long _cpuAt;
+        private static double _cpuValue = -1;
 
         public static void StartGovernor()
         {
@@ -159,9 +162,21 @@ namespace OptimizerWpf.Services
             _timer.Start();
         }
 
-        public static void StopGovernor() { _timer?.Stop(); _timer = null; Samples.Clear(); _lastIdle = _lastKernel = _lastUser = 0; _powerTicks = 0; }
+        public static void StopGovernor() { _timer?.Stop(); _timer = null; Samples.Clear(); lock (CpuGate) { _lastIdle = _lastKernel = _lastUser = 0; _cpuAt = 0; _cpuValue = -1; } _powerTicks = 0; }
 
-        private static double SampleCpu()
+        internal static double SampleCpu()
+        {
+            lock (CpuGate)
+            {
+                var now = Environment.TickCount64;
+                if (_cpuAt != 0 && now - _cpuAt < 750) return _cpuValue;
+                _cpuValue = ReadCpu();
+                _cpuAt = now;
+                return _cpuValue;
+            }
+        }
+
+        private static double ReadCpu()
         {
             try
             {
@@ -172,7 +187,7 @@ namespace OptimizerWpf.Services
                 _lastIdle = i; _lastKernel = k; _lastUser = u;
                 if (first) return -1;
                 var total = dk + du;
-                return total == 0 ? 0 : (total - di) * 100.0 / total;
+                return total == 0 || di > total ? -1 : (total - di) * 100.0 / total;
             }
             catch { return -1; }
         }
