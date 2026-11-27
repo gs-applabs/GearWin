@@ -198,4 +198,19 @@ public class MaintenanceSafetyTests
     [InlineData(17179869184L, 1073741824L, true)]
     public void MemoryMaintenanceRequiresRealPressure(long total, long available, bool expected)
         => Assert.Equal(expected, MemoryCleanerService.NeedsMaintenance(new MemoryCleanerService.MemoryStats(total, available, 0, 0, 0)));
+
+    [Theory]
+    [InlineData(1.0, true, 2.0)]
+    [InlineData(4.0, true, 4.0)]
+    [InlineData(1.0, false, 8.0)]
+    [InlineData(4.0, false, 8.0)]
+    public void HomePollingRespectsVisibilityAndPerformanceFloor(double configured, bool active, double expected)
+        => Assert.Equal(expected, OptimizerWpf.Views.HomeView.PollSeconds(configured, active));
+
+    [Theory]
+    [InlineData(1000L, 0L, true)]
+    [InlineData(3999L, 1000L, false)]
+    [InlineData(4000L, 1000L, true)]
+    public void SensorRefreshIsCoalesced(long now, long last, bool expected)
+        => Assert.Equal(expected, SensorService.RefreshDue(now, last));
 }
