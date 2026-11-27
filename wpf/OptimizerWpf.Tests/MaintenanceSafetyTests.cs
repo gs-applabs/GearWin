@@ -69,4 +69,70 @@ public class MaintenanceSafetyTests
         }
         finally { System.IO.Directory.Delete(temp, true); }
     }
+
+    [Fact]
+    public void CleanupPreservesRecentAndLockedFilesAndCountsRemovedBytes()
+    {
+        var root = System.IO.Path.Combine(System.IO.Path.GetTempPath(), System.Guid.NewGuid().ToString("N"));
+        System.IO.Directory.CreateDirectory(root);
+        try
+        {
+            var old = System.IO.Path.Combine(root, "old.txt");
+            var recent = System.IO.Path.Combine(root, "recent.txt");
+            var locked = System.IO.Path.Combine(root, "locked.txt");
+            System.IO.File.WriteAllBytes(old, new byte[128]);
+            System.IO.File.WriteAllBytes(recent, new byte[256]);
+            System.IO.File.WriteAllBytes(locked, new byte[512]);
+            System.IO.File.SetLastWriteTimeUtc(old, System.DateTime.UtcNow.AddDays(-10));
+            System.IO.File.SetLastWriteTimeUtc(locked, System.DateTime.UtcNow.AddDays(-10));
+            using (var hold = System.IO.File.Open(locked, System.IO.FileMode.Open, System.IO.FileAccess.ReadWrite, System.IO.FileShare.None))
+                Assert.Equal(128L, MaintenancePaths.CleanFiles(root, System.TimeSpan.FromDays(7)));
+            Assert.False(System.IO.File.Exists(old));
+            Assert.True(System.IO.File.Exists(recent));
+            Assert.True(System.IO.File.Exists(locked));
+        }
+        finally { System.IO.Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public async System.Threading.Tasks.Task VaultRoundTripPreservesOriginalAndRefusesOverwrite()
+    {
+        var root = System.IO.Path.Combine(System.IO.Path.GetTempPath(), System.Guid.NewGuid().ToString("N"));
+        System.IO.Directory.CreateDirectory(root);
+        try
+        {
+            var source = System.IO.Path.Combine(root, "source");
+            System.IO.Directory.CreateDirectory(source);
+            System.IO.Directory.CreateDirectory(System.IO.Path.Combine(source, "empty"));
+            var file = System.IO.Path.Combine(source, "file.txt");
+            System.IO.File.WriteAllText(file, "original");
+            await FolderLockService.LockFolderAsync(source, "fixture-password");
+            var vault = source + FolderLockService.VaultExtension;
+            Assert.True(System.IO.File.Exists(vault));
+            Assert.Equal("original", System.IO.File.ReadAllText(file));
+            await Assert.ThrowsAsync<System.IO.IOException>(() => FolderLockService.UnlockFolderAsync(vault, "fixture-password", source));
+            var restore = System.IO.Path.Combine(root, "restored");
+            await FolderLockService.UnlockFolderAsync(vault, "fixture-password", restore);
+            Assert.Equal("original", System.IO.File.ReadAllText(System.IO.Path.Combine(restore, "file.txt")));
+            Assert.True(System.IO.Directory.Exists(System.IO.Path.Combine(restore, "empty")));
+            Assert.True(System.IO.File.Exists(vault));
+        }
+        finally { System.IO.Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public async System.Threading.Tasks.Task MalformedVaultDoesNotCreateRestoreDestination()
+    {
+        var root = System.IO.Path.Combine(System.IO.Path.GetTempPath(), System.Guid.NewGuid().ToString("N"));
+        System.IO.Directory.CreateDirectory(root);
+        try
+        {
+            var vault = System.IO.Path.Combine(root, "bad.vault");
+            System.IO.File.WriteAllBytes(vault, new byte[3]);
+            var restore = System.IO.Path.Combine(root, "restore");
+            await Assert.ThrowsAsync<System.IO.InvalidDataException>(() => FolderLockService.UnlockFolderAsync(vault, "fixture-password", restore));
+            Assert.False(System.IO.Directory.Exists(restore));
+        }
+        finally { System.IO.Directory.Delete(root, true); }
+    }
 }
