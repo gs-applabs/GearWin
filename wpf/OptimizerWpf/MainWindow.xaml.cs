@@ -712,6 +712,12 @@ public partial class MainWindow : Window
         _currentTabTag = tag;
         var subPage = _pendingSubPage;
         _pendingSubPage = 0;
+        if (ContentHost.Content is CompositeTabView current && current.TabTag == tag)
+        {
+            current.SelectPage(subPage);
+            SyncRailSelection();
+            return;
+        }
         // Only the Home/Optimization tabs are fully ported so far - every other tab shows a labeled
         // placeholder until it's ported in a later session (see the staged migration plan).
         // 6.5.0: οι καρτέλες που ανασυντέθηκαν (βλ. TabLayout.cs) χτίζονται από κάρτες υπαρχουσών προβολών, με υπο-σελίδες (chips).
@@ -725,10 +731,12 @@ public partial class MainWindow : Window
 
         // ΝΕΟ (roadmap: "ομαλή μετάβαση καρτελών") - απαλό fade-in αντί για ακαριαία εναλλαγή
         // περιεχομένου· μικρή διάρκεια (180ms) ώστε να μην καθυστερεί αισθητά την πλοήγηση.
+        ContentHost.BeginAnimation(OpacityProperty, null);
         if (Services.PerformanceProfileService.Current.TabFadeEnabled) {
         ContentHost.Opacity = 0;
         ContentHost.BeginAnimation(OpacityProperty, new System.Windows.Media.Animation.DoubleAnimation(0, 1,
-            new Duration(TimeSpan.FromMilliseconds(180))) { EasingFunction = new System.Windows.Media.Animation.QuadraticEase() });
+            new Duration(TimeSpan.FromMilliseconds(180))) { EasingFunction = new System.Windows.Media.Animation.QuadraticEase(), FillBehavior = FillBehavior.Stop });
+        ContentHost.Opacity = 1;
         } else ContentHost.Opacity = 1;
         SyncRailSelection();
         AdaptTabStripToWidth();
