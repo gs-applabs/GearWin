@@ -20,7 +20,7 @@ namespace OptimizerWpf.Services
 
         public static async Task<bool> SetEnabledAsync(bool enabled)
         {
-            if (!enabled) { await TaskSchedulerService.DeleteAsync(TaskName); return true; }
+            if (!enabled) return await TaskSchedulerService.DeleteAsync(TaskName);
             var exePath = Environment.ProcessPath ?? "";
             if (string.IsNullOrEmpty(exePath)) return false;
             // Η εργασία τρέχει με HighestAvailable χωρίς UAC - ίδια προϋπόθεση ασφαλείας με την εκκίνηση με τα Windows (βλ. SecureStorage).
@@ -32,6 +32,7 @@ namespace OptimizerWpf.Services
         // Καλείται ΜΟΝΟ από το App.xaml.cs με --auto-updates (headless).
         public static async Task RunAsync()
         {
+            if (!AppSettingsService.Current.NightlyUpdatesEnabled) return;
             try
             {
                 var (started, exitCode, output) = await WingetService.UpgradeAllSilentAsync();
@@ -45,12 +46,14 @@ namespace OptimizerWpf.Services
             {
                 try
                 {
-                    var scan = await WindowsUpdateService.ScanDetailedAsync();
+                    var scan = await WindowsUpdateService.ScanCoordinatedAsync(CorePriority.Background);
                     if (!scan.Success) { Append($"=== {DateTime.Now:yyyy-MM-dd HH:mm} windows update scan failed: {scan.Error}"); return; }
                     foreach (var u in scan.Updates.Where(x => !x.IsOptional))
                     {
-                        var (ok, reboot, error) = await WindowsUpdateService.InstallAsync(u.RowId);
+                        if (!AppSettingsService.Current.NightlyUpdatesEnabled || !AppSettingsService.Current.NightlyWindowsUpdates) break;
+                        var (ok, reboot, error) = await WindowsUpdateService.InstallCoordinatedAsync(u.RowId, CorePriority.Background);
                         Append($"=== {DateTime.Now:yyyy-MM-dd HH:mm} windows update '{u.Title}' ok={ok} restartNeeded={reboot}{(ok ? "" : " error=" + error)}");
+                        if (reboot || !ok) break;
                     }
                 }
                 catch (Exception ex) { Append($"=== {DateTime.Now:yyyy-MM-dd HH:mm} windows update error: {ex.Message}"); }
