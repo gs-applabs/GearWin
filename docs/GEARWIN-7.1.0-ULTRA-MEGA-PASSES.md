@@ -7,13 +7,13 @@ Baseline: `0d36ba06ffd5b1f90676d546d8abdfafe1062fbf`; review branch `release/7.1
 | Pass | Distinct recorded findings | Source mitigations | Runtime-certified fixes | Status |
 |---|---:|---:|---:|---|
 | UMP01 source audit | 3 test/measurement coverage gaps | 1 infrastructure mitigation (measurement workflow added) | 0 | open |
-| UMP02 safety, batches 1–7 | 59 safety/correctness findings | 59 addressed at least in part in source | 0 operation-level certifications | open |
-| UMP03 core/resources, batches 1–4 | 39 findings | 39 addressed at least in part in source | 0 | open |
+| UMP02 safety, batches 1–8 | 69 safety/correctness findings | 69 addressed at least in part in source | 0 operation-level certifications | open |
+| UMP03 core/resources, batches 1–5 | 40 findings | 40 addressed at least in part in source | 0 | open |
 | UMP04 unified maintenance, batches 1–2 | 24 findings | 24 addressed at least in part in source | 0 | open |
-| UMP05 central operation core, batches 1–3 | 18 findings | 18 addressed at least in part in source | 0 | open |
+| UMP05 central operation core, batches 1–4 | 24 findings | 24 addressed at least in part in source | 0 | open |
 | UMP06 early status fix | 2 findings | 2 addressed at least in part in source | 0 | open |
 | UMP07 early artwork fix | 8 distinct icon/UI findings | 8 addressed at least in part in source | 0 visual certifications | open |
-| Total | 153 | 151 at least partly addressed | 0 operation-level certifications | open |
+| Total | 170 | 168 at least partly addressed | 0 operation-level certifications | open |
 
 The earlier manual review also identified deferred issues in profiles, resources, backups and navigation. These will be assigned stable IDs in their owning passes; do not inflate totals by counting them again. Full tracked-source lexical inventory completed; manual semantic review remains pending. The 7.0.0 baseline Windows build reported 391 desktop + 42 migration tests on 2026-11-27; the Linux job logs available are from 2026-11-23 (5 synthetic clone tests). Six CI jobs reported success in the run; an opt-in test can report pass without doing clicks. Baseline success is not a new branch test result.
 
@@ -332,3 +332,40 @@ Run 45997561301: 477 desktop and 42 migration tests passed (519 total), includin
 | S59 | Remove delay ignored task deletion failure | refuse restoration on failed deletion; full transactional rollback still pending |
 
 Eleven newly authored test cases (epoch, four conflict pairs, two inventory tests, four probe cases); cumulative 96, 85 included in prior verified stages. Latest source not yet compiled. English header parsing fails closed on localized or truncated winget output, so unknown rows may require explicit one-package verification; registry positive evidence uses exact title and existing icon path, not authoritative package identity. A two-minute cache can lag external changes; refresh remains available. No claim of measured 96.6% CPU reduction: 29→1 is the initial CLI invocation count only. Direct hosts edits, tweak changes, detached Defender scan, alternate file diagnostics, startup-delay rollback/task identity collision, cross-process software admission and full UI state synchronization remain open. No merge or release.
+
+## Intermediate verification
+
+Run 45998332411: 488 desktop + 42 migration tests passed (530 total), including 11 additional inventory/coordinator fixtures. 31/31 icon assets validated. Installer step canceled by subsequent commits; no new process samples. Last complete installer/measurement run remains 45993640140.
+
+## UMP05 — fourth GearWinCore integration batch (6 new findings)
+
+| ID | Finding | Source mitigation |
+|---|---|---|
+| C19 | Game-save backup bypassed core Backup domain | existing verified ZIP service scheduled through GearWinCore |
+| C20 | Vault create/restore and shredder competed independently with backup/cleanup | FileProtection heavy-operation domain |
+| C21 | Transfer preflight and migration app export bypassed shared admission | TransferScan plus Backup lease for export commit |
+| C22 | Main and pinned tweak switches/profile imports/undo applied system changes outside core | common verified per-row TweakChange path, explicit state detection |
+| C23 | Deferred tweak state detection bypassed resource scheduling | Diagnostics lease for existing batched detection |
+| C24 | Heavy work in headless scheduled GearWin process did not share GUI coordinator | per-user Global kernel mutex with thread-correct acquisition/release; local policy retained |
+
+CoreProcessLease: one kernel mutex per SID across sessions; no idle thread, new timer, persistent file or polling. Async ownership requires one temporary owner thread while a heavy job waits/runs. Optional auto-gaming uses zero-wait synchronous acquisition/disposal on dispatcher thread. Cross-process wait bounded to 30 seconds; caller sees timeout rather than force-killing a backup/repair. Local lease acquired first, process lease second, existing cleanup session mutex last. No recursive acquisition permitted. New releases cover participating same-user heavy operations only; read-only scans, other user accounts, previous GearWin versions, offline Linux, external installers and unconnected paths are outside this policy. Default kernel object ACL and cross-session/elevation behavior need VM verification. The process mutex does not terminate external commands orphaned by abrupt GUI death. Active leases are not forcibly revoked on shutdown; graceful exit needs dedicated validation.
+
+## UMP02 — eighth safety batch (10 new findings)
+
+| ID | Finding | Source mitigation |
+|---|---|---|
+| S60 | Game-save backup Directory.Exists filter could silently skip inaccessible roots | distinguish missing roots from unreadable roots; abort other errors |
+| S61 | Game-save backup destination/source ancestors were not checked for redirection | validate existing ancestors and target; explicitly support fixed/removable local destinations |
+| S62 | Transfer preflight only checked final root path, not redirected ancestors | inspect ancestor chain and recheck traversal directories |
+| S63 | Shared filesystem predicate accepted relative paths after normalization and root containment appended duplicate separator | require absolute paths and normalize volume-root prefix |
+| S64 | Profile imports continued after failed restore-point creation | abort on RestoreGuardResult.Failed, retain explicit Disabled preference |
+| S65 | Journal undo ignored subsequent change in tweak state | require current detected state to match recorded state, verify resulting state |
+| S66 | Profile import selected changes based on potentially stale UI toggle | re-read current state within coordinated mutation |
+| S67 | Migration JSON export could replace destination with partial content | same-directory unique staged atomic replacement |
+| S68 | Main and pinned tweak UI reported success without verifying postcondition | readback; unknown outcome throws instead of journaling success |
+| S69 | Vault compressed plaintext MemoryStream backing buffer retained after copy | zero used segment after successful compression; exception paths and other managed buffers still require audit |
+
+## UMP03 — fifth resource batch (1 new finding)
+R40: per-file large buffer allocation during game-save/vault compression produced unnecessary allocations/GC pressure — reuse one buffer per archive. No measured impact yet.
+
+Six additional regression cases (3 conflict pairs, mutex contention/release, cancellation, separate Windows child process exit). 102 cumulative authored cases, 96 included in previous successful stages. Current changes through 1cf160a923364afb3a898b54df0207a08f28ca90 need fresh compile/tests. New tweak pathway intentionally refuses unknown state; existing simple tweaks with localized powercfg detection and asymmetric Off behavior need compatibility review. Legacy direct tweaks (visual presets, custom context menus, low resource bundle, reset on uninstall, gaming tweaks and hosts), direct restore-point calls, automatic profile stop, native driver detached operations, offline clone kit export and actual offline clone remain outside full coordination. Precise typed durable tweak snapshots, rollback on partial mutation, original vault lock semantics, file-shred TOCTOU and backup consistency remain open. No user-facing feature added, no merge or release.
