@@ -22,6 +22,8 @@ namespace OptimizerWpf.Services
     {
         private static DispatcherTimer? _timer;
         private static bool _checkInFlight;
+        private static readonly System.Threading.SemaphoreSlim ScanGate = new(1, 1);
+        private static readonly object LogGate = new();
 
         // ΔΙΟΡΘΩΣΗ (ρητό αίτημα χρήστη, επαναλαμβανόμενο: "δεν βλέπω αυτόματο έλεγχο ενημερώσεων/
         // balloon tip") - μέχρι τώρα ΟΛΗ αυτή η ροή ήταν 100% αόρατη εκτός αν άλλαζε ο αριθμός
@@ -36,11 +38,14 @@ namespace OptimizerWpf.Services
         {
             try
             {
+                lock (LogGate)
+                {
                 Directory.CreateDirectory(Path.GetDirectoryName(LogPath)!);
                 // Όριο μεγέθους: το αρχείο διαγνωστικών δεν πρέπει να μεγαλώνει επ' αόριστον (έλεγχος ανά ώρα, μήνες χρήσης).
                 if (File.Exists(LogPath) && new FileInfo(LogPath).Length > 256 * 1024)
-                    File.WriteAllLines(LogPath, File.ReadLines(LogPath).Skip(File.ReadLines(LogPath).Count() / 2));
+                    File.Move(LogPath, LogPath + ".previous", overwrite: true);
                 File.AppendAllText(LogPath, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {message}{Environment.NewLine}");
+                }
             }
             catch { /* η ίδια η καταγραφή δεν πρέπει ποτέ να ρίξει τον έλεγχο ενημερώσεων */ }
         }
@@ -111,9 +116,17 @@ namespace OptimizerWpf.Services
         // χρήστης να μπορεί να ζητήσει άμεσο έλεγχο χωρίς να περιμένει το επόμενο περιοδικό τικ.
         public static async Task RunCheckAsync(bool announce = false)
         {
+            // Periodic, startup and manual scans share one gate. A duplicate request
+            // joins the existing cycle by returning without launching extra processes.
+            if (!await ScanGate.WaitAsync(0)) return;
+            try { await RunCheckCoreAsync(announce); }
+            finally { ScanGate.Release(); }
+        }
+
+        private static async Task RunCheckCoreAsync(bool announce)
+        {
             Log($"RunCheckAsync: starting (announce={announce})");
             AppSettingsService.Current.LastUpdateCheckAt = DateTime.Now;
-            AppSettingsService.Save();
 
             try
             {
