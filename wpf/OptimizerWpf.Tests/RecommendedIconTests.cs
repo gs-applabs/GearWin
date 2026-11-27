@@ -59,4 +59,22 @@ public class RecommendedIconTests
         Assert.False(LogoCacheService.HasLogoSource("Unknown.Product"));
         Assert.Null(await LogoCacheService.GetLogoAsync("Unknown.Product"));
     }
+
+    [Theory]
+    [InlineData("Google Chrome", "Google Chrome", true)]
+    [InlineData("Google Chrome Remote Desktop", "Google Chrome", false)]
+    [InlineData("Opera GX", "Opera", false)]
+    [InlineData("Mozilla Firefox ESR", "Mozilla Firefox", false)]
+    [InlineData("Mozilla Firefox (x64 en-US)", "Mozilla Firefox", true)]
+    [InlineData("VLC media player 3.0.21", "VLC", true)]
+    public void InstalledTitleCannotSelectAnotherProduct(string display, string title, bool expected)
+        => Assert.Equal(expected, AppIconService.MatchesInstalledTitle(display, title));
+
+    [Theory]
+    [InlineData("Google Chrome   Google.Chrome   1.0   winget", "Google.Chrome", true)]
+    [InlineData("Chrome Remote Desktop Google.ChromeRemoteDesktopHost 1.0 winget", "Google.Chrome", false)]
+    [InlineData("Δεν βρέθηκε εγκατεστημένο πακέτο", "Google.Chrome", false)]
+    [InlineData("Visual C++ Microsoft.VCRedist.2015+.x64 14.51 winget", "Microsoft.VCRedist.2015+.x64", true)]
+    public void InstalledPackageResultRequiresExactId(string output, string id, bool expected)
+        => Assert.Equal(expected, BloatwareService.OutputContainsPackageId(output, id));
 }
