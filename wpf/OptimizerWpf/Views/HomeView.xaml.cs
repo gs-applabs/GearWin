@@ -91,6 +91,7 @@ namespace OptimizerWpf.Views
                     _refreshTimer.Stop();
                     _diskRefreshTimer.Stop();
                     DisposeCounters();
+                    SetLiveSubscriptions(false);
                     return;
                 }
                 if (!_initializedVisible)
@@ -98,6 +99,7 @@ namespace OptimizerWpf.Views
                     _initializedVisible = true;
                     InitializeVisibleView();
                 }
+                SetLiveSubscriptions(true);
                 _gpuSubscription ??= SharedTelemetryService.SubscribeGpu();
                 _refreshTimer.Interval = TimeSpan.FromSeconds(PollSeconds(
                     PerformanceProfileService.Current.HomeRefreshSeconds, parentWindow.IsActive));
@@ -157,9 +159,7 @@ namespace OptimizerWpf.Views
                 _refreshTimer.Stop();
                 _diskRefreshTimer.Stop();
                 DisposeCounters();
-                ActionLogService.Changed -= RefreshRecentActivity;
-                UpdatesHubService.Changed -= RefreshUpdatesSummary;
-                ImpactTrackingService.Changed -= RenderHealthIssues;
+                SetLiveSubscriptions(false);
             };
         }
 
@@ -173,13 +173,32 @@ namespace OptimizerWpf.Views
             CheckHealthCheckReminder();
             _ = LoadGpuNameAsync();
             RefreshRecentActivity();
-            ActionLogService.Changed += RefreshRecentActivity;
             LoadPinnedTweaks();
             RefreshUpdatesSummary();
-            UpdatesHubService.Changed += RefreshUpdatesSummary;
             _ = LoadSecuritySummaryAsync();
             RenderHealthIssues();
-            ImpactTrackingService.Changed += RenderHealthIssues;
+        }
+
+        private bool _liveSubscribed;
+        private void SetLiveSubscriptions(bool enabled)
+        {
+            if (_liveSubscribed == enabled) return;
+            _liveSubscribed = enabled;
+            if (enabled)
+            {
+                ActionLogService.Changed += RefreshRecentActivity;
+                UpdatesHubService.Changed += RefreshUpdatesSummary;
+                ImpactTrackingService.Changed += RenderHealthIssues;
+                RefreshRecentActivity();
+                RefreshUpdatesSummary();
+                RenderHealthIssues();
+            }
+            else
+            {
+                ActionLogService.Changed -= RefreshRecentActivity;
+                UpdatesHubService.Changed -= RefreshUpdatesSummary;
+                ImpactTrackingService.Changed -= RenderHealthIssues;
+            }
         }
 
         private void RefreshUpdatesSummary()
