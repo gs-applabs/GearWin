@@ -137,7 +137,7 @@ namespace OptimizerWpf.Services
             var result = new System.Collections.Generic.List<ProcessNetworkUsage>();
             var now = Environment.TickCount64;
             var previous = Interlocked.Exchange(ref _sampleAt, now);
-            windowSeconds = (now - previous) / 1000.0;
+            windowSeconds = ElapsedWindowSeconds(now, previous);
             if (previous == 0 || windowSeconds <= 0) return result;
 
             foreach (var pid in Accum.Keys.ToArray())
@@ -152,6 +152,8 @@ namespace OptimizerWpf.Services
 
             return result.OrderByDescending(r => r.DownloadKBps + r.UploadKBps).ToList();
         }
+
+        internal static double ElapsedWindowSeconds(long now, long previous) => previous == 0 || now <= previous ? 0 : (now - previous) / 1000.0;
 
         // Καθαρή, testable μαθηματική λογική - ξεχωρισμένη από το I/O (process lookup) παραπάνω.
         internal static double BytesToKBps(long bytes, double windowSeconds) =>
