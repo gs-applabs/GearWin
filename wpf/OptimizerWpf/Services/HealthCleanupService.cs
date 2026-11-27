@@ -616,7 +616,7 @@ Write-Output $brokenCount
                     {
                         try { await process.StandardInput.WriteAsync(stdin); }
                         catch (IOException) { /* child already closed its input */ }
-                        finally { process.StandardInput.Close(); }
+                        finally { try { process.StandardInput.Close(); } catch (IOException) { } }
                     }
                     // Keep the repair lease until the actual transaction process exits.
                     await process.WaitForExitAsync();
@@ -675,7 +675,7 @@ Write-Output $brokenCount
             }
             finally
             {
-                if (scriptFile != null) { try { File.Delete(scriptFile); } catch { } }
+                if (scriptFile != null) { try { File.Delete(scriptFile); Directory.Delete(Path.GetDirectoryName(scriptFile)!); } catch { } }
             }
         }
     }
