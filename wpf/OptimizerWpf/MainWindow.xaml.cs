@@ -117,12 +117,25 @@ public partial class MainWindow : Window
         // τίτλου έχει ΔΙΚΟ ΤΟΥ, ανεξάρτητο DoubleAnimation με RepeatBehavior=Forever (βλ.
         // ThreeGearIcon.StartSpin) - ίδια λογική εδώ, ίδιος λόγος (δεν έχει νόημα να περιστρέφεται
         // κάτι που δεν είναι καν ορατό).
-        Deactivated += (_, _) => TitleGear.StopSpin();
-        Activated += (_, _) => TitleGear.StartSpin();
-        StateChanged += (_, _) =>
+        void RefreshMotion()
         {
-            if (WindowState == WindowState.Minimized) TitleGear.StopSpin();
-            else if (IsActive) TitleGear.StartSpin();
+            if (CanAnimateChrome()) TitleGear.StartSpin(); else TitleGear.StopSpin();
+            RefreshStatusMotion();
+            RefreshHealthMotion();
+        }
+        Deactivated += (_, _) => RefreshMotion();
+        Activated += (_, _) => RefreshMotion();
+        StateChanged += (_, _) => RefreshMotion();
+        IsVisibleChanged += (_, _) => RefreshMotion();
+        Action profileChanged = () => Dispatcher.BeginInvoke(new Action(RefreshMotion));
+        PerformanceProfileService.Changed += profileChanged;
+        Closed += (_, _) =>
+        {
+            PerformanceProfileService.Changed -= profileChanged;
+            _toastTimer?.Stop();
+            TitleGear.StopSpin();
+            _spinnerStoryboard.Stop(this);
+            ((Storyboard)Resources["PulseAttentionDotStoryboard"]).Stop(this);
         };
 
         FitWidthToTabs();
@@ -225,9 +238,7 @@ public partial class MainWindow : Window
             var result = await System.Threading.Tasks.Task.Run(Services.HealthScoreService.Compute);
             var needsAttention = result.Score < 70;
             DotHealthAttention.Visibility = needsAttention ? Visibility.Visible : Visibility.Collapsed;
-            var pulse = (System.Windows.Media.Animation.Storyboard)Resources["PulseAttentionDotStoryboard"];
-            if (needsAttention) pulse.Begin(this, true);
-            else pulse.Stop(this);
+            RefreshHealthMotion();
         }
         catch { }
     }
@@ -517,22 +528,36 @@ public partial class MainWindow : Window
     // επουλώνεται μόλις γίνει η επόμενη πραγματική ενέργεια, ίδιο πνεύμα με άλλες μικρές μεταβατικές
     // περιπτώσεις σε αυτή την εφαρμογή.
     private bool _statusIsIdle = true;
+    private bool _spinnerRunning;
+    private bool _healthPulseRunning;
+
+    private bool CanAnimateChrome() => IsVisible && IsActive && WindowState != WindowState.Minimized && PerformanceProfileService.Current.AnimationsEnabled;
+
+    private void RefreshStatusMotion()
+    {
+        bool animate = !_statusIsIdle && CanAnimateChrome();
+        if (animate == _spinnerRunning) return;
+        _spinnerRunning = animate;
+        if (animate) _spinnerStoryboard.Begin(this, true);
+        else _spinnerStoryboard.Stop(this);
+    }
+
+    private void RefreshHealthMotion()
+    {
+        bool animate = DotHealthAttention.Visibility == Visibility.Visible && CanAnimateChrome();
+        if (animate == _healthPulseRunning) return;
+        _healthPulseRunning = animate;
+        var pulse = (Storyboard)Resources["PulseAttentionDotStoryboard"];
+        if (animate) pulse.Begin(this, true); else pulse.Stop(this);
+    }
 
     private void OnStatusChanged(string message, bool busy)
     {
         if (!Dispatcher.CheckAccess()) { Dispatcher.BeginInvoke(() => OnStatusChanged(message, busy)); return; }
         _statusIsIdle = !busy;
         TxtStatus.Text = $"{LanguageService.T("StatusPrefix")}{message}";
-        if (busy)
-        {
-            ActivitySpinner.Visibility = Visibility.Visible;
-            _spinnerStoryboard.Begin(this, true);
-        }
-        else
-        {
-            _spinnerStoryboard.Stop(this);
-            ActivitySpinner.Visibility = Visibility.Collapsed;
-        }
+        ActivitySpinner.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
+        RefreshStatusMotion();
     }
 
     // Ctrl+1..6 (εναλλαγή καρτέλας) + Ctrl+M (εμφάνιση/απόκρυψη κλασικού μενού) - ρητό αίτημα
