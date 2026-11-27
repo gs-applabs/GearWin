@@ -103,6 +103,8 @@
          ApplicationIcon παραπάνω για το ίδιο το exe/taskbar. -->
     <PackageReference Include="WPF-UI" Version="4.3.0" />
     <Resource Include="AppIcon.ico" />
+    <EmbeddedResource Include="Assets\recommended-icons.json" LogicalName="recommended-icons.json" />
+    <EmbeddedResource Include="Assets\recommended-icons\*.png" LogicalName="recommended-icon.%(Filename)%(Extension)" />
     <!-- 6.6.0: εικονίδια της σουίτας για το SuiteShowcaseWindow + ενσωματωμένο αντίγραφο του καταλόγου (fallback όταν δεν υπάρχει δίκτυο). -->
     <Resource Include="Assets\suite\*.ico" />
     <EmbeddedResource Include="Assets\suite-apps.json" LogicalName="suite-apps.json" />
