@@ -6,6 +6,39 @@
 
 **Βάση προγραμματισμού:** branch `release/7.1.0-ultra`, draft PR #6, head πριν από την αναθεώρηση `8962ad3808d489a4748631364b6485d59353aa10`, base `80ca071092c2613a489b5160cd709d36b9d444b0`. Το αρχικό RC 7.0.0 είναι `0d36ba06ffd5b1f90676d546d8abdfafe1062fbf`. Ο [σωρευτικός κατάλογος ευρημάτων](docs/GEARWIN-7.1.0-ULTRA-MEGA-PASSES.md) διατηρεί τα σταθερά IDs A/S/R/M/C/N/I και τις αποδείξεις των προηγούμενων περασμάτων. Δεν επαναριθμούνται και δεν καταμετρώνται διπλά.
 
+### Αναδρομικός έλεγχος απαιτήσεων 2026-11-27 — προτεραιότητα P0.R (πριν από νέα λειτουργικά batches)
+
+Audit snapshot: candidate `ebc2ec2e8788eddcb0f94af2a08e60217a1cb8c1` vs master `c025e12d3e4cc8d3dc2be63d27f30b0aa8f34132`. GitHub compare reports **diverged**: 22 commits reachable from master only, 332 candidate only. Tree comparison: 49 master-only paths (including screenshots and generated Python bytecode), 41 candidate-only paths, 98 common paths with different blobs. Counts describe Git state, not missing features. Do NOT reset, overwrite candidate files wholesale, or blindly merge. Reconcile intent and tests per file, preserve candidate safety fixes; avoid tracking __pycache__ or other generated files. Verify a combined SHA before release. See [comparison](https://github.com/gs-applabs/GearWin/compare/ebc2ec2e8788eddcb0f94af2a08e60217a1cb8c1...c025e12d3e4cc8d3dc2be63d27f30b0aa8f34132).
+
+| ID | Recovered requirement / verified gap | Priority / status |
+|---|---|---|
+| RQ01 | .NET 11 migration (master 744c2e6); candidate still net10.0-windows, SDK 10 and no global.json. Align desktop, migration, tests, CI and installer; verify official SDK and build on integrated head. | P0.R BLOCKING |
+| RQ02 | Opsis.UI 6 resources and smoke CI (master 980438a) absent on candidate; restore opt-in keys and document, then actual screen adoption with no conflicts or cross-app breakage. | P0.R sync / P3 adoption |
+| RQ03 | Partclone adapter, partition-aware copy/verify, fixture and disposable loop-device tests, GUI export/instructions; absent candidate adapter. Preserve latest exclusive raw-device safety; never claim full boot recovery. | P0.R / P2.05 |
+| RQ04 | Restore recovery-vm and linux-distros workflows, adapt branch triggers/SDK; Debian 12/13, Fedora, Arch, openSUSE, Alpine containers and Windows 2022/2025 coverage. Containers test userland, not full distro boot. | P0.R / P4 |
+| RQ05 | Catalog driver Microsoft signer check and DriverSignatureTests absent candidate (master 60d4843); reconcile with candidate download/privilege safeguards, verify actual trust chain and identity. | P0.R BLOCKING |
+| RQ06 | TransferPreflight drive-root overlap fix (master 5ff529b) absent candidate; verify ancestor/descendant, junction, device identity cases. | P0.R BLOCKING |
+| RQ07 | Backup before/after catalog new-version check and BackupCatalogTests present master, absent candidate. Combine with candidate volume GUID safeguards, localized/empty/error catalog tests; real restore separately. | P0.R BLOCKING |
+| RQ08 | Startup-impact brush Freeze() fix (master 10315a7), TabLayout/recovery export and Help/history language diffs need reconciliation. | P0.R / P3 |
+| RQ09 | Inno Setup dynamic dark mode (master c8dea01; candidate WizardStyle=modern), updater upgrade/self-update/uninstall, changed-files-only behavior and preservation of settings. | P0.R / P5 |
+| RQ10 | Product README bilingual gallery, screenshot workflow, FAQ, issue forms, showcase and support links on master; preserve relevant docs, no unnecessary generated duplication. | P3 / P5 |
+| RQ11 | Independent free Windows VM requested 2026-11-23: AppVeyor config on master/base not proof of run; adapt .NET 11/branch and verify actual accessible run, record BLOCKED if not accessible. | P4.03 |
+| RQ12 | Full Windows↔Linux migration (2026-11-20): inventory/plan/verify CLI exists; Store/MSIX/portable apps, files/settings/games/drivers and GUI workflows remain partial; no blanket compatibility guarantee for all distros. | P2.05 / P4 |
+| RQ13 | REQ-590-05 usage-based bloatware suggestions: old backlog NOT STARTED; no implementation identified in reviewed current source. Only opt-in local metadata, no background monitoring by default, no automatic uninstall. | P3 deferred feature |
+| RQ14 | REQ-590-06 per-game profile exists as explicit Save/Apply; AutoGamingMode checks configured executable but automatic per-game apply/restore not demonstrated. Resolve ownership with manual/automatic profiles; no unrelated registry edits. | P2.04 partial |
+| RQ15 | REQ-635-11/6.7.1 update manager: ignore list present, need functional verification of real install outcomes, progress/cancel/filters, Windows/Store/driver status, reboot and retries; no duplicate implementation. | P2.03 partial |
+| RQ16 | Health/Memory/Cleaning/Registry shared plan, protection of Opsis/PowerToys/user shortcuts, actual PC Manager/CCleaner-like presentation; verify specific exclusion and no destructive false positives. | P0/P2/P3 partial |
+| RQ17 | SSD/NVMe distinct icons and identity (2026-09-08), full sensor and driver provider coverage including Intel, HVCI-compatible sources; visual and actual hardware evidence needed. | P2.01/P3/P4 |
+| RQ18 | Actual UI click-through, 14 languages, RTL, skins, palettes, DPI, custom-chrome drag/resize/transparency, minimize/maximize/snap behavior (Windows 11 snap flyout known historical limitation), accessibility and navigation. | P3/P4 partial |
+| RQ19 | Historical 6.7.1: keep-alive pages versus demand-driven lifecycle, unified guides, status/diagnostics and source hygiene; audit present implementation, do not retain hidden active timers. | P1/P3 verify |
+| RQ20 | Final release package: current assembly/installer 7.0.0; synchronize target 7.1.0, splash/help/history 14 languages, Source ZIP, Inno installer ZIP, portable where required, consolidated Claude Code handoff, hashes and working download links. No release without gates. | P5 blocked |
+| RQ21 | Code signing postponed; only free, identity-preserving option if available, no paid certificate without user instruction. Not a reason to block all development. | P5 deferred |
+| RQ22 | Historical multimedia conversion requirement superseded by v6.7.0 user decision: Opsis Media Player Pro/Waveframe own conversion. Keep Games & Multimedia codec/device diagnostics and suite link, do not duplicate conversion/downloader. Remaining photo-specific requests only assess against suite scope. | EXCLUDED conversion / verify diagnostics |
+| RQ23 | 30-minute and sustained endurance, cold/warm startup, handles/threads/RAM/CPU, physical SSD wear vs process writes, actual source-to-target UEFI boot and BitLocker/recovery. Do not equate short VM baseline with these tests. | P4 mandatory |
+| RQ24 | Historical build script missing scripts/ai_build_agent.py / automation frequency from October cross-project audit: verify whether still present and applicable before changing; not confirmed on current candidate. | P1 verify |
+
+Latest confirmed Windows CI at audit: run 46070758350, 716 passed (674 desktop + 42 migration), installer and short measurements success. 328 authored .NET fixtures and 9 additional Python fixtures in subsequent cumulative record; no certification of newer candidate by that run. Use the cumulative pass log for exact test evidence, not the older numbers below. Audit based on accessible prior project context and repository history, not a guarantee of access to every past conversation. This audit changes documentation only; implementation/sync/verification are pending. P0.R is now first; new feature proposals deferred until existing release scope is integrated and G0 stable.
+
 ### Αποδεδειγμένη κατάσταση
 
 - 283 διακριτά ευρήματα, 281 πλήρως ή μερικώς αντιμετωπισμένα σε πηγαίο κώδικα. Όχι 281 πιστοποιημένες διορθώσεις.
