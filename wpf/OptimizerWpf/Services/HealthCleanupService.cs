@@ -195,7 +195,7 @@ namespace OptimizerWpf.Services
         internal static bool CanRestoreBackup(string path) =>
             string.Equals(Path.GetExtension(path), ".json", StringComparison.OrdinalIgnoreCase);
 
-        public static Task<bool> RestoreRegistryBackupAsync(string filePath) => Task.Run(() =>
+        public static Task<bool> RestoreRegistryBackupAsync(string filePath) => GearWinCore.RunAsync(CoreWork.Registry, () => Task.Run(() =>
         {
             lock (RegistryGate)
             {
@@ -217,10 +217,10 @@ namespace OptimizerWpf.Services
                 }
                 catch { return false; }
             }
-        });
+        }));
 
         public static Task<bool> DeleteFindingsAsync(IReadOnlyList<RegistryFinding> findings, string backupPath) =>
-            Task.Run(() =>
+            GearWinCore.RunAsync(CoreWork.Registry, () => Task.Run(() =>
             {
                 lock (RegistryGate)
                 {
@@ -263,7 +263,7 @@ namespace OptimizerWpf.Services
                     }
                     catch { return false; }
                 }
-            });
+            }));
 
         // Μόνο browsers που πραγματικά ανιχνεύτηκαν στο σύστημα (ο φάκελος User Data/Profiles τους
         // υπάρχει) εμφανίζονται - ίδια συμπεριφορά με το ps1's δυναμικό $browserCacheCatalog.
@@ -593,7 +593,7 @@ Write-Output $brokenCount
         // λεπτά (ειδικά DISM RestoreHealth), γι' αυτό Task.Run + καμία timeout εδώ (ο καλών code-behind
         // δείχνει StatusService.SetBusy όσο περιμένει).
         private static Task<(bool Success, string Output)> RunCommandCaptureAsync(string fileName, string arguments, string? stdin = null, System.Threading.CancellationToken ct = default) =>
-            Task.Run(() =>
+            GearWinCore.RunAsync(CoreWork.Repair, () => Task.Run(() =>
             {
                 try
                 {
@@ -624,7 +624,7 @@ Write-Output $brokenCount
                 {
                     return (false, $"{LanguageService.T("HealthSvc_ErrorPrefix")}{ex.Message}");
                 }
-            });
+            }), ct: ct);
 
         private static async Task<string> RunPowerShellScriptAsync(string script)
         {
