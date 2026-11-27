@@ -29,8 +29,20 @@ namespace OptimizerWpf.Services
 
         public static HealthResult Compute() => GetSnapshot(false);
         public static HealthResult ComputeFresh() => GetSnapshot(true);
-        internal static System.Threading.Tasks.Task<HealthResult> ComputeAsync(bool fresh = false, CorePriority priority = CorePriority.User) =>
-            GearWinCore.RunAsync(CoreWork.HealthScan, () => System.Threading.Tasks.Task.Run(() => GetSnapshot(fresh)), priority);
+        private static readonly object AsyncGate = new();
+        private static System.Threading.Tasks.Task<HealthResult>? _sharedScan;
+
+        internal static System.Threading.Tasks.Task<HealthResult> ComputeAsync(bool fresh = false, CorePriority priority = CorePriority.User)
+        {
+            // One automatic snapshot even if many views were opened during a repair.
+            // Explicit refresh still retains its fresh semantics and is bounded by the core.
+            if (fresh) return GearWinCore.RunAsync(CoreWork.HealthScan, () => System.Threading.Tasks.Task.Run(() => GetSnapshot(true)), priority);
+            lock (AsyncGate)
+            {
+                if (_sharedScan is { IsCompleted: false }) return _sharedScan;
+                return _sharedScan = GearWinCore.RunAsync(CoreWork.HealthScan, () => System.Threading.Tasks.Task.Run(() => GetSnapshot(false)), priority);
+            }
+        }
         public static void Invalidate() => System.Threading.Interlocked.Increment(ref _generation);
 
         private static HealthResult GetSnapshot(bool fresh)
