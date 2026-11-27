@@ -180,4 +180,55 @@ public class GearWinCoreTests
         }
         finally { WingetService.ScanToken = original; }
     }
+
+    [Fact]
+    public async Task SoftwareEpochChangesOnlyWhenSoftwareLeaseEnds()
+    {
+        var core = new OperationCoordinator(() => 2);
+        using (await core.AcquireAsync(CoreWork.Diagnostics, CorePriority.User))
+            Assert.Equal(0L, core.SoftwareEpoch);
+        Assert.Equal(0L, core.SoftwareEpoch);
+        using (await core.AcquireAsync(CoreWork.SoftwareChange, CorePriority.User))
+            Assert.Equal(0L, core.SoftwareEpoch);
+        Assert.Equal(1L, core.SoftwareEpoch);
+    }
+
+    [Theory]
+    [InlineData((int)CoreWork.NetworkChange, (int)CoreWork.SoftwareChange)]
+    [InlineData((int)CoreWork.StartupChange, (int)CoreWork.ProfileChange)]
+    [InlineData((int)CoreWork.Benchmark, (int)CoreWork.Backup)]
+    [InlineData((int)CoreWork.Diagnostics, (int)CoreWork.Cleanup)]
+    public void AdditionalDomainsRespectHeavyWork(int a, int b)
+        => Assert.True(OperationCoordinator.Conflicts((CoreWork)a, (CoreWork)b));
+
+    [Fact]
+    public void InventoryUsesIdColumnNotProductName()
+    {
+        var table = $"{"Name",-30}{"Id",-38}Version\n" + new string('-', 80) + "\n" +
+            $"{"Google.Chrome",-30}{"Other.Product",-38}1.0\n" +
+            $"{"Firefox",-30}{"Mozilla.Firefox",-38}2.0\n";
+        var (ids, complete) = RecommendedInventoryService.ParseInventory(table, true);
+        Assert.True(complete);
+        Assert.Contains("Other.Product", ids);
+        Assert.Contains("Mozilla.Firefox", ids);
+        Assert.DoesNotContain("Google.Chrome", ids);
+    }
+
+    [Fact]
+    public void TruncatedInventoryNeverConfirmsAbsence()
+    {
+        var table = $"{"Name",-30}{"Id",-38}Version\n" + new string('-', 80) + "\n" +
+            $"{"Application",-30}{"Vendor.Truncated…",-38}1.0\n";
+        Assert.False(RecommendedInventoryService.ParseInventory(table, true).Complete);
+        Assert.False(RecommendedInventoryService.ParseInventory(table, false).Complete);
+        Assert.False(RecommendedInventoryService.ParseInventory("localized header", true).Complete);
+    }
+
+    [Theory]
+    [InlineData("Chrome Google.Chrome 1.0", 0, true)]
+    [InlineData("", unchecked((int)0x8a150014u), false)]
+    [InlineData("", -1, null)]
+    [InlineData("", 0, null)]
+    public void ProbeDistinguishesAbsenceFromFailure(string output, int exitCode, bool? expected)
+        => Assert.Equal(expected, BloatwareService.InterpretProbe(output, exitCode, "Google.Chrome"));
 }
