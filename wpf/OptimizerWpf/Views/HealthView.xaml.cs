@@ -265,20 +265,12 @@ namespace OptimizerWpf.Views
             var browser = row.Entry;
             // ΝΕΟ (roadmap: "σύγκριση πριν/μετά σε καθαρισμούς") - ελεύθερος χώρος στον δίσκο συστήματος
             // πριν/μετά τον καθαρισμό, ώστε ο χρήστης να βλέπει το πραγματικό όφελος, όχι μόνο "έγινε".
-            var freeBefore = GetSystemDriveFreeGb();
             TxtBrowserCacheStatus.Text = $"{LanguageService.T("Health_ClearingCacheForPrefix")}{browser.Label}...";
             using var busy = BusyScope.Begin($"{LanguageService.T("Health_ClearingCachePrefix")}{browser.Label}...");
-            await HealthCleanupService.ClearBrowserCacheAsync(browser);
-            var freed = GetSystemDriveFreeGb() - freeBefore;
-            if (freed > 0.05) ImpactTrackingService.RecordBytesFreed((long)(freed * 1024 * 1024 * 1024));
-            var freedText = freed > 0.05 ? $" (+{freed:0.0} GB)" : "";
-            TxtBrowserCacheStatus.Text = $"{LanguageService.T("Health_CacheClearedPrefix")}{browser.Label}{LanguageService.T("Health_CacheClearedSuffix")}{freedText}";
-        }
-
-        private static double GetSystemDriveFreeGb()
-        {
-            try { return new DriveInfo(Path.GetPathRoot(Environment.SystemDirectory)!).AvailableFreeSpace / 1024.0 / 1024 / 1024; }
-            catch { return 0; }
+            var removed = await HealthCleanupService.ClearBrowserCacheAsync(browser);
+            if (removed > 0) ImpactTrackingService.RecordBytesFreed(removed);
+            TxtBrowserCacheStatus.Text = $"{browser.Label} · {QuickCleanService.FormatSize(removed)} " +
+                (LanguageService.Current == "el" ? "λογικού μεγέθους αρχείων αφαιρέθηκαν" : "logical bytes removed");
         }
 
         private async void BtnWinRERefresh_Click(object sender, RoutedEventArgs e) => await RefreshWinREAsync();
