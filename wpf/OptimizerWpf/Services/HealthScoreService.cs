@@ -15,7 +15,33 @@ namespace OptimizerWpf.Services
     // see the comment on PendingReboot below for why).
     public static class HealthScoreService
     {
-        public static HealthResult Compute()
+        private static readonly object SnapshotGate = new();
+        private static HealthResult? _cached;
+        private static long _cachedAt;
+        private static string? _cachedLanguage;
+        internal static bool IsFresh(long now, long then) => now >= then && now - then < 15000;
+
+        public static HealthResult Compute() => GetSnapshot(false);
+        public static HealthResult ComputeFresh() => GetSnapshot(true);
+        public static void Invalidate() { lock (SnapshotGate) _cached = null; }
+
+        private static HealthResult GetSnapshot(bool fresh)
+        {
+            // One set of WMI checks for simultaneous Home, hero and shell requests.
+            lock (SnapshotGate)
+            {
+                var language = LanguageService.Current;
+                if (!fresh && _cached != null && _cachedLanguage == language && IsFresh(Environment.TickCount64, _cachedAt))
+                    return _cached;
+                var result = ComputeCore();
+                _cached = result;
+                _cachedAt = Environment.TickCount64;
+                _cachedLanguage = language;
+                return result;
+            }
+        }
+
+        private static HealthResult ComputeCore()
         {
             var checks = new Func<(int Delta, HealthIssue? Issue)>[]
             {
@@ -32,7 +58,7 @@ namespace OptimizerWpf.Services
             // σειριακά, ο συνολικός χρόνος καθορίζεται από τον ΠΙΟ αργό έλεγχο αντί από το άθροισμα
             // όλων. AsOrdered() διατηρεί την ίδια σειρά ευρημάτων με πριν (σειριακά) για προβλέψιμη
             // εμφάνιση, χωρίς επιπλέον κόστος αφού είναι ήδη μόνο 5 στοιχεία.
-            var results = checks.AsParallel().AsOrdered().Select(check => check()).ToList();
+            var results = checks.AsParallel().AsOrdered().WithDegreeOfParallelism(Math.Clamp(PerformanceProfileService.Current.MaxParallelScans, 1, 3)).Select(check => check()).ToList();
 
             var score = 100 + results.Sum(r => r.Delta);
             var issues = results.Where(r => r.Issue != null).Select(r => r.Issue!).ToList();
@@ -68,12 +94,12 @@ namespace OptimizerWpf.Services
             // used to test the original fix. Only the two servicing-stack-specific keys are checked.
             try
             {
-                var cbsPending = Registry.LocalMachine.OpenSubKey(
-                    @"SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending") != null;
-                var wuPending = Registry.LocalMachine.OpenSubKey(
-                    @"SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired") != null;
+                using var cbsPending = Registry.LocalMachine.OpenSubKey(
+                    @"SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending");
+                using var wuPending = Registry.LocalMachine.OpenSubKey(
+                    @"SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired");
 
-                if (cbsPending || wuPending)
+                if (cbsPending != null || wuPending != null)
                     return (-10, new HealthIssue(LanguageService.T("HealthScore_RebootPending"), "Restart"));
             }
             catch { }
@@ -102,7 +128,8 @@ namespace OptimizerWpf.Services
                     var scScope = new ManagementScope(@"root\SecurityCenter2");
                     scScope.Connect();
                     using var scSearcher = new ManagementObjectSearcher(scScope, new ObjectQuery("SELECT displayName, productState FROM AntiVirusProduct"));
-                    foreach (ManagementBaseObject av in scSearcher.Get())
+                    using var avResults = scSearcher.Get();
+                    foreach (ManagementBaseObject av in avResults)
                     {
                         var name = av["displayName"]?.ToString() ?? "";
                         if (name.Contains("Windows Defender", StringComparison.OrdinalIgnoreCase) ||
