@@ -69,7 +69,7 @@ namespace OptimizerWpf.Services
         }
 
         public static Task<bool> BackupAsync(string destinationZipPath) =>
-            Task.Run(() => BackupFolders(KnownSaveFolders(), destinationZipPath));
+            GearWinCore.RunAsync(CoreWork.Backup, () => Task.Run(() => BackupFolders(KnownSaveFolders(), destinationZipPath)));
 
         // Commit a new archive only after complete enumeration, stable reads and read-back verification.
         // On any failure the old archive remains untouched.
@@ -79,9 +79,22 @@ namespace OptimizerWpf.Services
             try
             {
                 var destination = Path.GetFullPath(destinationZipPath);
-                var roots = folders.Where(Directory.Exists).Select(Path.GetFullPath)
-                    .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-                if (roots.Length == 0) return false;
+                var roots = new List<string>();
+                foreach (var folder in folders.Select(Path.GetFullPath).Distinct(StringComparer.OrdinalIgnoreCase))
+                {
+                    try
+                    {
+                        if ((File.GetAttributes(folder) & FileAttributes.Directory) == 0) return false;
+                        if (!MaintenancePaths.IsOrdinaryLocalPath(folder)) return false;
+                        roots.Add(folder);
+                    }
+                    catch (DirectoryNotFoundException) { }
+                    catch (FileNotFoundException) { }
+                }
+                var parent = Path.GetDirectoryName(destination);
+                if (parent == null || !MaintenancePaths.IsOrdinaryLocalPath(parent) ||
+                    (File.Exists(destination) && !MaintenancePaths.IsOrdinaryLocalPath(destination))) return false;
+                if (roots.Count == 0) return false;
                 foreach (var root in roots)
                 {
                     if (destination.StartsWith(Path.TrimEndingDirectorySeparator(root) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
@@ -89,6 +102,7 @@ namespace OptimizerWpf.Services
                 }
                 staged = destination + "." + Guid.NewGuid().ToString("N") + ".tmp";
                 var expected = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                var buffer = new byte[128 * 1024];
                 using (var stream = new FileStream(staged, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None))
                 {
                     using (var zip = new ZipArchive(stream, ZipArchiveMode.Create, leaveOpen: true))
@@ -104,7 +118,6 @@ namespace OptimizerWpf.Services
                                 var entry = zip.CreateEntry(name, CompressionLevel.Optimal);
                                 using var output = entry.Open();
                                 using var hash = System.Security.Cryptography.IncrementalHash.CreateHash(System.Security.Cryptography.HashAlgorithmName.SHA256);
-                                var buffer = new byte[128 * 1024];
                                 int read;
                                 while ((read = input.Read(buffer, 0, buffer.Length)) > 0)
                                 {
