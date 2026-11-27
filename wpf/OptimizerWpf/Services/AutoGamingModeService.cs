@@ -31,7 +31,9 @@ namespace OptimizerWpf.Services
 
         public static void Start()
         {
-            if (_timer != null) return;
+            if (_timer != null || !AppSettingsService.Current.AutoGamingModeEnabled) return;
+            _lastFullscreenHwnd = IntPtr.Zero;
+            _consecutiveFullscreenTicks = _consecutiveNonFullscreenTicks = 0;
             _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
             _timer.Tick += (_, _) => Tick();
             _timer.Start();
@@ -53,6 +55,7 @@ namespace OptimizerWpf.Services
         {
             try
             {
+                if (!AppSettingsService.Current.AutoGamingModeEnabled) return;
                 // Αν ο χρήστης έχει ενεργοποιήσει χειροκίνητα το Gaming Mode (Βελτιστοποίηση), το αυτόματο δεν το αγγίζει - ούτε το ενεργοποιεί ξανά ούτε το απενεργοποιεί στο τέλος του παιχνιδιού.
                 if (AppSettingsService.Current.GamingModeActive || AppSettingsService.Current.OfficeModeActive)
                 {
@@ -64,7 +67,7 @@ namespace OptimizerWpf.Services
                 if (hwnd == IntPtr.Zero || !IsFullscreen(hwnd) || IsSelfOrShell(hwnd) || !IsConfiguredGame(hwnd))
                 {
                     _consecutiveFullscreenTicks = 0;
-                    _consecutiveNonFullscreenTicks++;
+                    _consecutiveNonFullscreenTicks = Math.Min(2, _consecutiveNonFullscreenTicks + 1);
                     // 2 συνεχόμενοι έλεγχοι (10s) χωρίς fullscreen πριν την επαναφορά - αποφεύγει
                     // τρεμόπαιγμα σε σύντομη εναλλαγή παραθύρου (π.χ. Alt+Tab στιγμιαία).
                     if (_isActive && _consecutiveNonFullscreenTicks >= 2)
@@ -80,7 +83,7 @@ namespace OptimizerWpf.Services
                 }
 
                 _consecutiveNonFullscreenTicks = 0;
-                _consecutiveFullscreenTicks = hwnd == _lastFullscreenHwnd ? _consecutiveFullscreenTicks + 1 : 1;
+                _consecutiveFullscreenTicks = hwnd == _lastFullscreenHwnd ? Math.Min(2, _consecutiveFullscreenTicks + 1) : 1;
                 _lastFullscreenHwnd = hwnd;
 
                 // 2 συνεχόμενοι έλεγχοι (10s) στο ΙΔΙΟ fullscreen παράθυρο πριν την ενεργοποίηση -
