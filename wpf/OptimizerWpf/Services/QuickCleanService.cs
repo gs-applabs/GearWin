@@ -50,8 +50,8 @@ namespace OptimizerWpf.Services
         {
             var items = new List<QuickCleanItem>
             {
-                new("UserTemp", LanguageService.T("QuickClean_UserTemp"), DirSize(Path.GetTempPath()), true),
-                new("WindowsTemp", LanguageService.T("QuickClean_WindowsTemp"), DirSize(WindowsTempDir), true),
+                new("UserTemp", LanguageService.T("QuickClean_UserTemp"), MaintenancePaths.VerifiedUserTemp() is string temp ? DirSize(temp) : 0, true),
+                new("WindowsTemp", LanguageService.T("QuickClean_WindowsTemp"), DirSize(WindowsTempDir), false),
                 new("RecycleBin", LanguageService.T("QuickClean_RecycleBin"), RecycleBinSize(), false),
                 new("ThumbnailCache", LanguageService.T("QuickClean_ThumbnailCache"), ThumbCacheSize(), true),
                 new("WindowsUpdateCache", LanguageService.T("QuickClean_WindowsUpdateCache"), DirSize(WindowsUpdateCacheDir), false),
@@ -71,48 +71,43 @@ namespace OptimizerWpf.Services
                 switch (key)
                 {
                     case "UserTemp":
-                        freed += DirSize(Path.GetTempPath());
-                        await Task.Run(() => DeleteContents(Path.GetTempPath()));
+                        if (MaintenancePaths.VerifiedUserTemp() is string temp)
+                            freed += await Task.Run(() => MaintenancePaths.CleanFiles(temp, TimeSpan.FromDays(2)));
                         break;
                     case "WindowsTemp":
-                        freed += DirSize(WindowsTempDir);
-                        await Task.Run(() => DeleteContents(WindowsTempDir));
+                        freed += await Task.Run(() => MaintenancePaths.CleanFiles(WindowsTempDir, TimeSpan.FromDays(7)));
                         break;
                     case "RecycleBin":
-                        freed += RecycleBinSize();
+                        var before = RecycleBinSize();
                         await Task.Run(EmptyRecycleBin);
+                        freed += Math.Max(0, before - RecycleBinSize());
                         break;
                     case "ThumbnailCache":
-                        freed += ThumbCacheSize();
-                        await Task.Run(DeleteThumbCache);
+                        freed += await Task.Run(() => MaintenancePaths.CleanFiles(ExplorerCacheDir, TimeSpan.FromDays(2), false, "thumbcache_*.db") +
+                            MaintenancePaths.CleanFiles(ExplorerCacheDir, TimeSpan.FromDays(2), false, "iconcache_*.db"));
                         break;
                     case "WindowsUpdateCache":
-                        freed += DirSize(WindowsUpdateCacheDir);
-                        await Task.Run(() => DeleteContents(WindowsUpdateCacheDir));
+                        freed += await Task.Run(() => MaintenancePaths.CleanFiles(WindowsUpdateCacheDir, TimeSpan.FromDays(7)));
                         break;
                     case "DeliveryOptimization":
-                        freed += DirSize(DeliveryOptimizationDir);
-                        await Task.Run(() => DeleteContents(DeliveryOptimizationDir));
+                        freed += await Task.Run(() => MaintenancePaths.CleanFiles(DeliveryOptimizationDir, TimeSpan.FromDays(7)));
                         break;
                     case "ShaderCache":
                         foreach (var dir in ShaderCacheDirs())
                         {
-                            freed += DirSize(dir);
-                            await Task.Run(() => DeleteContents(dir));
+                            freed += await Task.Run(() => MaintenancePaths.CleanFiles(dir, TimeSpan.FromDays(2)));
                         }
                         break;
                     case "LauncherCache":
                         foreach (var dir in LauncherCacheDirs())
                         {
-                            freed += DirSize(dir);
-                            await Task.Run(() => DeleteContents(dir));
+                            freed += await Task.Run(() => MaintenancePaths.CleanFiles(dir, TimeSpan.FromDays(2)));
                         }
                         break;
                     case "BrowserCache":
                         foreach (var browser in HealthCleanupService.DetectBrowsers())
                         {
-                            freed += BrowserCacheSize(browser);
-                            await HealthCleanupService.ClearBrowserCacheAsync(browser);
+                            freed += await HealthCleanupService.ClearBrowserCacheAsync(browser);
                         }
                         break;
                 }
@@ -151,15 +146,14 @@ namespace OptimizerWpf.Services
         // συνεχίζει κανονικά στους υπόλοιπους.
         internal static long DirSize(string dir)
         {
-            if (!Directory.Exists(dir)) return 0;
-            try { if ((File.GetAttributes(dir) & FileAttributes.ReparsePoint) != 0) return 0; } catch { return 0; }
+            if (!MaintenancePaths.IsOrdinaryLocalPath(dir) || !Directory.Exists(dir)) return 0;
             long total = 0;
 
             string[] files;
             try { files = Directory.GetFiles(dir); } catch { files = Array.Empty<string>(); }
             foreach (var f in files)
             {
-                try { total += new FileInfo(f).Length; } catch { }
+                try { if (MaintenancePaths.IsOrdinaryLocalPath(f)) total += new FileInfo(f).Length; } catch { }
             }
 
             string[] subdirs;
@@ -167,23 +161,6 @@ namespace OptimizerWpf.Services
             foreach (var d in subdirs) total += DirSize(d);
 
             return total;
-        }
-
-        private static void DeleteContents(string dir)
-        {
-            if (!Directory.Exists(dir)) return;
-            try { if ((File.GetAttributes(dir) & FileAttributes.ReparsePoint) != 0) return; } catch { return; }
-            foreach (var f in SafeTopFiles(dir))
-            {
-                try { File.Delete(f); } catch { }
-            }
-            foreach (var d in SafeDirs(dir))
-            {
-                // ΑΣΦΑΛΕΙΑ: ποτέ διαγραφή μέσω junction/symlink - η εφαρμογή τρέχει elevated και οι φάκελοι Temp είναι
-                // εγγράψιμοι από κάθε διεργασία χρήστη· ένα junction προς π.χ. C:\Windows\System32 θα οδηγούσε σε διαγραφή εκεί.
-                try { if ((File.GetAttributes(d) & FileAttributes.ReparsePoint) != 0) continue; } catch { continue; }
-                try { Directory.Delete(d, true); } catch { }
-            }
         }
 
         private static long ThumbCacheSize()
