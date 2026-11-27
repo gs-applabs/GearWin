@@ -67,6 +67,19 @@ namespace OptimizerWpf.Services
             Changed?.Invoke(display, stillBusy);
         }
 
+        // Informational notification must never finish somebody else's operation.
+        public static void Report(string message)
+        {
+            string display; bool busy;
+            lock (_lock)
+            {
+                Prune();
+                busy = _active.Count > 0;
+                display = busy ? Combine() + "  •  " + message : message;
+            }
+            Changed?.Invoke(display, busy);
+        }
+
         public static int ActiveCount { get { lock (_lock) { Prune(); return _active.Count; } } }
 
         // Εργασία πολλών βημάτων: Update() αλλάζει το μήνυμά της, End(τελικό μήνυμα) την κλείνει ΑΚΡΙΒΩΣ μία φορά (ασφαλές να κληθεί πολλές).
