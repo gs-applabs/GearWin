@@ -648,7 +648,11 @@ namespace OptimizerWpf.Views
 
         private bool _healthBusy;
 
-        private async void BtnRefreshHealth_Click(object sender, System.Windows.RoutedEventArgs e) => await RefreshHealthScoreAsync();
+        private async void BtnRefreshHealth_Click(object sender, System.Windows.RoutedEventArgs e)
+        {
+            HealthScoreService.Invalidate();
+            await RefreshHealthScoreAsync();
+        }
 
         // Διορθώνει ΜΟΝΟ τα ευρήματα της βαθμολογίας και λέει ειλικρινά τι έγινε: χώρος δίσκου -> καθαρισμός των "προτεινόμενων"
         // προσωρινών (QuickCleanService, ίδιος μηχανισμός με τον Πλήρη Έλεγχο· όχι διαγραφή ολόκληρου του TEMP), έλλειψη
@@ -658,20 +662,18 @@ namespace OptimizerWpf.Views
         {
             if (_healthBusy) return;
             _healthBusy = true;
-            StatusService.SetBusy(LanguageService.T("Home_AutoFixDone"));
+            using var busy = StatusService.BeginScope(LanguageService.T("Home_CalculatingHealthScore"));
             var done = new List<string>();
             var manual = new List<string>();
             try
             {
-                var result = await Task.Run(HealthScoreService.Compute);
+                var result = await Task.Run(HealthScoreService.ComputeFresh);
                 foreach (var issue in result.Issues)
                 {
                     switch (issue.FixType)
                     {
                         case "Storage":
-                            var items = await QuickCleanService.ScanAsync();
-                            var freed = await QuickCleanService.CleanAsync(items.Where(i => i.Recommended).Select(i => i.Key).ToList());
-                            ImpactTrackingService.RecordBytesFreed(freed);
+                            var freed = await SystemMaintenanceService.QuickCleanAsync();
                             done.Add(string.Format(LanguageService.T("Home_FixAllSpace"), QuickCleanService.FormatSize(freed)));
                             break;
                         case "RestorePoint":
@@ -691,6 +693,7 @@ namespace OptimizerWpf.Views
             if (manual.Count > 0) summary.Add(string.Format(LanguageService.T("Home_FixAllManual"), string.Join(" / ", manual)));
             if (summary.Count == 0) summary.Add(LanguageService.T("Home_FixAllNothing"));
             (Window.GetWindow(this) as MainWindow)?.ShowToast(string.Join("  •  ", summary));
+            HealthScoreService.Invalidate();
             await RefreshHealthScoreAsync();
         }
 
@@ -828,12 +831,12 @@ namespace OptimizerWpf.Views
         private async Task RefreshHealthScoreCoreAsync()
         {
             TxtHealthLabel.Text = LanguageService.T("Home_Calculating");
-            StatusService.SetBusy(LanguageService.T("Home_CalculatingHealthScore"));
+            using var busy = StatusService.BeginScope(LanguageService.T("Home_CalculatingHealthScore"));
             // HealthScoreService.Compute() does several WMI queries (Defender status, AV product,
             // restore points) which can take a noticeable moment - runs off the UI thread so the
             // window stays responsive while it's working (see the async-UI rule this project follows).
             var result = await Task.Run(HealthScoreService.Compute);
-            StatusService.SetIdle(LanguageService.T("Ready"));
+            if (_unloaded) return;
 
             HealthScoreHistoryService.RecordSample(result.Score);
             var sparkline = HealthScoreHistoryService.GetSparkline();
