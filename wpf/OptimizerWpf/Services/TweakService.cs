@@ -73,23 +73,15 @@ namespace OptimizerWpf.Services
 
         public static IReadOnlyList<SimpleTweak> PerfPowercfgTweaks => new[]
         {
-            new SimpleTweak(LanguageService.T("Tweak_P0Label"), LanguageService.T("Tweak_P0Desc"),
-                () => RunPowercfg("/setdcvalueindex SCHEME_CURRENT SUB_ENERGYSAVER ESBATTTHRESHOLD 0", "/S SCHEME_CURRENT"),
-                () => RunPowercfg("/setdcvalueindex SCHEME_CURRENT SUB_ENERGYSAVER ESBATTTHRESHOLD 20", "/S SCHEME_CURRENT"),
-                Id: "PowerSaverThreshold", DetectState: () => GetPowercfgIndex("SUB_ENERGYSAVER", "ESBATTTHRESHOLD", ac: false) is int i0 ? i0 == 0 : null),
-            new SimpleTweak(LanguageService.T("Tweak_P1Label"), LanguageService.T("Tweak_P1Desc"),
-                () => RunPowercfg("/setacvalueindex SCHEME_CURRENT 2a737441-1930-4402-8d77-b2bebba308a3 48e6b7a6-50f5-4782-a5d4-53bb8f07e226 0",
-                                   "/setdcvalueindex SCHEME_CURRENT 2a737441-1930-4402-8d77-b2bebba308a3 48e6b7a6-50f5-4782-a5d4-53bb8f07e226 0", "/S SCHEME_CURRENT"),
-                () => RunPowercfg("/setacvalueindex SCHEME_CURRENT 2a737441-1930-4402-8d77-b2bebba308a3 48e6b7a6-50f5-4782-a5d4-53bb8f07e226 1",
-                                   "/setdcvalueindex SCHEME_CURRENT 2a737441-1930-4402-8d77-b2bebba308a3 48e6b7a6-50f5-4782-a5d4-53bb8f07e226 1", "/S SCHEME_CURRENT"),
-                Id: "PowerThrottling", DetectState: () => GetPowercfgIndex("2a737441-1930-4402-8d77-b2bebba308a3", "48e6b7a6-50f5-4782-a5d4-53bb8f07e226", ac: true) is int i1 ? i1 == 0 : null),
-            new SimpleTweak(LanguageService.T("Tweak_P2Label"), LanguageService.T("Tweak_P2Desc"),
-                () => RunPowercfg("/setacvalueindex SCHEME_CURRENT 501a4d13-42af-4429-9fd1-a8218c268e20 ee12f906-d277-404b-b6da-e5fa1a576df5 0",
-                                   "/setdcvalueindex SCHEME_CURRENT 501a4d13-42af-4429-9fd1-a8218c268e20 ee12f906-d277-404b-b6da-e5fa1a576df5 0", "/S SCHEME_CURRENT"),
-                () => RunPowercfg("/setacvalueindex SCHEME_CURRENT 501a4d13-42af-4429-9fd1-a8218c268e20 ee12f906-d277-404b-b6da-e5fa1a576df5 1",
-                                   "/setdcvalueindex SCHEME_CURRENT 501a4d13-42af-4429-9fd1-a8218c268e20 ee12f906-d277-404b-b6da-e5fa1a576df5 1", "/S SCHEME_CURRENT"),
-                Id: "PowerPerfBoost", DetectState: () => GetPowercfgIndex("501a4d13-42af-4429-9fd1-a8218c268e20", "ee12f906-d277-404b-b6da-e5fa1a576df5", ac: true) is int i2 ? i2 == 0 : null),
+            PowerTweak(PowerIndexSpec.Threshold, "Tweak_P0Label", "Tweak_P0Desc"),
+            PowerTweak(PowerIndexSpec.Usb, "Tweak_P1Label", "Tweak_P1Desc"),
+            PowerTweak(PowerIndexSpec.Pcie, "Tweak_P2Label", "Tweak_P2Desc"),
         };
+
+        private static SimpleTweak PowerTweak(PowerIndexSpec spec, string label, string description) =>
+            new(LanguageService.T(label), LanguageService.T(description),
+                () => PowerIndexJournal.Change(spec, true), () => PowerIndexJournal.Change(spec, false),
+                DetectState: () => PowerIndexJournal.IsOn(spec), Id: spec.Id, RequiresAdmin: true);
 
         // Ενιαία λίστα των 14 κύριων tweaks σε μια μορφή (RegTweak + ειδικές περιπτώσεις μαζί) -
         // απλοποιεί το UI σε ένα ItemsControl αντί για ανάμειξη δύο τύπων record.
@@ -131,17 +123,6 @@ namespace OptimizerWpf.Services
             if (current == null) return false;
             if (t.Kind == RegistryValueKind.String) return string.Equals(current.ToString(), t.OnValue.ToString(), StringComparison.OrdinalIgnoreCase);
             return Convert.ToInt64(current) == Convert.ToInt64(t.OnValue);
-        }
-
-        // ΔΙΟΡΘΩΣΗ (γνωστό κενό #01) - διαβάζει το τρέχον AC/DC Power Setting Index ενός powercfg
-        // υπο-ρύθμισης (π.χ. USB Selective Suspend, PCIe Power Saving) μέσω "powercfg /q", για τα 3
-        // tweaks που δεν έχουν καθόλου registry-based αναπαράσταση. null αν το parsing αποτύχει.
-        private static int? GetPowercfgIndex(string subgroup, string setting, bool ac)
-        {
-            var output = RunProcessCapture("powercfg.exe", $"/q SCHEME_CURRENT {subgroup} {setting}");
-            var pattern = ac ? @"Current AC Power Setting Index:\s*0x([0-9a-fA-F]+)" : @"Current DC Power Setting Index:\s*0x([0-9a-fA-F]+)";
-            var match = System.Text.RegularExpressions.Regex.Match(output, pattern);
-            return match.Success ? Convert.ToInt32(match.Groups[1].Value, 16) : (int?)null;
         }
 
         public static IReadOnlyList<SimpleTweak> AiCopilotTweaksSimple() => AiCopilotTweaks.Select(ToSimple).ToList();
@@ -527,9 +508,5 @@ namespace OptimizerWpf.Services
             catch { return ""; }
         }
 
-        private static void RunPowercfg(params string[] argSets)
-        {
-            foreach (var args in argSets) RunProcess("powercfg.exe", args);
-        }
     }
 }
