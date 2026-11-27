@@ -69,7 +69,7 @@ namespace OptimizerWpf.Services
             {
                 Prune();
                 // Never complete somebody else's scope, even for an unmatched legacy call.
-                if (node != null && _active.Remove(node.Entry)) Legacy.Value = node.Parent;
+                if (node != null) { _active.Remove(node.Entry); Legacy.Value = node.Parent; }
                 _idleMessage = message;
                 _notice = "";
             }
