@@ -52,12 +52,20 @@ namespace OptimizerWpf.Services
         public static event Action? HistoryChanged;
         public static bool IsRunning { get; private set; }
 
-        public static IReadOnlyList<string> History { get { lock (Lock) return _history.ToList(); } }
+        public static IReadOnlyList<string> History
+        {
+            get { lock (Lock) { if (!IsRunning && !_dirty) LoadPersisted(); return _history.ToList(); } }
+        }
+
+        internal static void ReleaseInactiveHistory()
+        {
+            lock (Lock) if (!IsRunning && !_dirty) { _history.Clear(); _lastSeen = null; }
+        }
 
         public static void Start(Window mainWindow)
         {
-            if (IsRunning) return;
-            LoadPersisted();
+            if (IsRunning || !AppSettingsService.Current.ClipboardHistoryEnabled) return;
+            if (!_dirty) LoadPersisted();
 
             var helper = new WindowInteropHelper(mainWindow);
             _hwnd = helper.Handle != IntPtr.Zero ? helper.Handle : helper.EnsureHandle();
@@ -94,10 +102,12 @@ namespace OptimizerWpf.Services
                 _lastSeen = null;
             }
             IsRunning = false;
+            ReleaseInactiveHistory();
         }
 
         private static IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
         {
+            if (!IsRunning || !AppSettingsService.Current.ClipboardHistoryEnabled) return IntPtr.Zero;
             if (msg == WM_HOTKEY && wParam.ToInt32() == HotkeyId)
             {
                 HotkeyPressed?.Invoke();
@@ -151,7 +161,7 @@ namespace OptimizerWpf.Services
 
         public static void CopyToClipboard(string text)
         {
-            try { _lastSeen = text; Clipboard.SetText(text); }
+            try { if (IsRunning) _lastSeen = text; Clipboard.SetText(text); }
             catch { }
         }
 
