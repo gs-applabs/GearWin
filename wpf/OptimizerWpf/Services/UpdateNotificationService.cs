@@ -76,7 +76,7 @@ namespace OptimizerWpf.Services
             // κατάστασης, που δεν βλέπω κάτι") - μέχρι τώρα ΟΛΟ αυτό το 8s+έως 3' στάδιο αναμονής ΚΑΙ
             // η ίδια η σάρωση ήταν αόρατα στη γραμμή κατάστασης (μόνο το χειροκίνητο "Έλεγχος Τώρα" το
             // έκανε). SetBusy εδώ, SetIdle σε finally - ΠΑΝΤΑ καθαρίζει ακόμα κι αν πεταχτεί εξαίρεση.
-            StatusService.SetBusy(LanguageService.T("UpdateNotify_AutoChecking"));
+            using var busy = StatusService.BeginScope(LanguageService.T("UpdateNotify_AutoChecking"));
             try
             {
                 await Task.Delay(TimeSpan.FromSeconds(8));
@@ -87,10 +87,10 @@ namespace OptimizerWpf.Services
                     waited++;
                 }
                 Log($"StartupCheckAsync: network available={System.Net.NetworkInformation.NetworkInterface.GetIsNetworkAvailable()} after {waited * 10}s wait - running check");
-                await RunCheckAsync(announce: true);
+                await RunCheckAsync(announce: true, background: true);
             }
             catch (Exception ex) { Log($"StartupCheckAsync: unexpected exception - {ex}"); }
-            finally { StatusService.SetIdle(LanguageService.T("Ready")); _checkInFlight = false; }
+            finally { _checkInFlight = false; }
         }
 
         public static void Stop()
@@ -108,21 +108,29 @@ namespace OptimizerWpf.Services
 
             _checkInFlight = true;
             Log("RunCheckIfDueAsync: interval elapsed, running periodic check");
-            StatusService.SetBusy(LanguageService.T("UpdateNotify_AutoChecking"));
-            try { await RunCheckAsync(); }
-            finally { StatusService.SetIdle(LanguageService.T("Ready")); _checkInFlight = false; }
+            using var busy = StatusService.BeginScope(LanguageService.T("UpdateNotify_AutoChecking"));
+            try { await RunCheckAsync(background: true); }
+            finally { _checkInFlight = false; }
         }
 
         // Δημόσιο - χρησιμοποιείται ΚΑΙ από το κουμπί "Έλεγχος Τώρα" (Ρυθμίσεις Εμφάνισης), ώστε ο
         // χρήστης να μπορεί να ζητήσει άμεσο έλεγχο χωρίς να περιμένει το επόμενο περιοδικό τικ.
-        public static Task RunCheckAsync(bool announce = false)
+        public static Task RunCheckAsync(bool announce = false, bool background = false)
         {
             // A second requester awaits the real existing scan instead of returning early.
             lock (ScanGate)
             {
                 if (_activeScan is { IsCompleted: false }) return _activeScan;
-                return _activeScan = RunCheckCoreAsync(announce);
+                return _activeScan = RunCoordinatedAsync(announce, background);
             }
+        }
+
+        private static async Task RunCoordinatedAsync(bool announce, bool background)
+        {
+            using var lease = await GearWinCore.EnterAsync(CoreWork.UpdateScan,
+                background ? CorePriority.Background : CorePriority.User);
+            if (background && !AppSettingsService.Current.UpdateNotificationsEnabled) return;
+            await RunCheckCoreAsync(announce);
         }
 
         private static async Task RunCheckCoreAsync(bool announce)
