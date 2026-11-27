@@ -22,7 +22,8 @@ namespace OptimizerWpf.Services
     {
         private static DispatcherTimer? _timer;
         private static bool _checkInFlight;
-        private static readonly System.Threading.SemaphoreSlim ScanGate = new(1, 1);
+        private static readonly object ScanGate = new();
+        private static Task? _activeScan;
         private static readonly object LogGate = new();
 
         // ΔΙΟΡΘΩΣΗ (ρητό αίτημα χρήστη, επαναλαμβανόμενο: "δεν βλέπω αυτόματο έλεγχο ενημερώσεων/
@@ -114,13 +115,14 @@ namespace OptimizerWpf.Services
 
         // Δημόσιο - χρησιμοποιείται ΚΑΙ από το κουμπί "Έλεγχος Τώρα" (Ρυθμίσεις Εμφάνισης), ώστε ο
         // χρήστης να μπορεί να ζητήσει άμεσο έλεγχο χωρίς να περιμένει το επόμενο περιοδικό τικ.
-        public static async Task RunCheckAsync(bool announce = false)
+        public static Task RunCheckAsync(bool announce = false)
         {
-            // Periodic, startup and manual scans share one gate. A duplicate request
-            // joins the existing cycle by returning without launching extra processes.
-            if (!await ScanGate.WaitAsync(0)) return;
-            try { await RunCheckCoreAsync(announce); }
-            finally { ScanGate.Release(); }
+            // A second requester awaits the real existing scan instead of returning early.
+            lock (ScanGate)
+            {
+                if (_activeScan is { IsCompleted: false }) return _activeScan;
+                return _activeScan = RunCheckCoreAsync(announce);
+            }
         }
 
         private static async Task RunCheckCoreAsync(bool announce)
