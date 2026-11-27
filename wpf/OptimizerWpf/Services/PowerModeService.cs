@@ -185,6 +185,25 @@ namespace OptimizerWpf.Services
             lock (Gate) return Load(SnapshotPath())?.Mode;
         }
 
+        internal static async System.Threading.Tasks.Task ApplyManualProfileAsync(string mode, bool enabled)
+        {
+            if (mode is not ("Office" or "Gaming")) throw new ArgumentException("Unknown profile.", nameof(mode));
+            using var lease = await GearWinCore.EnterAsync(CoreWork.ProfileChange);
+            await System.Threading.Tasks.Task.Run(() =>
+            {
+                if (enabled) Enable(mode); else Disable(mode);
+            });
+            var settings = AppSettingsService.Current;
+            if (enabled)
+            {
+                settings.OfficeModeActive = mode == "Office";
+                settings.GamingModeActive = mode == "Gaming";
+            }
+            else if (mode == "Office") settings.OfficeModeActive = false;
+            else settings.GamingModeActive = false;
+            AppSettingsService.Save();
+        }
+
         public static void SetOfficeMode() => Enable("Office");
         public static void SetGamingMode() => Enable("Gaming");
         // Preserve the old call signature. Never terminate Explorer.
