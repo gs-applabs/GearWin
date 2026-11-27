@@ -37,43 +37,60 @@ internal static class MaintenancePaths
         return Path.GetFullPath(candidate).StartsWith(prefix, StringComparison.OrdinalIgnoreCase);
     }
 
-    // Only delete individual regular files. Never recursively delete an entire directory tree,
-    // never remove its root, and skip recently modified temporary files.
-    internal static long CleanFiles(string root, TimeSpan minAge, bool recursive = true, string pattern = "*")
+    // Identical traversal and age policy for estimates and execution. Estimates do
+    // not open every file exclusively; in-use files can reduce actual removed bytes.
+    private static IEnumerable<string> Candidates(string root, TimeSpan minAge, bool recursive, string pattern)
     {
-        if (!IsOrdinaryLocalPath(root) || !Directory.Exists(root)) return 0;
+        if (!IsOrdinaryLocalPath(root) || !Directory.Exists(root)) yield break;
         var pending = new Stack<string>();
         pending.Push(root);
-        long removed = 0;
         var cutoff = DateTime.UtcNow - minAge;
         while (pending.Count > 0)
         {
             var dir = pending.Pop();
             if (!IsOrdinaryLocalPath(dir)) continue;
+            string[] files, children;
+            try { files = Directory.GetFiles(dir, pattern); } catch { files = Array.Empty<string>(); }
+            foreach (var file in files)
+            {
+                bool eligible;
+                try { eligible = IsWithin(root, file) && IsOrdinaryLocalPath(file) && File.GetLastWriteTimeUtc(file) <= cutoff; }
+                catch { eligible = false; }
+                if (eligible) yield return file;
+            }
+            if (!recursive) continue;
+            try { children = Directory.GetDirectories(dir); } catch { children = Array.Empty<string>(); }
+            foreach (var child in children)
+                if (IsWithin(root, child) && IsOrdinaryLocalPath(child)) pending.Push(child);
+        }
+    }
+
+    internal static long MeasureFiles(string root, TimeSpan minAge, bool recursive = true, string pattern = "*")
+    {
+        long size = 0;
+        foreach (var file in Candidates(root, minAge, recursive, pattern))
+        {
+            try { size += new FileInfo(file).Length; } catch { }
+        }
+        return size;
+    }
+
+    internal static long CleanFiles(string root, TimeSpan minAge, bool recursive = true, string pattern = "*")
+    {
+        long removed = 0;
+        var cutoff = DateTime.UtcNow - minAge;
+        foreach (var file in Candidates(root, minAge, recursive, pattern))
+        {
             try
             {
-                foreach (var file in Directory.GetFiles(dir, pattern))
-                {
-                    try
-                    {
-                        if (!IsWithin(root, file) || !IsOrdinaryLocalPath(file)) continue;
-                        var info = new FileInfo(file);
-                        if (!info.Exists || info.LastWriteTimeUtc > cutoff) continue;
-                        // Do not touch files currently in use, even when delete sharing is allowed.
-                        long length;
-                        using (var probe = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.None))
-                            length = probe.Length;
-                        if (!IsOrdinaryLocalPath(file) || File.GetLastWriteTimeUtc(file) > cutoff) continue;
-                        File.Delete(file);
-                        if (!File.Exists(file)) removed += length; // logical bytes, not physical allocation
-                    }
-                    catch { /* inaccessible or active: leave intact */ }
-                }
-                if (recursive)
-                    foreach (var child in Directory.GetDirectories(dir))
-                        if (IsWithin(root, child) && IsOrdinaryLocalPath(child)) pending.Push(child);
+                long length;
+                using (var probe = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.None))
+                    length = probe.Length;
+                if (!IsOrdinaryLocalPath(file) || File.GetLastWriteTimeUtc(file) > cutoff) continue;
+                File.Delete(file);
+                if (!File.Exists(file)) removed += length;
             }
-            catch { /* inaccessible directory: leave intact */ }
+            catch { /* inaccessible or active: leave intact */ }
         }
         return removed;
     }
