@@ -9,10 +9,10 @@ Baseline: `0d36ba06ffd5b1f90676d546d8abdfafe1062fbf`; review branch `release/7.1
 | UMP01 source audit | 3 test/measurement coverage gaps | 1 infrastructure mitigation (measurement workflow added) | 0 | open |
 | UMP02 safety, batches 1–5 | 46 safety/correctness findings | 46 addressed at least in part in source | 0 operation-level certifications | open |
 | UMP03 core/resources, batches 1–3 | 36 findings | 36 addressed at least in part in source | 0 | open |
-| UMP04 unified maintenance, batch 1 | 12 findings | 12 addressed at least in part in source | 0 | open |
+| UMP04 unified maintenance, batches 1–2 | 24 findings | 24 addressed at least in part in source | 0 | open |
 | UMP06 early status fix | 1 finding | 1 addressed in source | 0 | open |
 | UMP07 early artwork fix | 8 distinct icon/UI findings | 8 addressed at least in part in source | 0 visual certifications | open |
-| Total | 106 | 104 at least partly addressed | 0 operation-level certifications | open |
+| Total | 118 | 116 at least partly addressed | 0 operation-level certifications | open |
 
 The earlier manual review also identified deferred issues in profiles, resources, backups and navigation. These will be assigned stable IDs in their owning passes; do not inflate totals by counting them again. Full tracked-source lexical inventory completed; manual semantic review remains pending. The 7.0.0 baseline Windows build reported 391 desktop + 42 migration tests on 2026-11-27; the Linux job logs available are from 2026-11-23 (5 synthetic clone tests). Six CI jobs reported success in the run; an opt-in test can report pass without doing clicks. Baseline success is not a new branch test result.
 
@@ -232,3 +232,26 @@ This is a targeted lifecycle change, not complete lazy construction: the selecte
 | M12 | Result headline ignored health-score issues | include actual score findings and memory pressure |
 
 Shared plan automatic allowlist: UserTemp, ThumbnailCache only when recommended and nonzero. BrowserCache requires explicit opt-in; recycle bin, Windows servicing caches, registry, personal tweaks and startup are outside this plan. Existing dedicated tools remain separate. The existing scheduled maintenance and manual per-browser cleanup are not yet under the same operation gate; no claim of global coordination. Preview sizes still represent scanned logical bytes, not precisely reclaimable bytes; per-file manifest and per-stage cancellation/partial-failure semantics remain pending. Individual failed health checks still need explicit Unknown status, not merely aggregate exception handling. Seven new fixture cases (3 cache freshness, 4 plan selections); 64 cumulative authored cases. Latest previously verified stages: 442 desktop +42 migration. Run 45993105064 was pending and returned no jobs during this pass. New commits through 2be7990482b15ae346ce7f2777fb93d8112e4107 need compile/tests. New labels currently Greek/English fallback. No merge or release.
+
+## Completed intermediate CI
+
+Run 45993640140 (commit 2f5080388e8d41dc5d02cc9433045a7b0df5aeea): inventory, icon preparation (31/31), desktop tests 456/456, migration tests 42/42, installer build and clean-installed process samples all successful. The previous 14 fixture cases (UMP03 batch 2 and UMP03/04 batch 3/1) are included. Normal/tray respectively: CPU 5.073% / 0.078%; maximum WS 249.48 / 152.49 MiB; maximum private 139.05 / 68.80 MiB; write transfer 2226 / 0 bytes; handles 1014→1099 / 937→910. 13 samples across ~60s per mode. Earlier intermediate private memory was 158.01 / 87.01 MiB. CPU remains above normal-mode target, not a controlled comparison. No sustained leakage/SSD-wear certification.
+
+## UMP04 — second batch (12 additional distinct findings)
+
+| ID | Finding | Source mitigation |
+|---|---|---|
+| M13 | Individual failed health checks silently counted as healthy | explicit Unknown issues; suppress numeric score in Home/hero/health dialog/preview and show attention |
+| M14 | Partial health scores could contaminate daily and sparkline history | record only complete snapshots |
+| M15 | Empty storage card could be selected | disable selection at zero |
+| M16 | Manual per-browser cleanup bypassed common cleanup gate | same gate, catch contention/error in UI |
+| M17 | Scheduled headless cleanup bypassed GUI process-only gate | per-user named mutex shared in interactive session; seven-day top-level policy retained |
+| M18 | Scan estimates included recent files that deletion policy skips | same iterative path and age-filtered traversal; no guarantee of exact reclaimable bytes |
+| M19 | Tray/Fix All scanned optional categories never executed | recommended-only scan |
+| M20 | Separate Advanced Full Maintenance recursively deleted unverified TEMP | existing common conservative cleaner |
+| M21 | Detached repair command did not report outcome and SFC ran before component repair | awaited DISM then SFC; report real output and failure |
+| M22 | Advanced Full Maintenance lacked explicit preview/confirmation and restore guard | confirmation, existing RestoreGuard, operation scope and button lifecycle |
+| M23 | Partial firewall profile readings could report all enabled | three-state aggregation: confirmed off, confirmed all on, unknown |
+| M24 | Security summary could state all good with unknown firewall/UAC data | incomplete status for unavailable readings; known warnings preserved |
+
+Six new fixture cases (partial health, three firewall cases, age estimate, concurrent cleanup workers), plus one corrected existing firewall expectation; 70 cumulative newly authored cases. All changes through c4902cc3b076cfac1887cdcaa47dacc1047482e5 pending compile/test on current revision. Named mutex only covers same interactive Windows session/user and this app, not third-party tools or other sessions; fixture tests verify worker serialization, not cross-process scheduler integration. Per-file exact preview manifest, hard-link/reparse substitution race, precise allocated bytes and cancellation of long scans remain open. No automatic repair scheduled; DISM/SFC repair only after explicit user consent. Standalone repair buttons still need shared servicing coordination. New labels Greek/English; full translations, actual visual screenshots, and all prior interim restrictions remain release gates. No merge or release.
