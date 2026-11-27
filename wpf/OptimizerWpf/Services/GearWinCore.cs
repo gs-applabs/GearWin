@@ -35,6 +35,7 @@ internal sealed class OperationCoordinator
     private readonly List<Request> _pending = new();
     private readonly Func<int> _capacity;
     private const int MaxPending = 32;
+    private bool _stopping;
     internal OperationCoordinator(Func<int> capacity) => _capacity = capacity;
 
     internal static bool IsHeavyMutation(CoreWork kind) => kind is CoreWork.Cleanup or CoreWork.Memory or CoreWork.Repair or CoreWork.Backup or CoreWork.Registry;
@@ -57,6 +58,7 @@ internal sealed class OperationCoordinator
         var request = new Request(kind, priority);
         lock (_gate)
         {
+            if (_stopping) throw new OperationCanceledException("GearWin is shutting down.");
             if (_pending.Count >= MaxPending) throw new InvalidOperationException("Maintenance queue is full.");
             _pending.Add(request);
             Dispatch();
@@ -92,10 +94,22 @@ internal sealed class OperationCoordinator
 
     internal void PolicyChanged() { lock (_gate) Dispatch(); }
 
+    internal void StopAccepting()
+    {
+        lock (_gate)
+        {
+            _stopping = true;
+            foreach (var request in _pending) request.Completion.TrySetCanceled();
+            _pending.Clear();
+            // Never terminate an already running Windows repair or backup.
+        }
+    }
+
     // User work wins over queued background work; running work is never interrupted.
     // Do not jump ahead of a blocked user request with conflicting background work.
     private void Dispatch()
     {
+        if (_stopping) return;
         var limit = Math.Clamp(_capacity(), 1, 3);
         while (_active.Count < limit)
         {
@@ -117,6 +131,8 @@ internal static class GearWinCore
     private static readonly OperationCoordinator Coordinator = new(() => PerformanceProfileService.Current.MaxParallelScans);
 
     static GearWinCore() => PerformanceProfileService.Changed += Coordinator.PolicyChanged;
+
+    internal static void Stop() => Coordinator.StopAccepting();
 
     internal static Task<IDisposable> EnterAsync(CoreWork kind, CorePriority priority = CorePriority.User, CancellationToken ct = default)
         => Coordinator.AcquireAsync(kind, priority, ct);
