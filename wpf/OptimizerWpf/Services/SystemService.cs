@@ -215,20 +215,43 @@ namespace OptimizerWpf.Services
             "explorer", "dwm", "fontdrvhost", "sihost", "WUDFHost", "Memory Compression",
         };
 
-        public static Task<IReadOnlyList<ProcessRow>> LoadProcessesAsync() => Task.Run(() =>
+        private static readonly object ProcessScanGate = new();
+        private static Task<IReadOnlyList<ProcessRow>>? _processScan;
+
+        public static Task<IReadOnlyList<ProcessRow>> LoadProcessesAsync()
+        {
+            lock (ProcessScanGate)
+            {
+                if (_processScan is { IsCompleted: false }) return _processScan;
+                return _processScan = GearWinCore.RunAsync(CoreWork.Diagnostics, () => Task.Run(ReadProcesses));
+            }
+        }
+
+        private static IReadOnlyList<ProcessRow> ReadProcesses()
         {
             var rows = new List<ProcessRow>();
-            // Ένα snapshot της μνήμης ανά διεργασία (πριν: SafeWorkingSet καλούνταν πολλές φορές ανά διεργασία μέσα στο
-            // sort) και ΟΛΑ τα Process objects γίνονται Dispose (πριν διέρρεαν εκατοντάδες handles σε κάθε ανανέωση).
             var all = Process.GetProcesses();
-            var ranked = all.Select(p => (Proc: p, Ws: SafeWorkingSet(p))).OrderByDescending(x => x.Ws).Take(25).ToList();
-            foreach (var (p, _) in ranked)
+            try
             {
-                rows.Add(new ProcessRow(p.Id, p.ProcessName, Math.Round(SafeWorkingSet(p) / 1024.0 / 1024.0, 1), CriticalProcessNames.Contains(p.ProcessName)));
+                var ranked = all.Select(p => (Proc: p, Ws: SafeWorkingSet(p)))
+                    .OrderByDescending(x => x.Ws).Take(25);
+                foreach (var (p, ws) in ranked)
+                {
+                    try
+                    {
+                        var name = p.ProcessName;
+                        rows.Add(new ProcessRow(p.Id, name, Math.Round(ws / 1024.0 / 1024.0, 1), CriticalProcessNames.Contains(name)));
+                    }
+                    catch (InvalidOperationException) { /* process exited during snapshot */ }
+                    catch (System.ComponentModel.Win32Exception) { /* process inaccessible */ }
+                }
+                return rows;
             }
-            foreach (var p in all) { try { p.Dispose(); } catch { } }
-            return (IReadOnlyList<ProcessRow>)rows;
-        });
+            finally
+            {
+                foreach (var p in all) { try { p.Dispose(); } catch { } }
+            }
+        }
 
         private static long SafeWorkingSet(Process p) { try { return p.WorkingSet64; } catch { return 0; } }
 
