@@ -124,4 +124,60 @@ public class GearWinCoreTests
         foreach (var task in waiting)
             await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => { await task; });
     }
+
+    [Theory]
+    [InlineData((int)CoreWork.SoftwareChange, (int)CoreWork.Backup)]
+    [InlineData((int)CoreWork.SoftwareChange, (int)CoreWork.Repair)]
+    [InlineData((int)CoreWork.SoftwareChange, (int)CoreWork.UpdateScan)]
+    [InlineData((int)CoreWork.ProfileChange, (int)CoreWork.SoftwareChange)]
+    [InlineData((int)CoreWork.ProfileChange, (int)CoreWork.Cleanup)]
+    public void NewMutationDomainsConflictSymmetrically(int first, int second)
+    {
+        Assert.True(OperationCoordinator.Conflicts((CoreWork)first, (CoreWork)second));
+        Assert.True(OperationCoordinator.Conflicts((CoreWork)second, (CoreWork)first));
+    }
+
+    [Fact]
+    public async Task OptionalBackgroundWorkNeverBuildsABacklog()
+    {
+        var core = new OperationCoordinator(() => 2);
+        using var active = await core.AcquireAsync(CoreWork.Backup, CorePriority.User);
+        for (int i = 0; i < 10; i++)
+            Assert.Null(core.TryAcquireBackground(CoreWork.ProfileChange));
+        Assert.Equal(0, core.PendingCount);
+        active.Dispose();
+        using var lease = core.TryAcquireBackground(CoreWork.ProfileChange);
+        Assert.NotNull(lease);
+        Assert.Equal(1, core.ActiveCount);
+    }
+
+    [Fact]
+    public async Task OptionalBackgroundWorkYieldsToWaitingUser()
+    {
+        var core = new OperationCoordinator(() => 3);
+        using var active = await core.AcquireAsync(CoreWork.UpdateScan, CorePriority.Background);
+        var user = core.AcquireAsync(CoreWork.SoftwareChange, CorePriority.User);
+        Assert.Null(core.TryAcquireBackground(CoreWork.HardwareScan));
+        active.Dispose();
+        using var lease = await user.WaitAsync(TimeSpan.FromSeconds(2));
+    }
+
+    [Fact]
+    public async Task LegacyScanCancellationIsScopedToItsAsyncFlow()
+    {
+        using var canceled = new CancellationTokenSource();
+        canceled.Cancel();
+        var original = WingetService.ScanToken;
+        try
+        {
+            WingetService.ScanToken = CancellationToken.None;
+            await Task.Run(async () =>
+            {
+                WingetService.ScanToken = canceled.Token;
+                await Assert.ThrowsAnyAsync<OperationCanceledException>(() => WingetService.ScanAsync());
+            });
+            Assert.False(WingetService.ScanToken.IsCancellationRequested);
+        }
+        finally { WingetService.ScanToken = original; }
+    }
 }
