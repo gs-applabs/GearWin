@@ -20,7 +20,8 @@ namespace OptimizerWpf.Services
     public static class SensorService
     {
         private static Computer? _computer;
-        private static bool _openFailed;
+        private static long _openFailedAt;
+        private static readonly System.Collections.Generic.HashSet<string> FailedHardware = new();
         private static readonly object SensorGate = new();
         private static long _lastRefresh;
         private static bool _closed;
@@ -39,7 +40,7 @@ namespace OptimizerWpf.Services
 
         private static Computer? GetComputer()
         {
-            if (_closed || _openFailed) return null;
+            if (_closed || (_openFailedAt != 0 && Environment.TickCount64 - _openFailedAt < 60000)) return null;
             if (_computer != null) return _computer;
             try
             {
@@ -59,7 +60,7 @@ namespace OptimizerWpf.Services
                 // πολιτική antivirus/Group Policy που μπλοκάρει drivers, ή απουσία elevation σε
                 // ασυνήθιστη περίπτωση) - υποβαθμίζεται σε "καμία θερμοκρασία διαθέσιμη" αντί να
                 // ρίξει την εφαρμογή.
-                _openFailed = true;
+                _openFailedAt = Environment.TickCount64;
                 try { _computer?.Close(); } catch { }
                 _computer = null;
                 return null;
@@ -70,11 +71,8 @@ namespace OptimizerWpf.Services
         {
             var now = Environment.TickCount64;
             if (!RefreshDue(now, _lastRefresh)) return;
-            foreach (var hw in computer.Hardware)
-            {
-                hw.Update();
-                foreach (var sub in hw.SubHardware) sub.Update();
-            }
+            FailedHardware.Clear();
+            foreach (var hw in computer.Hardware) UpdateTree(hw);
             _lastRefresh = now;
         }
 
@@ -84,7 +82,30 @@ namespace OptimizerWpf.Services
         // `sensors.FirstOrDefault()` (ΟΠΟΙΟΣΔΗΠΟΤΕ αισθητήρας θερμοκρασίας βρεθεί πρώτος, μπορεί να
         // είναι ασήμαντος - π.χ. VRM/SoC αντί για τον πυρήνα). Τώρα δοκιμάζει πολλαπλά γνωστά
         // ονόματα (Intel ΚΑΙ AMD) με τη σειρά.
-        private static readonly string[] CpuPackageNames = { "Package", "Tctl", "Tdie", "CPU Die", "Core Average", "Core Max" };
+        private static void UpdateTree(IHardware hardware)
+        {
+            try { hardware.Update(); } catch { FailedHardware.Add(hardware.Identifier.ToString()); }
+            foreach (var child in hardware.SubHardware) UpdateTree(child);
+        }
+
+        private static System.Collections.Generic.IEnumerable<IHardware> HardwareTree(IHardware hardware)
+        {
+            yield return hardware;
+            foreach (var child in hardware.SubHardware)
+                foreach (var item in HardwareTree(child)) yield return item;
+        }
+
+        internal static bool IsValidTemperature(double value) => double.IsFinite(value) && value > 1 && value <= 150;
+
+        // DIMM thermal limits, VRM, SOC and other unrelated readings are never a substitute.
+        internal static bool IsLiveTemperatureName(string name) =>
+            !name.Contains("limit", StringComparison.OrdinalIgnoreCase) &&
+            !name.Contains("threshold", StringComparison.OrdinalIgnoreCase) &&
+            !name.Contains("resolution", StringComparison.OrdinalIgnoreCase) &&
+            !name.Contains("maximum", StringComparison.OrdinalIgnoreCase) &&
+            !name.Contains("critical", StringComparison.OrdinalIgnoreCase);
+
+        private static readonly string[] CpuPackageNames = { "CPU Package", "Package", "Tctl", "Tdie", "CPU Die", "Core Average", "Core Max", "Core #" };
         private static readonly string[] GpuCoreNames = { "GPU Core", "Core", "Hot Spot", "Junction" };
 
         // ΔΙΟΡΘΩΣΗ (χρήστης ανέφερε: "CPU temp δεν φαίνεται, η Gigabyte έχει εφαρμογή που τη μετράει") -
@@ -190,7 +211,7 @@ namespace OptimizerWpf.Services
                     for (var i = 0; i < count; i++)
                     {
                         var temp = new AdlTemperature { iSize = System.Runtime.InteropServices.Marshal.SizeOf<AdlTemperature>() };
-                        if (Adl.ADL_Overdrive5_Temperature_Get(i, 0, ref temp) == 0 && temp.iTemperature > 0)
+                        if (Adl.ADL_Overdrive5_Temperature_Get(i, 0, ref temp) == 0 && IsValidTemperature(temp.iTemperature / 1000.0))
                             return temp.iTemperature / 1000; // millidegrees -> whole °C
                     }
                     return null;
@@ -222,15 +243,19 @@ namespace OptimizerWpf.Services
         // API, εγκαθίσταται μαζί με κάθε driver AMD GPU (Catalyst/Adrenalin).
         private static class Adl
         {
+            [System.Runtime.InteropServices.DefaultDllImportSearchPaths(System.Runtime.InteropServices.DllImportSearchPath.System32)]
             [System.Runtime.InteropServices.DllImport("atiadlxx.dll")]
             public static extern int ADL_Main_Control_Create(AdlMainMallocCallback callback, int enumConnectedAdapters);
 
+            [System.Runtime.InteropServices.DefaultDllImportSearchPaths(System.Runtime.InteropServices.DllImportSearchPath.System32)]
             [System.Runtime.InteropServices.DllImport("atiadlxx.dll")]
             public static extern int ADL_Main_Control_Destroy();
 
+            [System.Runtime.InteropServices.DefaultDllImportSearchPaths(System.Runtime.InteropServices.DllImportSearchPath.System32)]
             [System.Runtime.InteropServices.DllImport("atiadlxx.dll")]
             public static extern int ADL_Adapter_NumberOfAdapters_Get(out int numAdapters);
 
+            [System.Runtime.InteropServices.DefaultDllImportSearchPaths(System.Runtime.InteropServices.DllImportSearchPath.System32)]
             [System.Runtime.InteropServices.DllImport("atiadlxx.dll")]
             public static extern int ADL_Overdrive5_Temperature_Get(int adapterIndex, int thermalControllerIndex, ref AdlTemperature temperature);
         }
@@ -244,7 +269,7 @@ namespace OptimizerWpf.Services
                 {
                     if (Nvml.nvmlDeviceGetHandleByIndex_v2(0, out var device) != 0) return null;
                     if (Nvml.nvmlDeviceGetTemperature(device, 0 /* NVML_TEMPERATURE_GPU */, out var temp) != 0) return null;
-                    return (int)temp;
+                    return IsValidTemperature(temp) ? (int)temp : null;
                 }
                 finally
                 {
@@ -265,15 +290,19 @@ namespace OptimizerWpf.Services
         // τεκμηριωμένη επίσημη βιβλιοθήκη, εγκαθίσταται μαζί με κάθε πρόσφατο NVIDIA driver.
         private static class Nvml
         {
+            [System.Runtime.InteropServices.DefaultDllImportSearchPaths(System.Runtime.InteropServices.DllImportSearchPath.System32)]
             [System.Runtime.InteropServices.DllImport("nvml.dll")]
             public static extern int nvmlInit_v2();
 
+            [System.Runtime.InteropServices.DefaultDllImportSearchPaths(System.Runtime.InteropServices.DllImportSearchPath.System32)]
             [System.Runtime.InteropServices.DllImport("nvml.dll")]
             public static extern int nvmlDeviceGetHandleByIndex_v2(uint index, out IntPtr device);
 
+            [System.Runtime.InteropServices.DefaultDllImportSearchPaths(System.Runtime.InteropServices.DllImportSearchPath.System32)]
             [System.Runtime.InteropServices.DllImport("nvml.dll")]
             public static extern int nvmlDeviceGetTemperature(IntPtr device, int sensorType, out uint temp);
 
+            [System.Runtime.InteropServices.DefaultDllImportSearchPaths(System.Runtime.InteropServices.DllImportSearchPath.System32)]
             [System.Runtime.InteropServices.DllImport("nvml.dll")]
             public static extern int nvmlShutdown();
         }
@@ -302,15 +331,13 @@ namespace OptimizerWpf.Services
                 try
                 {
                     RefreshAll(computer);
-                    var storageHw = computer.Hardware.Where(h => h.HardwareType == HardwareType.Storage).ToList();
+                    var storageHw = computer.Hardware.SelectMany(HardwareTree).Where(h => h.HardwareType == HardwareType.Storage).ToList();
                     if (storageHw.Count == 0) return null;
     
-                    var match = !string.IsNullOrWhiteSpace(modelHint)
-                        ? storageHw.FirstOrDefault(h => h.Name.Contains(modelHint, StringComparison.OrdinalIgnoreCase))
-                        : null;
-                    if (match == null && storageHw.Count != 1) return null;
-                    match ??= storageHw[0];
-    
+                    if (string.IsNullOrWhiteSpace(modelHint)) return null;
+                    var matches = storageHw.Where(h => string.Equals(h.Name.Trim(), modelHint.Trim(), StringComparison.OrdinalIgnoreCase)).ToArray();
+                    if (matches.Length != 1) return null;
+                    var match = matches[0];
                     return PickTemperature(match, null);
                 }
                 catch
@@ -329,9 +356,8 @@ namespace OptimizerWpf.Services
                 try
                 {
                     RefreshAll(computer);
-                    var hw = computer.Hardware.FirstOrDefault(h => h.HardwareType == type);
-                    if (hw == null) return null;
-                    return PickTemperature(hw, preferredNames);
+                    return computer.Hardware.SelectMany(HardwareTree).Where(h => h.HardwareType == type)
+                        .Select(h => PickTemperature(h, preferredNames)).Max();
                 }
                 catch
                 {
@@ -354,7 +380,8 @@ namespace OptimizerWpf.Services
         // παραπλανητικό ψεύτικο 0°C στον χρήστη.
         private static int? PickTemperature(IHardware hw, string[]? preferredNames)
         {
-            var sensors = hw.Sensors.Where(s => s.SensorType == SensorType.Temperature && s.Value.HasValue && s.Value.Value > 1).ToList();
+            if (FailedHardware.Contains(hw.Identifier.ToString())) return null;
+            var sensors = hw.Sensors.Where(s => s.SensorType == SensorType.Temperature && s.Value.HasValue && IsValidTemperature(s.Value.Value) && IsLiveTemperatureName(s.Name)).ToList();
             if (sensors.Count == 0) return null;
 
             if (preferredNames != null)
@@ -366,7 +393,8 @@ namespace OptimizerWpf.Services
                 }
             }
 
-            return (int)Math.Round(sensors[0].Value!.Value);
+            if (preferredNames != null) return null;
+            return (int)Math.Round(sensors.Max(s => s.Value!.Value));
         }
     }
 }
