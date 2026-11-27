@@ -62,8 +62,8 @@
                     </Grid>
                     <Grid Margin="0,0,0,10">
                         <Grid.ColumnDefinitions><ColumnDefinition Width="280"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-                        <Button Grid.Column="0" Content="{tr:Tr Health_ShortcutsBtn}" Style="{StaticResource AccentButtonStyle}" MinHeight="40" Click="BtnFixShortcuts_Click"><Button.ContentTemplate><DataTemplate><TextBlock Text="{Binding}" TextWrapping="Wrap" TextAlignment="Center" Margin="4"/></DataTemplate></Button.ContentTemplate></Button>
-                        <TextBlock Grid.Column="1" Text="{tr:Tr Health_ShortcutsDesc}" Style="{StaticResource SubTextStyle}" VerticalAlignment="Center" Margin="14,0,0,0" TextWrapping="Wrap"/>
+                        <Button Grid.Column="0" Content="{tr:Tr Health_ScanningShortcuts}" Style="{StaticResource AccentButtonStyle}" MinHeight="40" Click="BtnFixShortcuts_Click"><Button.ContentTemplate><DataTemplate><TextBlock Text="{Binding}" TextWrapping="Wrap" TextAlignment="Center" Margin="4"/></DataTemplate></Button.ContentTemplate></Button>
+                        <TextBlock Grid.Column="1" Text="{tr:Tr Health_FindingBrokenShortcuts}" Style="{StaticResource SubTextStyle}" VerticalAlignment="Center" Margin="14,0,0,0" TextWrapping="Wrap"/>
                     </Grid>
                     <Grid Margin="0,0,0,10">
                         <Grid.ColumnDefinitions><ColumnDefinition Width="280"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
