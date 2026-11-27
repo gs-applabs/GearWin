@@ -89,8 +89,8 @@ namespace OptimizerWpf.Services
 
         private static async Task<DeviceSummary> RunSharedAsync(int generation, string language)
         {
-            var result = await GearWinCore.RunAsync(CoreWork.Diagnostics,
-                () => Task.Run(ComputeSummary), CorePriority.Background).ConfigureAwait(false);
+            var result = await GearWinCore.RunAsync(CoreWork.SystemSnapshot,
+                () => Task.Run(ComputeSummary), CorePriority.User).ConfigureAwait(false);
             lock (_gate)
             {
                 if (generation == _generation && LanguageService.Current == language)
