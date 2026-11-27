@@ -19,11 +19,13 @@ namespace OptimizerWpf.Services
         private static HealthResult? _cached;
         private static long _cachedAt;
         private static string? _cachedLanguage;
+        private static int _generation;
+        private static int _cachedGeneration;
         internal static bool IsFresh(long now, long then) => now >= then && now - then < 15000;
 
         public static HealthResult Compute() => GetSnapshot(false);
         public static HealthResult ComputeFresh() => GetSnapshot(true);
-        public static void Invalidate() { lock (SnapshotGate) _cached = null; }
+        public static void Invalidate() => System.Threading.Interlocked.Increment(ref _generation);
 
         private static HealthResult GetSnapshot(bool fresh)
         {
@@ -31,12 +33,14 @@ namespace OptimizerWpf.Services
             lock (SnapshotGate)
             {
                 var language = LanguageService.Current;
-                if (!fresh && _cached != null && _cachedLanguage == language && IsFresh(Environment.TickCount64, _cachedAt))
+                var generation = System.Threading.Volatile.Read(ref _generation);
+                if (!fresh && _cached != null && _cachedLanguage == language && _cachedGeneration == generation && IsFresh(Environment.TickCount64, _cachedAt))
                     return _cached;
                 var result = ComputeCore();
                 _cached = result;
                 _cachedAt = Environment.TickCount64;
                 _cachedLanguage = language;
+                _cachedGeneration = generation;
                 return result;
             }
         }
