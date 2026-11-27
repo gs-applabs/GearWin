@@ -439,31 +439,50 @@ namespace OptimizerWpf.Views
         // Δεν αλλάζει σε δευτερόλεπτα σαν το CPU - αρκεί μία φορά στην εκκίνηση, καμία ανάγκη για
         // επαναλαμβανόμενο timer (ίδιο σκεπτικό "ελάφρυνση εφαρμογής" με τον δίσκο παραπάνω).
         private bool _temperatureReading;
+        private bool _diskTemperatureReading;
         private int _diskSelectionGeneration;
 
         private async Task RefreshTemperaturesAsync()
         {
-            if (_temperatureReading || _unloaded || !IsVisible || !IsLoaded) return;
+            if (_unloaded || !IsVisible || !IsLoaded) return;
+            _ = RefreshDiskTemperatureAsync();
+            if (_temperatureReading) return;
             _temperatureReading = true;
-            var drive = CurrentDrive;
-            var generation = _diskSelectionGeneration;
             try
             {
                 var sample = await Task.Run(() => (
                     Cpu: SensorService.GetCpuTemperatureCelsius(),
                     Gpu: SensorService.GetGpuTemperatureCelsius(),
                     Ram: SensorService.GetRamTemperatureCelsius(),
-                    Disk: drive == null ? null : StorageTemperatureService.Read(drive),
                     Pawn: SensorService.GetPawnIoVersion()));
                 if (_unloaded || !IsVisible) return;
                 SetTempText(TxtCpuTemp, sample.Cpu, "CPU", sample.Pawn);
                 SetTempText(TxtGpuTemp, sample.Gpu, "GPU", sample.Pawn);
                 SetTempText(TxtRamTemp, sample.Ram, "RAM", sample.Pawn);
-                if (generation == _diskSelectionGeneration)
-                    SetTempText(TxtDiskTemp, sample.Disk, "Disk", sample.Pawn);
             }
             catch (Exception ex) { System.Diagnostics.Trace.TraceError(ex.Message); }
             finally { _temperatureReading = false; }
+        }
+
+        private async Task RefreshDiskTemperatureAsync()
+        {
+            var drive = CurrentDrive;
+            if (_diskTemperatureReading || drive == null || _unloaded || !IsVisible || !IsLoaded) return;
+            _diskTemperatureReading = true;
+            var generation = _diskSelectionGeneration;
+            try
+            {
+                var temperature = await Task.Run(() => StorageTemperatureService.Read(drive));
+                if (!_unloaded && IsVisible && generation == _diskSelectionGeneration)
+                    SetTempText(TxtDiskTemp, temperature, "Disk", null);
+            }
+            catch (Exception ex) { System.Diagnostics.Trace.TraceError(ex.Message); }
+            finally
+            {
+                _diskTemperatureReading = false;
+                if (!_unloaded && IsVisible && generation != _diskSelectionGeneration)
+                    _ = RefreshDiskTemperatureAsync();
+            }
         }
 
         private static void SetTempText(System.Windows.Controls.TextBlock target, int? temp, string device, string? pawn)
@@ -530,6 +549,7 @@ namespace OptimizerWpf.Views
             TxtDiskTemp.ToolTip = null;
             TxtDriveLabel.Text = _drives[_driveIndex];
             RefreshDisk();
+            _ = RefreshDiskTemperatureAsync();
             await UpdateDiskIconAsync();
         }
 
@@ -585,9 +605,7 @@ namespace OptimizerWpf.Views
             // Μάρκα/περιγραφή δίσκου + θερμοκρασία (ρητό αίτημα χρήστη) - μαζί με το είδος δίσκου
             // εδώ, όχι στο γρήγορο 1s tick, αφού ΚΑΝΕΝΑ από τα δύο δεν αλλάζει ζωντανά.
             TxtDriveModel.Text = model ?? "";
-            var diskTemp = await Task.Run(() => StorageTemperatureService.Read(drive));
-            if (!_unloaded && generation == _diskSelectionGeneration)
-                SetTempText(TxtDiskTemp, diskTemp, "Disk", null);
+
         }
 
         // Δεν αλλάζει σε δευτερόλεπτα σαν το ποσοστό χρήσης - αρκεί μία φορά στην εκκίνηση.
