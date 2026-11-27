@@ -102,6 +102,34 @@ jobs:
               Start-Sleep -Seconds 2
             }
           }
+      - name: Summarize measured process samples
+        if: always()
+        shell: pwsh
+        run: |
+          $path = Join-Path $env:RUNNER_TEMP 'gearwin-audit/process-samples.csv'
+          if (-not (Test-Path $path)) { Write-Host 'No process samples available'; exit 0 }
+          $rows = Import-Csv $path
+          $summary = foreach ($group in ($rows | Where-Object { $_.name -eq 'GearWin.exe' } | Group-Object mode,pid,creationTime)) {
+            $s = @($group.Group | Sort-Object { [double]$_.elapsedSeconds })
+            if ($s.Count -lt 2) { continue }
+            $first = $s[0]; $last = $s[-1]
+            $seconds = [double]$last.elapsedSeconds - [double]$first.elapsedSeconds
+            if ($seconds -le 0) { continue }
+            $cpu = ([double]$last.kernel100ns + [double]$last.user100ns) - ([double]$first.kernel100ns + [double]$first.user100ns)
+            [pscustomobject]@{
+              mode=$first.mode; seconds=[math]::Round($seconds,2); samples=$s.Count
+              cpuMachinePercent=[math]::Round(100*$cpu/1e7/$seconds/[Environment]::ProcessorCount,3)
+              maxWorkingSetMiB=[math]::Round((($s | ForEach-Object {[double]$_.workingSetBytes} | Measure-Object -Maximum).Maximum)/1MB,2)
+              maxPrivateMiB=[math]::Round((($s | ForEach-Object {[double]$_.privateBytes} | Measure-Object -Maximum).Maximum)/1MB,2)
+              readTransferDelta=[double]$last.readTransferBytes-[double]$first.readTransferBytes
+              writeTransferDelta=[double]$last.writeTransferBytes-[double]$first.writeTransferBytes
+              handlesFirst=$first.handles; handlesLast=$last.handles
+            }
+          }
+          $json = @($summary) | ConvertTo-Json -Depth 4
+          $json | Set-Content (Join-Path $env:RUNNER_TEMP 'gearwin-audit/summary.json')
+          Write-Host $json
+          Write-Host 'Root process only; transfer bytes include non-disk I/O. Not physical SSD wear. Raw process tree is in CSV.'
       - uses: actions/upload-artifact@v4
         if: always()
         with:
