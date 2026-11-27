@@ -181,7 +181,7 @@ namespace OptimizerWpf.Views
 
         private async void BtnRegCleanDelete_Click(object sender, RoutedEventArgs e)
         {
-            var selected = _findings.Where(f => f.IsSelected).Select(f => f.Finding).ToList();
+            var selected = _findings.Where(f => f.IsSelected && f.CanDelete).Select(f => f.Finding).ToList();
             if (selected.Count == 0)
             {
                 // ΔΙΟΡΘΩΣΗ (εξονυχιστικός έλεγχος εντόπισε): σιωπηλό return, καμία ένδειξη στον χρήστη -
@@ -202,8 +202,6 @@ namespace OptimizerWpf.Views
             // flow). Τώρα χρησιμοποιεί το ΙΔΙΟ μόνιμο HealthCleanupService.RegistryBackupsDir - όλα τα
             // registry backups (από ΟΠΟΙΟΔΗΠΟΤΕ σημείο της εφαρμογής) καταλήγουν πλέον σε ΕΝΑ μέρος.
             var backupDir = HealthCleanupService.RegistryBackupsDir;
-            Directory.CreateDirectory(backupDir);
-
             using var busy = BusyScope.Begin(LanguageService.T("Health_DeletingRegistryItems"));
             // A requested restore point must not silently fail before registry mutations.
             if (await RestoreGuardService.EnsureRecentAsync() == RestoreGuardResult.Failed)
@@ -247,7 +245,7 @@ namespace OptimizerWpf.Views
 
         private async void BtnRestoreRegBackup_Click(object sender, RoutedEventArgs e)
         {
-            if (sender is not Button { Tag: RegistryBackupRow row }) return;
+            if (sender is not Button { Tag: RegistryBackupRow row } || !row.CanRestore) return;
             var confirm = ThemedMessageBox.Show(
                 $"{LanguageService.T("Health_RestoreConfirmPrefix")}{row.DisplayName}{LanguageService.T("Health_RestoreConfirmSuffix")}",
                 LanguageService.T("Health_ConfirmTitle"), MessageBoxButton.YesNo, MessageBoxImage.Warning);
@@ -324,11 +322,13 @@ namespace OptimizerWpf.Views
         // ΝΕΟ - βελτίωση: η ακριβής registry τοποθεσία (+ValueName αν υπάρχει) που θα διαγραφεί -
         // βλ. σχόλιο στο HealthView.xaml.
         public string RegPathDisplay => string.IsNullOrEmpty(Finding.ValueName) ? Finding.RegPath : $"{Finding.RegPath}\\{Finding.ValueName}";
+        public bool CanDelete => HealthCleanupService.CanDeleteFinding(Finding);
+        public string ReviewLabel => CanDelete ? Finding.Category : Finding.Category + (LanguageService.Current == "el" ? " · Μόνο έλεγχος" : " · Review only");
         private bool _isSelected;
         public bool IsSelected
         {
             get => _isSelected;
-            set { _isSelected = value; PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsSelected))); }
+            set { _isSelected = CanDelete && value; PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsSelected))); }
         }
         public RegistryFindingRow(RegistryFinding finding) => Finding = finding;
         public event PropertyChangedEventHandler? PropertyChanged;
@@ -339,10 +339,11 @@ namespace OptimizerWpf.Views
         public string DisplayName { get; }
         public string SubText { get; }
         public string FullPath { get; }
+        public bool CanRestore => HealthCleanupService.CanRestoreBackup(FullPath);
 
         public RegistryBackupRow(RegistryBackupEntry entry)
         {
-            DisplayName = entry.FileName;
+            DisplayName = entry.FileName + (HealthCleanupService.CanRestoreBackup(entry.FullPath) ? "" : " · Legacy / review only");
             FullPath = entry.FullPath;
             SubText = $"{entry.CreatedAt:yyyy-MM-dd HH:mm}  •  {QuickCleanService.FormatSize(entry.SizeBytes)}";
         }
