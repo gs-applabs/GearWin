@@ -7,13 +7,13 @@ Baseline: `0d36ba06ffd5b1f90676d546d8abdfafe1062fbf`; review branch `release/7.1
 | Pass | Distinct recorded findings | Source mitigations | Runtime-certified fixes | Status |
 |---|---:|---:|---:|---|
 | UMP01 source audit | 3 test/measurement coverage gaps | 1 infrastructure mitigation (measurement workflow added) | 0 | open |
-| UMP02 safety, batches 1–8 | 69 safety/correctness findings | 69 addressed at least in part in source | 0 operation-level certifications | open |
-| UMP03 core/resources, batches 1–5 | 40 findings | 40 addressed at least in part in source | 0 | open |
+| UMP02 safety, batches 1–9 | 76 safety/correctness findings | 76 addressed at least in part in source | 0 operation-level certifications | open |
+| UMP03 core/resources, batches 1–6 | 49 findings | 49 addressed at least in part in source | 0 | open |
 | UMP04 unified maintenance, batches 1–2 | 24 findings | 24 addressed at least in part in source | 0 | open |
 | UMP05 central operation core, batches 1–5 | 25 findings | 25 addressed at least in part in source | 0 | open |
 | UMP06 status and navigation, batch 1 | 9 findings | 9 addressed at least in part in source | 0 | open |
 | UMP07 early artwork fix | 8 distinct icon/UI findings | 8 addressed at least in part in source | 0 visual certifications | open |
-| Total | 178 | 176 at least partly addressed | 0 operation-level certifications | open |
+| Total | 194 | 192 at least partly addressed | 0 operation-level certifications | open |
 
 The earlier manual review also identified deferred issues in profiles, resources, backups and navigation. These will be assigned stable IDs in their owning passes; do not inflate totals by counting them again. Full tracked-source lexical inventory completed; manual semantic review remains pending. The 7.0.0 baseline Windows build reported 391 desktop + 42 migration tests on 2026-11-27; the Linux job logs available are from 2026-11-23 (5 synthetic clone tests). Six CI jobs reported success in the run; an opt-in test can report pass without doing clicks. Baseline success is not a new branch test result.
 
@@ -391,3 +391,35 @@ Run 45999348910: 494 desktop + 42 migration tests passed (536 total). Includes a
 C25: ordinary tray/menu Exit called Shutdown even during an active heavy operation. Refuse normal exit while active heavy lease exists; atomically close coordinator admission when safe and cancel pending work. Existing close-to-tray semantics unchanged. Windows session ending, forced process termination, external process orphaning, detached/native unconnected work and asynchronous read-only work are not protected by this gate. A queued request not yet admitted may be canceled on deliberate exit. No claim of global OS shutdown protection.
 
 Twelve additional authored fixtures (five lifecycle cases, seven numeric shortcut mappings); 114 cumulative new tests, 102 included in prior verified stages. Current changes through f402c6007935ef8ef25c23230a653c987b327c7b need compile and real UI checks. Legacy async-flow pairing is a compatibility bridge, not a proof all old calls are correctly paired; inherited execution contexts, nested operations and unmatched legacy notifications require migration to explicit scopes. Language fallback for core work labels is Greek/English, existing scope messages still may be in previous language until refreshed. Nonqueued optional background work does not create status scopes; duplicate legacy + core labels and long text need per-skin visual review. Numeric shortcut fixtures prove destination mapping, not actual key event delivery under all skins/focused controls. No merge or release.
+
+## Intermediate CI verification
+
+Run 46000330016: 506 desktop and 42 migration tests passed (548 total), including 12 prior lifecycle/shortcut fixtures. Icon preparation 31/31; installer build succeeded. Normal-mode measurement summary was emitted (CPU 4.142%, writes 635 bytes, handles 1170→1150), but process measurement step canceled before the full normal/tray cycle completed. Do not compare this as a certified complete baseline. Last complete measurement run remains 45993640140.
+
+## UMP03 — sixth resource batch (9 findings)
+
+| ID | Finding | Source mitigation |
+|---|---|---|
+| R41 | Home and widget opened separate CPU counters despite existing governor | shared native sampler, 750ms freshness |
+| R42 | Home and widget independently allocated GPU engine counters | common SharedTelemetryService with in-memory samples |
+| R43 | Widget opened GPU counters outside games; hidden Home retained GPU demand | visible consumers subscribe only when needed; last subscription releases counters |
+| R44 | GPU engine sampling ran on dispatcher | shared single-flight worker sampling |
+| R45 | Independent connectivity pings from simultaneous consumers | shared 10-second task/snapshot |
+| R46 | GPU engine instance list could remain stale during process changes | refresh list after 30 seconds when demand exists |
+| R47 | Network ETW accumulated PID entries indefinitely | bounded session dictionary (8192 IDs); new IDs beyond cap ignored until session restart |
+| R48 | Network monitoring could remain active when window was hidden but not unloaded | stop on hidden, user may explicitly restart on return |
+| R49 | Process objects from network/foreground lookups not explicitly disposed | using declarations |
+
+## UMP02 — ninth safety/correctness batch (7 findings)
+
+| ID | Finding | Source mitigation |
+|---|---|---|
+| S70 | Kernel network trace could replace another tool's session | precheck existing logger and NoRestartOnCreate |
+| S71 | DXGI overlay explicitly stopped existing named session regardless of owner | no takeover, fail closed |
+| S72 | ETW startup failure could leave partial session | assign session before provider setup and dispose on failure |
+| S73 | ETW consumer exit could leave false running flag | session-identity guarded cleanup; network UI reports unavailable |
+| S74 | Traffic rate assumed fixed one-second dispatcher tick | monotonic actual elapsed duration |
+| S75 | No Present events displayed zero FPS | unavailable instead of invented zero |
+| S76 | Failed overlay startup never retried for same PID | bounded retry after 30 seconds |
+
+TraceEvent option reference: https://github.com/microsoft/perfview/blob/main/src/TraceEvent/TraceEventSession.cs . Verify against pinned package/runtime in CI. Separate ETW kernel and DXGI sessions are retained because they are distinct providers and purposes; no claim of unified native ETW session. Shared CPU/GPU service has no new timer. GPU renewal can briefly display unavailable, and 30-second enumeration cost/accuracy (multi-adapter, process churn, 3D only) must be measured. Shared GPU background work still needs fault/lifecycle and physical GPU testing; sensor alerts, foreground checks and other timers remain to integrate. No guarantee of FPS accuracy; DXGI event-name heuristic is not PresentMon. Network cap deliberately bounds memory but may omit new PIDs after prolonged high churn. Existing named ETW sessions after crash require explicit owner/operator recovery, not auto takeover. Shared ping cache may lag changes by 10 seconds and does not prove general internet reachability. Fifteen deterministic new fixtures (freshness, CPU delta and elapsed rate); cumulative 129 authored, 114 included in previous successful stages. Current commits through bc52e8f7223716160061e29b322f9e131134dbc9 need new compile/tests and real runtime validation. No merge or release.
