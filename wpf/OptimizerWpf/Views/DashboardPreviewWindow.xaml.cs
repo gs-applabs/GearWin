@@ -209,7 +209,7 @@ namespace OptimizerWpf.Views
             var good = (Brush)FindResource("AccentBrush");
             var warn = new SolidColorBrush(Color.FromRgb(0xF5, 0x9E, 0x0B));
             var bad = new SolidColorBrush(Color.FromRgb(0xE5, 0x39, 0x35));
-            ScoreArc.Data = PcManagerHomeView.BuildArc(result.Score / 100.0, 50, 45.5);
+            ScoreArc.Data = PcManagerHomeView.BuildArc(result.IsComplete ? result.Score / 100.0 : 0, 50, 45.5);
             ScoreArc.Stroke = result.Score >= 80 ? good : result.Score >= 60 ? warn : bad;
 
             bool Has(string fixType) => result.Issues.Any(i => i.FixType == fixType);
@@ -222,7 +222,7 @@ namespace OptimizerWpf.Views
                 new HealthRowVm("Εκκίνηση & Υπηρεσίες", Has("Startup") ? "Πολλά στοιχεία" : "Καλή", Has("Startup") ? warn : good),
                 new HealthRowVm("Οδηγοί Συσκευών", drv == null ? "Άγνωστο" : drv == 0 ? "Ενημερωμένοι" : $"{drv} εκκρεμούν", drv is null or 0 ? good : warn),
             };
-            ListHealthRows.ItemsSource = rows;
+            ListHealthRows.ItemsSource = result.IsComplete ? rows : rows.Select(row => new HealthRowVm(row.Label, "Απαιτείται επανέλεγχος", warn)).ToArray();
         }
 
         // ── Καρφιτσωμένες συντομεύσεις ────────────────────────────────────────────────────
