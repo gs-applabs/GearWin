@@ -21,9 +21,10 @@ namespace OptimizerWpf.Services
         // enabled: null = δεν διαβάστηκε. Επιστρέφει true μόνο αν ΟΛΑ τα γνωστά προφίλ είναι ενεργά.
         public static bool? AllEnabled(IEnumerable<int?> profileValues)
         {
-            var known = profileValues.Where(v => v.HasValue).Select(v => v!.Value).ToList();
-            if (known.Count == 0) return null;
-            return known.All(v => v == 1);
+            var values = profileValues.ToArray();
+            if (values.Any(v => v == 0)) return false;
+            if (values.Length == 0 || values.Any(v => v != 1)) return null;
+            return true;
         }
 
         public static IReadOnlyList<SecurityItem> Build(OsInfo? os, string? tpmStatus, bool? firewallAllOn, bool? uacOn)
@@ -36,7 +37,8 @@ namespace OptimizerWpf.Services
                 // ΔΙΟΡΘΩΣΗ: "Ανενεργό" (χωρίς τρίτο AV) σημαίνει πραγματικά καμία προστασία - Warning.
                 // Οτιδήποτε άλλο (Ενεργό, ή "Ενεργό μέσω X" όταν ανιχνεύεται τρίτο AV) είναι Good, όχι
                 // ουδέτερο Info - η προηγούμενη έκδοση δεν έκανε ποτέ αυτή τη διάκριση.
-                var level = def == T("Sys_Disabled") ? SecurityLevel.Warning : SecurityLevel.Good;
+                var level = def == T("Sys_Disabled") ? SecurityLevel.Warning :
+                    def == T("Sec_Unknown") || def == "—" ? SecurityLevel.Info : SecurityLevel.Good;
                 list.Add(new SecurityItem("Defender", T("Sec_Antivirus"), level, def));
             }
             else
