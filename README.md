@@ -1,3 +1,32 @@
+<p align="center"><img src="https://raw.githubusercontent.com/gs-applabs/gs-applabs/main/assets/projects/gearwin.svg" width="100%" alt="GearWin — Complete PC Care"/></p>
+
+<p align="center"><strong>One Windows workspace for maintenance, security, diagnostics and recovery.</strong><br/>Ο υπολογιστής σου. Υπό τον έλεγχό σου.</p>
+
+<p align="center"><a href="https://github.com/gs-applabs/GearWin/releases/download/v7.0.0/GearWin-Setup-7.0.0.exe"><img alt="Download v7.0.0" src="https://img.shields.io/badge/DOWNLOAD-v7.0.0-087EA4?style=for-the-badge"/></a> <a href="https://github.com/gs-applabs/GearWin/releases/latest"><img alt="Release notes" src="https://img.shields.io/badge/RELEASE-NOTES-334155?style=for-the-badge"/></a></p>
+
+<p align="center"><a href="#at-a-glance--με-μια-ματιά">Overview / Επισκόπηση</a> · <a href="#full-documentation--αναλυτική-τεκμηρίωση">Full documentation / Τεκμηρίωση</a> · <a href="https://github.com/gs-applabs/GearWin/issues">Support / Υποστήριξη</a> · <a href="https://github.com/gs-applabs">GS App Labs</a></p>
+
+## At a glance / Με μια ματιά
+
+| | What you can do / Τι μπορείς να κάνεις |
+|---|---|
+| **Maintain / Συντήρηση** | Updates, cleanup and repair / Ενημερώσεις, καθαρισμός και επισκευή |
+| **Protect / Προστασία** | Defender, firewall and privacy controls / Ασφάλεια και απόρρητο |
+| **Recover / Ανάκτηση** | System image, migration planner and offline cloning kit / Backup, μεταφορά και κλωνοποίηση |
+
+### Get started / Ξεκίνημα
+
+- **Installer:** [GearWin-Setup-7.0.0.exe](https://github.com/gs-applabs/GearWin/releases/download/v7.0.0/GearWin-Setup-7.0.0.exe) · [SHA-256](https://github.com/gs-applabs/GearWin/releases/download/v7.0.0/GearWin-Setup-7.0.0.exe.sha256)
+- **Requirements / Απαιτήσεις:** Windows 11 x64 · self-contained .NET 11 installer.
+- **What's new / Νέα έκδοση:** System backup, migration tools and offline Linux Live imaging. / Αντίγραφα συστήματος, εργαλεία μεταφοράς και offline απεικόνιση.
+- **Known limits / Όρια:** Physical hardware, cloned Windows boot and full restore have not been verified. / Δεν έχει επαληθευτεί πλήρης επαναφορά ή εκκίνηση κλωνοποιημένων Windows σε πραγματικό υλικό.
+
+See the [published release](https://github.com/gs-applabs/GearWin/releases/tag/v7.0.0) for verification details. Review installation prompts and compare the checksum before running the installer. / Δείτε τις σημειώσεις έκδοσης και επαληθεύστε το SHA-256 πριν από την εγκατάσταση.
+
+---
+
+## Full documentation / Αναλυτική τεκμηρίωση
+
 <p align="center"><img src="docs/img/icon.png" width="96" alt="GearWin"/></p>
 
 # GearWin — Complete PC Care
