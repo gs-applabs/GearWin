@@ -162,4 +162,40 @@ public class MaintenanceSafetyTests
         }
         finally { System.IO.Directory.Delete(root, true); }
     }
+
+    [Theory]
+    [InlineData("ObsoleteMuiCache", @"HKCU\Software\Classes\Local Settings\Software\Microsoft\Windows\Shell\MuiCache", @"C:\Old\App.exe.FriendlyAppName", true)]
+    [InlineData("OrphanedStartupEntry", @"HKCU\Software\Microsoft\Windows\CurrentVersion\Run", "App", false)]
+    [InlineData("MissingUninstaller", @"HKLM\Software\Microsoft\Windows\CurrentVersion\Uninstall\App", null, false)]
+    [InlineData("ObsoleteMuiCache", @"HKLM\Software\Classes\Local Settings\Software\Microsoft\Windows\Shell\MuiCache", @"C:\Old\App.exe.FriendlyAppName", false)]
+    [InlineData("ObsoleteMuiCache", @"HKCU\Software\Classes\Local Settings\Software\Microsoft\Windows\Shell\MuiCache", "Unknown", false)]
+    public void RegistryCleanerOnlyMutatesAllowlistedDisplayCache(string category, string path, string? name, bool expected)
+        => Assert.Equal(expected, HealthCleanupService.CanDeleteFinding(new RegistryFinding(category, "", path, name)));
+
+    [Fact]
+    public void SettingsPersistenceSkipsIdenticalContent()
+    {
+        var root = System.IO.Path.Combine(System.IO.Path.GetTempPath(), System.Guid.NewGuid().ToString("N"));
+        System.IO.Directory.CreateDirectory(root);
+        try
+        {
+            var path = System.IO.Path.Combine(root, "settings.json");
+            Assert.True(AppSettingsService.WriteIfChanged(path, "{}", null));
+            System.IO.File.SetLastWriteTimeUtc(path, System.DateTime.UtcNow.AddDays(-1));
+            var timestamp = System.IO.File.GetLastWriteTimeUtc(path);
+            Assert.False(AppSettingsService.WriteIfChanged(path, "{}", "{}"));
+            Assert.Equal(timestamp, System.IO.File.GetLastWriteTimeUtc(path));
+            Assert.True(AppSettingsService.WriteIfChanged(path, "{\"Language\":\"el\"}", "{}"));
+            Assert.Equal("{\"Language\":\"el\"}", System.IO.File.ReadAllText(path));
+        }
+        finally { System.IO.Directory.Delete(root, true); }
+    }
+
+    [Theory]
+    [InlineData(0L, 0L, false)]
+    [InlineData(8589934592L, 4294967296L, false)]
+    [InlineData(8589934592L, 268435456L, true)]
+    [InlineData(17179869184L, 1073741824L, true)]
+    public void MemoryMaintenanceRequiresRealPressure(long total, long available, bool expected)
+        => Assert.Equal(expected, MemoryCleanerService.NeedsMaintenance(new MemoryCleanerService.MemoryStats(total, available, 0, 0, 0)));
 }
