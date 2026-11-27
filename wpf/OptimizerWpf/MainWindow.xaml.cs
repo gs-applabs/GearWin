@@ -95,8 +95,7 @@ public partial class MainWindow : Window
 
         StatusService.Changed += OnStatusChanged;
         Closed += (_, _) => StatusService.Changed -= OnStatusChanged;
-        StatusService.SetBusy(LanguageService.T("Main_Starting"));
-        StatusService.SetIdle(LanguageService.T("Ready"));
+        StatusService.Report(LanguageService.T("Ready"));
 
         ThemeManager.AttachBackground(AppBackground);
         ThemeManager.Changed += ApplyPcManagerSkinLayout;
@@ -328,7 +327,7 @@ public partial class MainWindow : Window
         // (business event, όχι language event) - βλ. σχόλιο στο _statusIsIdle παραπάνω. Ξαναστέλνει
         // ένα φρέσκο "Έτοιμο" ΜΟΝΟ αν η γραμμή είναι αυτή τη στιγμή σε ανάπαυση (δεν πειράζει ένα
         // πραγματικά ενεργό busy-μήνυμα άλλης καρτέλας).
-        if (_statusIsIdle) StatusService.SetIdle(LanguageService.T("Ready"));
+        if (_statusIsIdle) StatusService.Report(LanguageService.T("Ready"));
 
         RefreshThemeToggleLabel();
     }
@@ -551,10 +550,31 @@ public partial class MainWindow : Window
         if (animate) pulse.Begin(this, true); else pulse.Stop(this);
     }
 
+    private int _statusRefreshQueued;
+
     private void OnStatusChanged(string message, bool busy)
     {
-        if (!Dispatcher.CheckAccess()) { Dispatcher.BeginInvoke(() => OnStatusChanged(message, busy)); return; }
+        // Coalesce bursts. Read current state on the dispatcher rather than replaying
+        // stale messages that arrived from separate worker threads out of order.
+        if (Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished) return;
+        if (!Dispatcher.CheckAccess())
+        {
+            if (System.Threading.Interlocked.Exchange(ref _statusRefreshQueued, 1) == 0)
+                Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    System.Threading.Interlocked.Exchange(ref _statusRefreshQueued, 0);
+                    RefreshStatusSnapshot();
+                }));
+            return;
+        }
+        RefreshStatusSnapshot();
+    }
+
+    private void RefreshStatusSnapshot()
+    {
+        var (message, busy) = StatusService.Snapshot();
         _statusIsIdle = !busy;
+        if (!busy && string.IsNullOrWhiteSpace(message)) message = LanguageService.T("Ready");
         TxtStatus.Text = $"{LanguageService.T("StatusPrefix")}{message}";
         ActivitySpinner.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
         RefreshStatusMotion();
