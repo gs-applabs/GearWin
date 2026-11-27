@@ -7,13 +7,13 @@ Baseline: `0d36ba06ffd5b1f90676d546d8abdfafe1062fbf`; review branch `release/7.1
 | Pass | Distinct recorded findings | Source mitigations | Runtime-certified fixes | Status |
 |---|---:|---:|---:|---|
 | UMP01 source audit | 3 test/measurement coverage gaps | 1 infrastructure mitigation (measurement workflow added) | 0 | open |
-| UMP02 safety, batches 1–12 | 107 safety/correctness findings | 107 addressed at least in part in source | 0 operation-level certifications | open |
+| UMP02 safety, batches 1–13 | 117 safety/correctness findings | 117 addressed at least in part in source | 0 operation-level certifications | open |
 | UMP03 core/resources, batches 1–11 | 83 findings | 83 addressed at least in part in source | 0 | open |
 | UMP04 unified maintenance, batches 1–2 | 24 findings | 24 addressed at least in part in source | 0 | open |
 | UMP05 central operation core, batches 1–7 | 39 findings | 39 addressed at least in part in source | 0 | open |
 | UMP06 status and navigation, batch 1 | 9 findings | 9 addressed at least in part in source | 0 | open |
 | UMP07 early artwork fix | 8 distinct icon/UI findings | 8 addressed at least in part in source | 0 visual certifications | open |
-| Total | 273 | 271 at least partly addressed | 0 operation-level certifications | open |
+| Total | 283 | 281 at least partly addressed | 0 operation-level certifications | open |
 
 The earlier manual review also identified deferred issues in profiles, resources, backups and navigation. These will be assigned stable IDs in their owning passes; do not inflate totals by counting them again. Full tracked-source lexical inventory completed; manual semantic review remains pending. The 7.0.0 baseline Windows build reported 391 desktop + 42 migration tests on 2026-11-27; the Linux job logs available are from 2026-11-23 (5 synthetic clone tests). Six CI jobs reported success in the run; an opt-in test can report pass without doing clicks. Baseline success is not a new branch test result.
 
@@ -573,3 +573,24 @@ R82: unbounded repair output retention and single stdout capture; drain stdout/s
 16 authored regression cases (7 writer SIDs, 4 invalid temporary extensions, 3 bounded stream cases, 1 complete atomic staging, 1 oversized settings). 225 cumulative authored cases. Last confirmed count remains 606 (172 new cases at that stage). Run 46066762587 (job 140733883198) has successful build/tests and installer stages; resource measurements still in progress when checked, detailed test count not yet retrieved. New changes through 8c4afee07b2d26ac999067c955f36d3c5a8e6f8b require separate CI.
 
 Important limitations: this is defense-in-depth, not full proof of ACL/ancestor/hardlink/TOCTOU security. Existing GearWin directories with nontrusted owner/ACL will fail closed and need explicit safe migration (no blind ownership changes); child file ACLs and DLL/dependency trust need separate audit. SecureStorage existing read permission for Users retained, not a secret store. Removing age-only purge can leave orphaned temporary files after crashes; ownership-aware bounded reclamation remains open, not permission to accumulate indefinitely. Repair cancel now only cancels pending work, not active servicing; native process/pipe hangs, localized CHKDSK scheduling, task scheduler timeout outcome verification, restore transaction atomicity and cross-process settings reconciliation remain open. No claims of completed P0 or release.
+
+## P0.01 — new confirmed intermediate CI evidence
+
+Run 46066762587 (Windows job 140733883198): 601 desktop + 42 migration = 643 passed, installer and normal/tray measurements succeeded. Normal CPU 3.441%, max WS 268.84 MiB, max private 153.11 MiB, write transfer 635 bytes, handles 1170→1290; tray CPU 0.318%, max WS 131.95 MiB, max private 47.23 MiB, write transfer 1841 bytes, handles 457→855. Run 46067510791 (Windows job 140736470806, head 011cce9d1aa8d8ca4dfc3480ff374d4c423da019): 617 desktop + 42 migration = 659 passed, including all 225 newly authored fixtures up to P0 batch 12; installer and both measurements succeeded. Normal CPU 4.458%, max WS 269.41 MiB, max private 155.71 MiB, write transfer 635 bytes, handles 1164→1287. Tray CPU 0.052%, max WS 132.17 MiB, max private 47.30 MiB, write transfer 0 bytes, handles 715→852. 13 samples/~60s each, different builds/VMs, not controlled comparative results or proof of leak-free endurance. Tray CPU/private meet provisional targets in latest sample only; normal CPU and WS exceed targets, handle rise remains open. No physical SSD claim.
+
+## P0.03–P0.05 — UMP02 safety batch 13 (10 findings)
+
+| ID | Finding | Source mitigation |
+|---|---|---|
+| S108 | Startup disable renamed a Run value inside executable Run key, so it could still run | move exact raw value/type to separate DisabledStartup key outside Run |
+| S109 | Duplicate startup names across HKCU/HKLM could hide distinct registrations | scope dedup by hive, prefer actual active Run registration |
+| S110 | Interrupted registry move or changed destination could overwrite/lose original | flush verified destination, recheck source, explicit retry only for identical value/type |
+| S111 | Delayed startup task inherited HighestAvailable from privileged GearWin task template | LeastPrivilege for ordinary current-user startup only; preserve own GearWin tasks' existing policy |
+| S112 | HKLM startup delay converted all-users Run semantics into single-user task | reject unsupported all-users conversion rather than silently changing scope |
+| S113 | Sanitized task names collided across original names/users and /F replaced existing task | per-user SID + normalized name SHA-256, create-only registration |
+| S114 | Task removal preceded restoring Run value; failed restore could lose both startup paths | restore exact original first; keep original enabled when task deletion uncertain |
+| S115 | Delay UI allowed overlapping actions and silently clamped input | enforce 5–3600 seconds, guard both buttons, refresh actual snapshot and explain unknown/legacy result |
+| S116 | Power profile snapshot lacked commit marker and same-mode retry could claim incomplete activation | pending durable journal, verify actual plan/values before committed state; explicit retry of pending journal restores still-owned values |
+| S117 | Power recovery journal could be read from file with untrusted ACL or excessive size | verify protected file, owner, size; verify staged owner before publishing |
+
+14 newly authored cases (2 startup paths, 1 least privilege XML, 1 scoped identity, 6 profile commit/match cases, 4 interrupted move matching); 239 cumulative, 225 included in latest confirmed 659 tests. New source through 9c522effdad9f205ed670e81d778ad4954242e8b not yet verified by CI. No real startup registry or power plan mutation by these new fixtures. Legacy prefixed Run values are displayed as actual active registrations, not silently migrated. Existing legacy delayed tasks (potentially elevated) require manual review; they are not automatically deleted, renamed or upgraded. Current-user direct delay limited to existing ordinary local executable and explicit 5–3600s; no HKLM conversion. Existing new-task update/remove failure or timeout may leave duplicate startup routes; task identity verification by XML and durable multi-step transaction journal still required. Power snapshot legacy records only count active if actual state matches, no automatic startup rollback; explicit disable/retry can restore still-owned values, same-value external edits remain indistinguishable. Parent ACL/hardlinks/races and old journal owner migration remain open. No crash-orphan automatic purge implemented: avoid deleting files used by surviving child processes. TweakBackupService legacy string-only snapshot, missing-value inference and swallowed save failures are next critical audit. No merge or release.
