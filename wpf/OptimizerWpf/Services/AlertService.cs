@@ -20,6 +20,8 @@ namespace OptimizerWpf.Services
         public static readonly TimeSpan Cooldown = TimeSpan.FromHours(6);
 
         private static DispatcherTimer? _timer;
+        private static int _inFlight;
+        private static int _generation;
         private static readonly Dictionary<string, DateTime> _lastFired = new();
 
         // Ανεβαίνει πάνω από το όριο => ειδοποίηση (αν δεν έχει σκάσει πρόσφατα). Επιστρέφει null αλλιώς.
@@ -45,18 +47,30 @@ namespace OptimizerWpf.Services
         public static void Start()
         {
             if (_timer != null) return;
+            System.Threading.Interlocked.Increment(ref _generation);
             _timer = new DispatcherTimer { Interval = TimeSpan.FromMinutes(5) };
             _timer.Tick += (_, _) => CheckNow();
             _timer.Start();
         }
 
-        public static void Stop() { _timer?.Stop(); _timer = null; }
+        public static void Stop() { System.Threading.Interlocked.Increment(ref _generation); _timer?.Stop(); _timer = null; }
 
         // Οι αισθητήρες (LibreHardwareMonitor) και τα S.M.A.R.T. (WMI) μπορούν να πάρουν εκατοντάδες ms - τρέχουν
         // σε νήμα παρασκηνίου ώστε να μην παγώνει το UI, και μόνο το balloon επιστρέφει στο UI νήμα.
-        public static void CheckNow() => _ = Task.Run(CheckCore);
+        public static void CheckNow()
+        {
+            var settings = AppSettingsService.Current;
+            if (!settings.TempAlertsEnabled && !settings.SmartAlertsEnabled) return;
+            if (System.Threading.Interlocked.CompareExchange(ref _inFlight, 1, 0) != 0) return;
+            var generation = System.Threading.Volatile.Read(ref _generation);
+            _ = Task.Run(() =>
+            {
+                try { CheckCore(generation); }
+                finally { System.Threading.Volatile.Write(ref _inFlight, 0); }
+            });
+        }
 
-        private static void CheckCore()
+        private static void CheckCore(int generation)
         {
             try
             {
@@ -91,7 +105,11 @@ namespace OptimizerWpf.Services
                     _lastFired[a.Key] = now;
                     var alert = a;
                     var dispatcher = System.Windows.Application.Current?.Dispatcher;
-                    void Show() => TrayIconService.ShowNotificationBalloon(alert.Title, alert.Body, () => TrayIconService.OpenTab("System#0"));
+                    void Show()
+                    {
+                        if (generation == System.Threading.Volatile.Read(ref _generation))
+                            TrayIconService.ShowNotificationBalloon(alert.Title, alert.Body, () => TrayIconService.OpenTab("System#0"));
+                    }
                     if (dispatcher != null) dispatcher.BeginInvoke((Action)Show); else Show();
                 }
             }
