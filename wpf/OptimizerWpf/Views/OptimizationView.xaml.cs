@@ -232,19 +232,14 @@ namespace OptimizerWpf.Views
                     // ΔΙΟΡΘΩΣΗ: πριν, το Gaming Mode εμφανιζόταν "κλειστό" αλλά τα Windows έμεναν στις ρυθμίσεις του - τώρα απενεργοποιείται πραγματικά.
                     if (await RestoreGuardService.EnsureRecentAsync() == RestoreGuardResult.Failed)
                         throw new InvalidOperationException(LanguageService.T("Health_DeletePartialFailed"));
-                    await Task.Run(PowerModeService.SetOfficeMode);
-                    AppSettingsService.Current.OfficeModeActive = true;
-                    AppSettingsService.Current.GamingModeActive = false;
-                    AppSettingsService.Save();
+                    await PowerModeService.ApplyManualProfileAsync("Office", true);
                     TxtGamingModeStatus.Text = "";
                     StatusService.SetIdle(LanguageService.T("Opt_OfficeModeEnabled"));
                 }
                 else
                 {
                     StatusService.SetBusy(LanguageService.T("Opt_DisablingOfficeMode"));
-                    await Task.Run(() => PowerModeService.DisableOfficeMode());
-                    AppSettingsService.Current.OfficeModeActive = false;
-                    AppSettingsService.Save();
+                    await PowerModeService.ApplyManualProfileAsync("Office", false);
                     StatusService.SetIdle(LanguageService.T("Opt_OfficeModeDisabled"));
                 }
             }
@@ -269,6 +264,7 @@ namespace OptimizerWpf.Views
         {
             var isOn = ToggleGamingMode.IsChecked == true;
             ToggleGamingMode.IsEnabled = false;
+            ToggleOfficeMode.IsEnabled = false;
             try
             {
                 if (isOn)
@@ -281,10 +277,7 @@ namespace OptimizerWpf.Views
                     var guard = await RestoreGuardService.EnsureRecentAsync();
                     if (guard == RestoreGuardResult.Failed)
                         throw new InvalidOperationException(LanguageService.T("Health_DeletePartialFailed"));
-                    await Task.Run(PowerModeService.SetGamingMode);
-                    AppSettingsService.Current.GamingModeActive = true;
-                    AppSettingsService.Current.OfficeModeActive = false;
-                    AppSettingsService.Save();
+                    await PowerModeService.ApplyManualProfileAsync("Gaming", true);
                     ChangeJournalService.Record(LanguageService.T("Optimization_GamingMode") + ": " + LanguageService.T("Journal_On"), () =>
                     {
                         PowerModeService.DisableGamingMode();
@@ -298,9 +291,7 @@ namespace OptimizerWpf.Views
                 else
                 {
                     StatusService.SetBusy(LanguageService.T("Opt_DisablingGamingMode"));
-                    await Task.Run(() => PowerModeService.DisableGamingMode());
-                    AppSettingsService.Current.GamingModeActive = false;
-                    AppSettingsService.Save();
+                    await PowerModeService.ApplyManualProfileAsync("Gaming", false);
                     TxtGamingModeStatus.Text = "";
                     StatusService.SetIdle(LanguageService.T("Opt_GamingModeDisabled"));
                 }
@@ -454,9 +445,8 @@ namespace OptimizerWpf.Views
             try
             {
                 _scanCts = new System.Threading.CancellationTokenSource(TimeSpan.FromMinutes(8));   // συνολικό όριο χρόνου
-                WingetService.ScanToken = _scanCts.Token;
                 BtnCancelAppScan.Visibility = Visibility.Visible;
-                var results = await WingetService.ScanAsync();
+                var results = await WingetService.ScanCoordinatedAsync(_scanCts.Token, includeWindows: true, priority: CorePriority.User);
                 _scanCts.Token.ThrowIfCancellationRequested();
                 ReplaceUpdates(results);
 
@@ -478,7 +468,6 @@ namespace OptimizerWpf.Views
             }
             finally
             {
-                WingetService.ScanToken = System.Threading.CancellationToken.None;
                 _scanCts?.Dispose(); _scanCts = null;
                 BtnCancelAppScan.Visibility = Visibility.Collapsed;
                 SetBusy(false);
