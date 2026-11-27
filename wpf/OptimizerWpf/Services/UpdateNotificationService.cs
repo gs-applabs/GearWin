@@ -127,20 +127,18 @@ namespace OptimizerWpf.Services
 
         private static async Task RunCoordinatedAsync(bool announce, bool background)
         {
-            using var lease = await GearWinCore.EnterAsync(CoreWork.UpdateScan,
-                background ? CorePriority.Background : CorePriority.User);
             if (background && !AppSettingsService.Current.UpdateNotificationsEnabled) return;
-            await RunCheckCoreAsync(announce);
+            await RunCheckCoreAsync(announce, background ? CorePriority.Background : CorePriority.User);
         }
 
-        private static async Task RunCheckCoreAsync(bool announce)
+        private static async Task RunCheckCoreAsync(bool announce, CorePriority priority)
         {
             Log($"RunCheckAsync: starting (announce={announce})");
             AppSettingsService.Current.LastUpdateCheckAt = DateTime.Now;
 
             try
             {
-                var appUpdates = await WingetService.ScanAsync();
+                var appUpdates = await WingetService.ScanCoordinatedAsync(System.Threading.CancellationToken.None, includeWindows: false, priority: priority);
                 Log($"RunCheckAsync: winget scan found {appUpdates.Count} app update(s)");
                 UpdatesHubService.ReportAppScan(appUpdates.Count);
                 MaybeNotify(appUpdates.Count,
@@ -156,7 +154,7 @@ namespace OptimizerWpf.Services
 
             try
             {
-                var driverResult = await DriverService.ScanAsync();
+                var driverResult = await DriverService.ScanCoordinatedAsync(priority);
                 Log($"RunCheckAsync: driver scan found {driverResult.Updates.Count} update(s) (PolicyBlocked={driverResult.PolicyBlocked})");
                 if (!driverResult.PolicyBlocked)
                 {
@@ -174,7 +172,8 @@ namespace OptimizerWpf.Services
             // Services/WindowsUpdateService.cs. Ίδιο μοτίβο best-effort/MaybeNotify με τα δύο παραπάνω.
             try
             {
-                var (success, allWinUpdates, winError) = await WindowsUpdateService.ScanAsync();
+                var scan = await WindowsUpdateService.ScanCoordinatedAsync(priority);
+                var (success, allWinUpdates, winError) = (scan.Success, scan.Updates, scan.Error);
                 // Οι προαιρετικές ενημερώσεις (π.χ. προεπισκοπήσεις) δεν ενοχλούν με ειδοποίηση - εμφανίζονται στη λίστα της καρτέλας.
                 var winUpdates = allWinUpdates.Where(u => !u.IsOptional).ToList();
                 Log($"RunCheckAsync: Windows Update scan success={success}, found {winUpdates.Count} update(s) (+{allWinUpdates.Count - winUpdates.Count} optional){(success ? "" : ", error: " + winError)}");
