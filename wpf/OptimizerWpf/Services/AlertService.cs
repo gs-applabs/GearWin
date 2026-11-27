@@ -46,7 +46,7 @@ namespace OptimizerWpf.Services
 
         public static void Start()
         {
-            if (_timer != null) return;
+            if (_timer != null || !FeatureDemand.From(AppSettingsService.Current).Alerts) return;
             System.Threading.Interlocked.Increment(ref _generation);
             _timer = new DispatcherTimer { Interval = TimeSpan.FromMinutes(5) };
             _timer.Tick += (_, _) => CheckNow();
@@ -107,7 +107,8 @@ namespace OptimizerWpf.Services
                     var dispatcher = System.Windows.Application.Current?.Dispatcher;
                     void Show()
                     {
-                        if (generation == System.Threading.Volatile.Read(ref _generation))
+                        if (generation == System.Threading.Volatile.Read(ref _generation) &&
+                            (alert.Key.StartsWith("temp:", StringComparison.Ordinal) ? AppSettingsService.Current.TempAlertsEnabled : AppSettingsService.Current.SmartAlertsEnabled))
                             TrayIconService.ShowNotificationBalloon(alert.Title, alert.Body, () => TrayIconService.OpenTab("System#0"));
                     }
                     if (dispatcher != null) dispatcher.BeginInvoke((Action)Show); else Show();
