@@ -98,6 +98,8 @@ namespace OptimizerWpf.Services
             finally { _checkInFlight = false; }
         }
 
+        internal static void InvalidateAutomaticScan() => _generation++;
+
         public static void Stop()
         {
             _stopped = true;
