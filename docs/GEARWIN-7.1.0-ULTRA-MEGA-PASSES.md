@@ -7,13 +7,13 @@ Baseline: `0d36ba06ffd5b1f90676d546d8abdfafe1062fbf`; review branch `release/7.1
 | Pass | Distinct recorded findings | Source mitigations | Runtime-certified fixes | Status |
 |---|---:|---:|---:|---|
 | UMP01 source audit | 3 test/measurement coverage gaps | 1 infrastructure mitigation (measurement workflow added) | 0 | open |
-| UMP02 safety, batches 1–11 | 95 safety/correctness findings | 95 addressed at least in part in source | 0 operation-level certifications | open |
-| UMP03 core/resources, batches 1–10 | 81 findings | 81 addressed at least in part in source | 0 | open |
+| UMP02 safety, batches 1–12 | 107 safety/correctness findings | 107 addressed at least in part in source | 0 operation-level certifications | open |
+| UMP03 core/resources, batches 1–11 | 83 findings | 83 addressed at least in part in source | 0 | open |
 | UMP04 unified maintenance, batches 1–2 | 24 findings | 24 addressed at least in part in source | 0 | open |
 | UMP05 central operation core, batches 1–7 | 39 findings | 39 addressed at least in part in source | 0 | open |
 | UMP06 status and navigation, batch 1 | 9 findings | 9 addressed at least in part in source | 0 | open |
 | UMP07 early artwork fix | 8 distinct icon/UI findings | 8 addressed at least in part in source | 0 visual certifications | open |
-| Total | 259 | 257 at least partly addressed | 0 operation-level certifications | open |
+| Total | 273 | 271 at least partly addressed | 0 operation-level certifications | open |
 
 The earlier manual review also identified deferred issues in profiles, resources, backups and navigation. These will be assigned stable IDs in their owning passes; do not inflate totals by counting them again. Full tracked-source lexical inventory completed; manual semantic review remains pending. The 7.0.0 baseline Windows build reported 391 desktop + 42 migration tests on 2026-11-27; the Linux job logs available are from 2026-11-23 (5 synthetic clone tests). Six CI jobs reported success in the run; an opt-in test can report pass without doing clicks. Baseline success is not a new branch test result.
 
@@ -549,3 +549,27 @@ Run 46005543469, Windows job 140531018633: 564 desktop + 42 migration tests = 60
 | S95 | Deep uninstall/UWP refresh and action could overlap, unhandled exceptions/stuck status | per-view guard, scope/finally, explicit outcomes and restore guard for UWP |
 
 27 added tests (19 MSI registration/command/residual name, 8 exact UWP identity). 209 cumulative authored cases, 172 included in confirmed intermediate CI; latest source changes through 51d90aa7f612550f91b6e42c562b42739e3156d7 not yet compiled. Source commits fe627be, 8660cb2, 5489a78, 7b0e9ba, ed8e454, 846b10c, 51d90aa. Native MSI APIs and actual uninstall transaction require disposable integration test. Non-MSI/per-user or unusual command registrations temporarily delegate to Windows Settings; do not claim feature parity. Restore safe direct workflows later only with verified authority and package identity. Advisory folder matches are not ownership proof, and no data folders are deleted. Built-in Appx wildcard operations, package-manager executable trust, mutation supervision, installer success/readback and path race hardening remain P0.02–P0.05 work. No forced timeout kill of MSI/servicing. No merge or release.
+
+## P0.03–P0.05 — UMP02 safety batch 12 (12 findings)
+
+| ID | Finding | Source mitigation |
+|---|---|---|
+| S96 | Cancellation of active SFC/DISM/CHKDSK/WinSxS killed entire process tree | cancel admission only, keep repair lease until transaction process exits |
+| S97 | UI reported cancellation even if operation actually completed | distinguish pending cancellation exception and actual outcome, explain safe semantics |
+| S98 | Repair and schtasks executable resolution used bare names | use Windows SystemDirectory |
+| S99 | Secure-directory ACL check considered only four identities; owner/null DACL not checked | trusted owner and all effective allowed write identities, reject null DACL |
+| S100 | Existing secure directory could be redirected or blindly re-ACL'd | verify existing local path and protected directory, atomically create with protected ACL, preserve questionable old data |
+| S101 | Temporary purge used age alone and could recursively remove live job files | remove age-only purge, clean owned empty staging directories in task/script paths |
+| S102 | Temporary prefix/extension not bounded to safe simple names | strict syntax before directory creation |
+| S103 | Scheduled elevated application registration checked directory only, not executable ACL | check actual exe and directory owner/access rules and ordinary local path |
+| S104 | Scheduler XML staging overwrote file by default and recursive cleanup could remove unexpected children | CreateNew, durable flush, delete owned file and empty directory |
+| S105 | File.Exists hid access failures when loading settings | distinguish missing/read errors, verify existing ancestors and settings file, block normal save after load failure |
+| S106 | Settings stage wrote by path without exclusive creation/durable flush | unique CreateNew and Flush(true), same-directory replacement |
+| S107 | Import loaded arbitrarily large document and accepted unsupported language | 16 MiB file limit, supported-language check |
+
+## UMP03 resource batch 11
+R82: unbounded repair output retention and single stdout capture; drain stdout/stderr concurrently with 32768-character bound per stream. R83: repeated SecureStorage.EnsureRoot ACL writes; check existing ACL rather than rewriting each time.
+
+16 authored regression cases (7 writer SIDs, 4 invalid temporary extensions, 3 bounded stream cases, 1 complete atomic staging, 1 oversized settings). 225 cumulative authored cases. Last confirmed count remains 606 (172 new cases at that stage). Run 46066762587 (job 140733883198) has successful build/tests and installer stages; resource measurements still in progress when checked, detailed test count not yet retrieved. New changes through 8c4afee07b2d26ac999067c955f36d3c5a8e6f8b require separate CI.
+
+Important limitations: this is defense-in-depth, not full proof of ACL/ancestor/hardlink/TOCTOU security. Existing GearWin directories with nontrusted owner/ACL will fail closed and need explicit safe migration (no blind ownership changes); child file ACLs and DLL/dependency trust need separate audit. SecureStorage existing read permission for Users retained, not a secret store. Removing age-only purge can leave orphaned temporary files after crashes; ownership-aware bounded reclamation remains open, not permission to accumulate indefinitely. Repair cancel now only cancels pending work, not active servicing; native process/pipe hangs, localized CHKDSK scheduling, task scheduler timeout outcome verification, restore transaction atomicity and cross-process settings reconciliation remain open. No claims of completed P0 or release.
