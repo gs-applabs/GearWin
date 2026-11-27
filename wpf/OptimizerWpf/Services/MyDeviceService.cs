@@ -63,31 +63,48 @@ namespace OptimizerWpf.Services
         // τρόπο να ανιχνεύσει αλλαγές υλικού που έγιναν ΕΞΩ από την εφαρμογή (π.χ. σύνδεση νέου
         // δίσκου) όσο τρέχει το ίδιο session, οπότε προσφέρεται ρητό χειροκίνητο "Ανανέωση" κουμπί στο
         // SystemView (βλ. BtnRefreshDevice_Click) αντί για σιωπηλά stale δεδομένα χωρίς καμία διέξοδο.
-        public static void ClearCache() => _cachedSummary = null;
-
-        // 6.5.3: μία σάρωση τη φορά. Από το 6.5.0 κάθε επίσκεψη στην καρτέλα δημιουργεί νέο SystemView· αν ο χρήστης άλλαζε καρτέλες πριν
-        // τελειώσει η πρώτη σάρωση (αργές κλήσεις WMI), κάθε νέο View ξεκινούσε δική του - πολλαπλές ίδιες σαρώσεις και διπλά μηνύματα στη γραμμή κατάστασης.
         private static readonly object _gate = new();
         private static Task<DeviceSummary>? _inflight;
+        private static int _generation;
+        private static string? _cachedLanguage;
+        private static long _cachedAt;
+
+        public static void ClearCache()
+        {
+            lock (_gate) { _generation++; _cachedSummary = null; }
+        }
 
         public static Task<DeviceSummary> GetSummaryAsync()
         {
             lock (_gate)
             {
-                if (_cachedSummary != null) return Task.FromResult(_cachedSummary);
-                return _inflight ??= RunSharedAsync();
+                if (_inflight is { IsCompleted: false }) return _inflight;
+                var language = LanguageService.Current;
+                if (_cachedSummary != null && _cachedLanguage == language &&
+                    Environment.TickCount64 - _cachedAt < 120000)
+                    return Task.FromResult(_cachedSummary);
+                return _inflight = RunSharedAsync(_generation, language);
             }
         }
 
-        private static async Task<DeviceSummary> RunSharedAsync()
+        private static async Task<DeviceSummary> RunSharedAsync(int generation, string language)
         {
-            try { return await ComputeSummaryAsync(); }
-            finally { lock (_gate) _inflight = null; }
+            var result = await GearWinCore.RunAsync(CoreWork.Diagnostics,
+                () => Task.Run(ComputeSummary), CorePriority.Background).ConfigureAwait(false);
+            lock (_gate)
+            {
+                if (generation == _generation && LanguageService.Current == language)
+                {
+                    _cachedSummary = result;
+                    _cachedLanguage = language;
+                    _cachedAt = Environment.TickCount64;
+                }
+            }
+            return result;
         }
 
-        private static Task<DeviceSummary> ComputeSummaryAsync() => Task.Run(() =>
+        private static DeviceSummary ComputeSummary()
         {
-            if (_cachedSummary != null) return _cachedSummary;
             var mb = GetMotherboard();
             var drives = GetDrives();
             var os = GetOs();
@@ -96,9 +113,8 @@ namespace OptimizerWpf.Services
             var battery = GetBattery();
             var ram = GetRam();
             var gpus = GetGpus();
-            _cachedSummary = new DeviceSummary(mb, drives, os, net, cpu, battery, ram, gpus);
-            return _cachedSummary;
-        });
+            return new DeviceSummary(mb, drives, os, net, cpu, battery, ram, gpus);
+        }
 
         private static MotherboardInfo GetMotherboard()
         {
