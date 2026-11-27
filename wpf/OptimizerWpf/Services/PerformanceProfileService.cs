@@ -187,10 +187,12 @@ namespace OptimizerWpf.Services
                 _lastIdle = i; _lastKernel = k; _lastUser = u;
                 if (first) return -1;
                 var total = dk + du;
-                return total == 0 || di > total ? -1 : (total - di) * 100.0 / total;
+                return CpuPercent(di, total);
             }
             catch { return -1; }
         }
+
+        internal static double CpuPercent(ulong idle, ulong total) => total == 0 || idle > total ? -1 : (total - idle) * 100.0 / total;
 
         [StructLayout(LayoutKind.Sequential)] private struct SystemPowerStatus { public byte ACLineStatus, BatteryFlag, BatteryLifePercent, SystemStatusFlag; public int BatteryLifeTime, BatteryFullLifeTime; }
         [DllImport("kernel32.dll")] private static extern bool GetSystemPowerStatus(out SystemPowerStatus status);
