@@ -102,7 +102,7 @@ namespace OptimizerWpf.Services
             try { return WindowsIdentity.GetCurrent().Name; } catch { return Environment.UserName; }
         }
 
-        public static async Task<bool> CreateAsync(string taskName, string xml)
+        public static async Task<bool> CreateAsync(string taskName, string xml, bool replace = true)
         {
             // ΑΣΦΑΛΕΙΑ: το XML ορίζει εντολή που τρέχει με Highest privileges - ΟΧΙ από %TEMP% (αντικαταστάσιμο πριν το διαβάσει το schtasks).
             string? tmp = null;
@@ -114,7 +114,9 @@ namespace OptimizerWpf.Services
                     using (var writer = new StreamWriter(stream, Encoding.Unicode, 4096, leaveOpen: true)) writer.Write(xml);
                     stream.Flush(flushToDisk: true);
                 }
-                return await RunAsync("/Create", "/TN", taskName, "/XML", tmp, "/F");
+                return replace
+                    ? await RunAsync("/Create", "/TN", taskName, "/XML", tmp, "/F")
+                    : await RunAsync("/Create", "/TN", taskName, "/XML", tmp);
             }
             catch (Exception ex) { Trace.TraceError(ex.Message); return false; }
             finally
