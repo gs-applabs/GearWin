@@ -630,27 +630,26 @@ public partial class MainWindow : Window
             return;
         }
 
-        var tag = e.Key switch
-        {
-            Key.D1 or Key.NumPad1 => "Home",
-            Key.D2 or Key.NumPad2 => "Bloatware",
-            Key.D3 or Key.NumPad3 => "Health#1",
-            Key.D4 or Key.NumPad4 => "Health",
-            Key.D5 or Key.NumPad5 => "Network",
-            Key.D6 or Key.NumPad6 => "GamesMedia",
-            Key.D7 or Key.NumPad7 => "Tweaks",
-            Key.D8 or Key.NumPad8 => "System#1",
-            Key.D9 or Key.NumPad9 => "System",
-            _ => null,
-        };
+        var tag = ShortcutDestination(e.Key);
         if (tag == null) return;
-
-        foreach (var child in TabStrip.Children)
-        {
-            if (child is RadioButton rb && rb.Tag as string == tag) { rb.IsChecked = true; break; }
-        }
+        SelectTab(tag);
         e.Handled = true;
     }
+
+    // Route to the shared tab/subpage resolver in all navigation skins.
+    internal static string? ShortcutDestination(Key key) => key switch
+    {
+        Key.D1 or Key.NumPad1 => "Home",
+        Key.D2 or Key.NumPad2 => "Bloatware",
+        Key.D3 or Key.NumPad3 => "Health#1",
+        Key.D4 or Key.NumPad4 => "Health",
+        Key.D5 or Key.NumPad5 => "Network",
+        Key.D6 or Key.NumPad6 => "GamesMedia",
+        Key.D7 or Key.NumPad7 => "Tweaks",
+        Key.D8 or Key.NumPad8 => "System#1",
+        Key.D9 or Key.NumPad9 => "System",
+        _ => null,
+    };
 
     // ΔΙΟΡΘΩΣΗ (χρήστης ανέφερε: "όταν κλείνω το παράθυρο κλείνει και το tray") - δεν υπήρχε ΚΑΝΕΝΑΣ
     // Closing handler εδώ, οπότε το X του παραθύρου έκλεινε το MainWindow κανονικά, και επειδή το
