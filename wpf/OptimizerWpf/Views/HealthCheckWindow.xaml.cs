@@ -148,7 +148,7 @@ namespace OptimizerWpf.Views
         private async Task ScanSpaceAsync()
         {
             _spaceItems = await QuickCleanService.ScanAsync();
-            _browserCacheBytes = await HealthCleanupService.ScanBrowserCacheSizeAsync();
+            _browserCacheBytes = _spaceItems.FirstOrDefault(i => i.Key == "BrowserCache")?.SizeBytes ?? 0;
             _spaceFreeableBytes = _spaceItems.Where(i => i.Recommended).Sum(i => i.SizeBytes) + _browserCacheBytes;
         }
 
@@ -291,8 +291,7 @@ namespace OptimizerWpf.Views
                 if (_browserCacheBytes > 0)
                 {
                     foreach (var browser in HealthCleanupService.DetectBrowsers())
-                        await HealthCleanupService.ClearBrowserCacheAsync(browser);
-                    freed += _browserCacheBytes;
+                        freed += await HealthCleanupService.ClearBrowserCacheAsync(browser);
                 }
                 ImpactTrackingService.RecordBytesFreed(freed);
                 summary.Add(string.Format(LanguageService.T("HealthCheck_SummarySpace"), QuickCleanService.FormatSize(freed)));
