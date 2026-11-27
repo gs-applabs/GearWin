@@ -92,12 +92,12 @@ namespace OptimizerWpf.Services
                     catch (FileNotFoundException) { }
                 }
                 var parent = Path.GetDirectoryName(destination);
-                if (parent == null || !MaintenancePaths.IsOrdinaryLocalPath(parent) ||
-                    (File.Exists(destination) && !MaintenancePaths.IsOrdinaryLocalPath(destination))) return false;
+                if (parent == null || !MaintenancePaths.IsOrdinaryLocalPath(parent, allowRemovable: true) ||
+                    (File.Exists(destination) && !MaintenancePaths.IsOrdinaryLocalPath(destination, allowRemovable: true))) return false;
                 if (roots.Count == 0) return false;
                 foreach (var root in roots)
                 {
-                    if (destination.StartsWith(Path.TrimEndingDirectorySeparator(root) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+                    if (MaintenancePaths.IsWithin(root, destination))
                         return false;
                 }
                 staged = destination + "." + Guid.NewGuid().ToString("N") + ".tmp";
