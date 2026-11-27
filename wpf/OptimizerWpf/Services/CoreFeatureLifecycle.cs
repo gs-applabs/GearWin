@@ -35,6 +35,7 @@ internal static class CoreFeatureLifecycle
         var previous = _applied;
         _applied = wanted;
 
+        if (previous?.Updates == true && !wanted.Updates) UpdateNotificationService.InvalidateAutomaticScan();
         ApplyChange(previous?.UpdateTimer, wanted.UpdateTimer, UpdateNotificationService.Start, UpdateNotificationService.Stop);
         if (wanted.Updates && previous?.Updates != true) _ = UpdateNotificationService.StartupCheckAsync();
         if (wanted.LowDisk && previous?.LowDisk != true) UpdateNotificationService.RequestLowDiskCheck();
