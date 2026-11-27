@@ -346,4 +346,21 @@ public class GearWinCoreTests
         using var snapshot = await inventory.WaitAsync(TimeSpan.FromSeconds(2));
         Assert.Equal(2, core.ActiveCount);
     }
+
+    [Fact]
+    public async Task EarlierWaitingMutationCannotBeStarvedByLaterConflictingScans()
+    {
+        var core = new OperationCoordinator(() => 3);
+        using var scan = await core.AcquireAsync(CoreWork.CleanupScan, CorePriority.User);
+        var repair = core.AcquireAsync(CoreWork.Repair, CorePriority.User);
+        var later = core.AcquireAsync(CoreWork.UpdateScan, CorePriority.User);
+        Assert.False(repair.IsCompleted);
+        Assert.False(later.IsCompleted);
+        using var process = await core.AcquireAsync(CoreWork.ProcessSnapshot, CorePriority.User).WaitAsync(TimeSpan.FromSeconds(2));
+        scan.Dispose();
+        using var repairLease = await repair.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.False(later.IsCompleted);
+        repairLease.Dispose();
+        using var update = await later.WaitAsync(TimeSpan.FromSeconds(2));
+    }
 }
