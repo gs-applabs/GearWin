@@ -29,6 +29,8 @@ namespace OptimizerWpf.Services
 
         public static HealthResult Compute() => GetSnapshot(false);
         public static HealthResult ComputeFresh() => GetSnapshot(true);
+        internal static System.Threading.Tasks.Task<HealthResult> ComputeAsync(bool fresh = false, CorePriority priority = CorePriority.User) =>
+            GearWinCore.RunAsync(CoreWork.HealthScan, () => System.Threading.Tasks.Task.Run(() => GetSnapshot(fresh)), priority);
         public static void Invalidate() => System.Threading.Interlocked.Increment(ref _generation);
 
         private static HealthResult GetSnapshot(bool fresh)
