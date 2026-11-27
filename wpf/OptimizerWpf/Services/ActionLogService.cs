@@ -17,6 +17,8 @@ namespace OptimizerWpf.Services
         private const int MaxEntries = 500;
         private static readonly object Lock = new();
         private static readonly List<string> _entries = new();
+        private static string? _lastMessage;
+        private static int _refreshQueued;
         public static IReadOnlyList<string> Entries { get { lock (Lock) return _entries.ToArray(); } }
         public static event Action? Changed;
 
@@ -24,15 +26,23 @@ namespace OptimizerWpf.Services
         {
             StatusService.Changed += (message, isBusy) =>
             {
-                if (!isBusy) return;
                 lock (Lock)
                 {
+                    if (!isBusy) { _lastMessage = null; return; }
+                    if (string.Equals(_lastMessage, message, StringComparison.Ordinal)) return;
+                    _lastMessage = message;
                     _entries.Add($"[{DateTime.Now:HH:mm:ss}] {message}");
                     if (_entries.Count > MaxEntries) _entries.RemoveRange(0, _entries.Count - MaxEntries);
                 }
                 var d = System.Windows.Application.Current?.Dispatcher;
-                if (d != null && !d.CheckAccess()) d.BeginInvoke(() => Changed?.Invoke());
-                else Changed?.Invoke();
+                if (d == null) { Changed?.Invoke(); return; }
+                if (d.HasShutdownStarted || d.HasShutdownFinished) return;
+                if (System.Threading.Interlocked.Exchange(ref _refreshQueued, 1) != 0) return;
+                d.BeginInvoke(new Action(() =>
+                {
+                    System.Threading.Interlocked.Exchange(ref _refreshQueued, 0);
+                    Changed?.Invoke();
+                }), System.Windows.Threading.DispatcherPriority.Background);
             };
         }
 
