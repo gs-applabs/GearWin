@@ -22,6 +22,7 @@ namespace OptimizerWpf.Services
 
             try
             {
+                using var lease = await GearWinCore.EnterAsync(CoreWork.Backup);
                 if (!await Task.Run(() => IsSeparateBackupDisk(targetDrive)))
                     return (false, "The backup volume must be on a separate physical disk from the Windows and boot partitions.");
 
