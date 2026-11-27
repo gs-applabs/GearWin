@@ -136,78 +136,134 @@ namespace OptimizerWpf.Services
             return findings;
         }
 
-        // Αυτόματο .reg backup ΠΡΙΝ από κάθε διαγραφή (μέσω reg.exe export), ίδιο με το ps1 original.
-        public static Task<bool> DeleteFindingsAsync(IReadOnlyList<RegistryFinding> findings, string backupPath) =>
-            Task.Run(() => DeleteFindings(findings, backupPath));
+        // Only low-risk display-name cache values are eligible for automatic deletion.
+        // Uninstall trees, App Paths, startup and SharedDLL entries remain visible for review.
+        private const string MuiPath = @"Software\Classes\Local Settings\Software\Microsoft\Windows\Shell\MuiCache";
+        private static readonly object RegistryGate = new();
+        private sealed record MuiBackup(string Name, string Value);
 
-        // ΝΕΟ - roadmap "Backup registry - καμία διεπαφή επαναφοράς": τα .reg backups (βλ. DeleteFindings
-        // παραπάνω) υπήρχαν ήδη στο δίσκο αλλά καμία οθόνη δεν επέτρεπε να τα δεις/επαναφέρεις μέσα από
-        // την εφαρμογή - μόνο χειροκίνητο διπλό-κλικ έξω από αυτήν. Καθαρή ανάγνωση/επαναφορά, καμία
-        // αλλαγή στο ΠΩΣ παίρνονται τα backups.
-        public static string RegistryBackupsDir => Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "OptimizerWpf", "RegistryBackups");
+        internal static bool CanDeleteFinding(RegistryFinding f) =>
+            f.Category == "ObsoleteMuiCache" &&
+            string.Equals(f.RegPath, "HKCU\\" + MuiPath, StringComparison.OrdinalIgnoreCase) &&
+            f.ValueName is string name && name.Length > 0 && name.Length <= 16383 &&
+            System.Text.RegularExpressions.Regex.IsMatch(name, @"^[A-Za-z]:\\.+\.(FriendlyAppName|ApplicationCompany)$",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+        public static string RegistryBackupsDir
+        {
+            get
+            {
+                using var identity = System.Security.Principal.WindowsIdentity.GetCurrent();
+                var sid = identity.User?.Value ?? throw new IOException("Cannot identify user.");
+                return Path.Combine(SecureStorage.RootDir, "RegistryBackups", sid);
+            }
+        }
+
+        private static string EnsureBackupDirectory()
+        {
+            var root = SecureStorage.RootDir;
+            if (Directory.Exists(root) && !MaintenancePaths.IsOrdinaryLocalPath(root)) throw new IOException("Unsafe backup root.");
+            SecureStorage.EnsureRoot();
+            var dir = RegistryBackupsDir;
+            foreach (var item in new[] { Path.GetDirectoryName(dir)!, dir })
+            {
+                if (Directory.Exists(item) && !MaintenancePaths.IsOrdinaryLocalPath(item)) throw new IOException("Unsafe backup directory.");
+                SecureStorage.SecureDirectory(item);
+                if (!SecureStorage.IsDirectoryAdminOnlyWritable(item)) throw new IOException("Backup directory is not protected.");
+            }
+            return dir;
+        }
 
         public static Task<IReadOnlyList<RegistryBackupEntry>> ListRegistryBackupsAsync() => Task.Run(() =>
         {
-            if (!Directory.Exists(RegistryBackupsDir)) return (IReadOnlyList<RegistryBackupEntry>)Array.Empty<RegistryBackupEntry>();
-            return (IReadOnlyList<RegistryBackupEntry>)Directory.EnumerateFiles(RegistryBackupsDir, "*.reg")
-                .Select(f => new FileInfo(f))
-                .OrderByDescending(f => f.LastWriteTime)
-                .Select(f => new RegistryBackupEntry(f.Name, f.FullName, f.LastWriteTime, f.Length))
-                .ToList();
+            var dir = RegistryBackupsDir;
+            var legacy = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "OptimizerWpf", "RegistryBackups");
+            var list = new List<RegistryBackupEntry>();
+            foreach (var (folder, pattern) in new[] { (dir, "*.json"), (legacy, "*.reg") })
+            {
+                if (!MaintenancePaths.IsOrdinaryLocalPath(folder)) continue;
+                foreach (var path in Directory.GetFiles(folder, pattern))
+                {
+                    if (!MaintenancePaths.IsOrdinaryLocalPath(path)) continue;
+                    var f = new FileInfo(path);
+                    list.Add(new RegistryBackupEntry(f.Name, f.FullName, f.LastWriteTime, f.Length));
+                }
+            }
+            return (IReadOnlyList<RegistryBackupEntry>)list.OrderByDescending(f => f.CreatedAt).ToList();
         });
 
-        // reg.exe import εφαρμόζει το backup ΩΣ ΕΧΕΙ (επαναφέρει τις καταχωρήσεις όπως ήταν πριν τη
-        // διαγραφή) - exit code 0 = επιτυχία, ίδιο μοτίβο ελέγχου με RunAndWait αλλού στο αρχείο.
-        public static Task<bool> RestoreRegistryBackupAsync(string filePath) =>
-            Task.Run(() => RunAndWait("reg.exe", $"import \"{filePath}\"") == 0);
+        internal static bool CanRestoreBackup(string path) =>
+            string.Equals(Path.GetExtension(path), ".json", StringComparison.OrdinalIgnoreCase);
 
-        private static bool DeleteFindings(IReadOnlyList<RegistryFinding> findings, string backupPath)
+        public static Task<bool> RestoreRegistryBackupAsync(string filePath) => Task.Run(() =>
         {
-            try
+            lock (RegistryGate)
             {
-                // ΑΣΦΑΛΕΙΑ ΔΕΔΟΜΕΝΩΝ: (1) το όνομα του backup περιλαμβάνει μοναδικό αύξοντα αριθμό — πριν, δύο ευρήματα
-                // με ίδιο Display έγραφαν στο ίδιο .reg με /y και το πρώτο backup χανόταν· (2) αν το export ΑΠΟΤΥΧΕΙ δεν
-                // διαγράφουμε ΤΙΠΟΤΑ (πριν το αποτέλεσμα του export αγνοούνταν και η διαγραφή προχωρούσε χωρίς backup).
-                Directory.CreateDirectory(backupPath); // το reg export αποτυγχάνει αν ο φάκελος δεν υπάρχει — τώρα αυτό ακυρώνει τη διαγραφή
-                // Reject stale findings before writing any registry backup or deleting anything.
-                var current = ScanRegistry().ToHashSet();
-                if (findings.Any(f => !current.Contains(f))) return false;
-                string session = Guid.NewGuid().ToString("N");
-                int exportIndex = 0;
-                foreach (var finding in findings)
+                try
                 {
-                    var backupFile = Path.Combine(backupPath, $"{session}_{++exportIndex:D4}_{SafeFileName(finding.Display)}.reg");
-                    var exportArgs = $"export \"{finding.RegPath}\" \"{backupFile}\" /y";
-                    if (RunAndWait("reg.exe", exportArgs) != 0) return false;
+                    var dir = EnsureBackupDirectory();
+                    var full = Path.GetFullPath(filePath);
+                    if (!CanRestoreBackup(full) || !string.Equals(Path.GetDirectoryName(full), dir, StringComparison.OrdinalIgnoreCase) ||
+                        !MaintenancePaths.IsOrdinaryLocalPath(full) || new FileInfo(full).Length > 1024 * 1024) return false;
+                    var record = System.Text.Json.JsonSerializer.Deserialize<MuiBackup>(File.ReadAllText(full));
+                    if (record == null || !CanDeleteFinding(new RegistryFinding("ObsoleteMuiCache", "", "HKCU\\" + MuiPath, record.Name))) return false;
+                    using var key = Registry.CurrentUser.CreateSubKey(MuiPath);
+                    if (key == null) return false;
+                    // Never overwrite a value recreated by Windows or another application.
+                    var existing = key.GetValue(record.Name, null, RegistryValueOptions.DoNotExpandEnvironmentNames);
+                    if (existing != null) return existing is string old && old == record.Value && key.GetValueKind(record.Name) == RegistryValueKind.String;
+                    key.SetValue(record.Name, record.Value, RegistryValueKind.String);
+                    return key.GetValue(record.Name) is string restored && restored == record.Value;
                 }
+                catch { return false; }
+            }
+        });
 
-                foreach (var finding in findings)
-                {
-                    var (hive, subKey) = SplitRegPath(finding.RegPath);
-                    if (hive == null) return false;
-                    if (finding.ValueName != null)
-                    {
-                        using var key = hive.OpenSubKey(subKey, writable: true);
-                        if (key == null) return false;
-                        key.DeleteValue(finding.ValueName, throwOnMissingValue: true);
-                    }
-                    else
-                    {
-                        var parent = Path.GetDirectoryName(subKey)?.Replace('/', '\\') ?? "";
-                        var leaf = Path.GetFileName(subKey);
-                        using var parentKey = hive.OpenSubKey(parent, writable: true);
-                        if (parentKey == null) return false;
-                        parentKey.DeleteSubKeyTree(leaf, throwOnMissingSubKey: true);
-                    }
-                }
-                return true;
-            }
-            catch
+        public static Task<bool> DeleteFindingsAsync(IReadOnlyList<RegistryFinding> findings, string backupPath) =>
+            Task.Run(() =>
             {
-                return false;
-            }
-        }
+                lock (RegistryGate)
+                {
+                    try
+                    {
+                        if (findings.Count == 0 || findings.Any(f => !CanDeleteFinding(f))) return false;
+                        var dir = EnsureBackupDirectory();
+                        var current = ScanRegistry().ToHashSet();
+                        if (findings.Any(f => !current.Contains(f))) return false;
+                        using var key = Registry.CurrentUser.OpenSubKey(MuiPath, writable: true);
+                        if (key == null) return false;
+                        var staged = new List<MuiBackup>();
+                        foreach (var f in findings.Distinct())
+                        {
+                            if (key.GetValue(f.ValueName!, null, RegistryValueOptions.DoNotExpandEnvironmentNames) is not string value ||
+                                key.GetValueKind(f.ValueName!) != RegistryValueKind.String) return false;
+                            var record = new MuiBackup(f.ValueName!, value);
+                            var json = System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(record);
+                            if (json.Length > 1024 * 1024) return false;
+                            var path = Path.Combine(dir, Guid.NewGuid().ToString("N") + ".json");
+                            using (var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                            {
+                                stream.Write(json);
+                                stream.Flush(flushToDisk: true);
+                            }
+                            if (System.Text.Json.JsonSerializer.Deserialize<MuiBackup>(File.ReadAllBytes(path)) != record) return false;
+                            staged.Add(record);
+                        }
+                        // Recheck identity immediately before each deletion. A partial failure is
+                        // reported as such, with every affected value backed up independently.
+                        foreach (var record in staged)
+                        {
+                            var target = System.Text.RegularExpressions.Regex.Replace(record.Name, @"\.(FriendlyAppName|ApplicationCompany)$", "",
+                                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                            if (!IsConfirmedMissingLocalPath(target) || key.GetValue(record.Name, null) is not string value ||
+                                value != record.Value || key.GetValueKind(record.Name) != RegistryValueKind.String) return false;
+                            key.DeleteValue(record.Name, throwOnMissingValue: true);
+                        }
+                        return true;
+                    }
+                    catch { return false; }
+                }
+            });
 
         // Μόνο browsers που πραγματικά ανιχνεύτηκαν στο σύστημα (ο φάκελος User Data/Profiles τους
         // υπάρχει) εμφανίζονται - ίδια συμπεριφορά με το ps1's δυναμικό $browserCacheCatalog.
