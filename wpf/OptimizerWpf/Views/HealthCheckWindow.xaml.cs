@@ -338,7 +338,7 @@ namespace OptimizerWpf.Views
             switch (tag)
             {
                 case "Traces":
-                    mw.SelectTab("Health#2");
+                    mw.SelectTab("Health#0");
                     break;
                 case "Restore":
                     mw.SelectTab("Tweaks");
