@@ -404,21 +404,26 @@ namespace OptimizerWpf.Views
             return changed;
         }
 
-        public void RecordChange(bool turnedOn) =>
+        public void RecordChange(bool turnedOn)
+        {
+            // Journal retains the model and weak view reference, not the detached row/view.
+            var tweak = Tweak;
+            var row = new WeakReference<TweakRowVm>(this);
             ChangeJournalService.Record(
-                $"{Tweak.Label}: {LanguageService.T(turnedOn ? "Journal_On" : "Journal_Off")}",
+                $"{tweak.Label}: {LanguageService.T(turnedOn ? "Journal_On" : "Journal_Off")}",
                 (System.Func<System.Threading.Tasks.Task>)(async () =>
                 {
                     await GearWinCore.RunAsync(CoreWork.TweakChange, () => System.Threading.Tasks.Task.Run(() =>
                     {
-                        if (Tweak.DetectState?.Invoke() != turnedOn)
+                        if (tweak.DetectState?.Invoke() != turnedOn)
                             throw new InvalidOperationException("Tweak was changed after this journal entry.");
-                        if (turnedOn) Tweak.OffAction(); else Tweak.OnAction();
-                        if (Tweak.DetectState?.Invoke() != !turnedOn)
+                        if (turnedOn) tweak.OffAction(); else tweak.OnAction();
+                        if (tweak.DetectState?.Invoke() != !turnedOn)
                             throw new InvalidOperationException("Undo outcome could not be verified.");
                     }));
-                    IsOn = !turnedOn;
+                    if (row.TryGetTarget(out var target)) target.IsOn = !turnedOn;
                 }));
+        }
 
         public TweakRowVm(SimpleTweak tweak, string listKey, bool detectNow = true)
         {
