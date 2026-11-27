@@ -207,10 +207,12 @@ try {{
                     System.Text.RegularExpressions.RegexOptions.IgnoreCase));
         }
 
-        public static async Task<bool> IsWingetAppInstalledAsync(string wingetId)
+        public static async Task<bool> IsWingetAppInstalledAsync(string wingetId) => await ProbeInstalledAsync(wingetId) == true;
+
+        internal static async Task<bool?> ProbeInstalledAsync(string wingetId)
         {
             using var lease = await GearWinCore.EnterAsync(CoreWork.UpdateScan);
-            if (!System.Text.RegularExpressions.Regex.IsMatch(wingetId, @"^[A-Za-z0-9._+-]{1,120}$")) return false;
+            if (!System.Text.RegularExpressions.Regex.IsMatch(wingetId, @"^[A-Za-z0-9._+-]{1,120}$")) return null;
             try
             {
                 var psi = new ProcessStartInfo("winget.exe")
@@ -221,7 +223,7 @@ try {{
                 foreach (var arg in new[] { "list", "--id", wingetId, "--exact", "--accept-source-agreements", "--disable-interactivity" })
                     psi.ArgumentList.Add(arg);
                 using var process = Process.Start(psi);
-                if (process == null) return false;
+                if (process == null) return null;
                 using var timeout = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(30));
                 var output = process.StandardOutput.ReadToEndAsync(timeout.Token);
                 var error = process.StandardError.ReadToEndAsync(timeout.Token);
@@ -229,15 +231,22 @@ try {{
                 {
                     await process.WaitForExitAsync(timeout.Token);
                     await Task.WhenAll(output, error).WaitAsync(timeout.Token);
-                    return process.ExitCode == 0 && OutputContainsPackageId(await output, wingetId);
+                    return InterpretProbe(await output, process.ExitCode, wingetId);
                 }
                 catch (OperationCanceledException)
                 {
                     try { if (!process.HasExited) process.Kill(entireProcessTree: true); } catch { }
-                    return false;
+                    return null;
                 }
             }
-            catch { return false; }
+            catch { return null; }
+        }
+
+        internal static bool? InterpretProbe(string output, int exitCode, string id)
+        {
+            if (exitCode == 0 && OutputContainsPackageId(output, id)) return true;
+            if (unchecked((uint)exitCode) == 0x8a150014u) return false;
+            return null;
         }
 
         public static Task<bool> WingetInstallAsync(string wingetId) => !ValidRecommendationId(wingetId) ? Task.FromResult(false) : RunProcessForSuccessAsync("winget.exe",
