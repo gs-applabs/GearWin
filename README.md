@@ -1,5 +1,9 @@
 <p align="center"><img src="https://raw.githubusercontent.com/gs-applabs/gs-applabs/main/assets/projects/gearwin.svg" width="100%" alt="GearWin — Complete PC Care"/></p>
 
+<p align="center"><a href="https://github.com/gs-applabs/GearWin/releases/latest"><img alt="Latest published release" src="https://img.shields.io/github/v/release/gs-applabs/GearWin?label=release"/></a> <a href="https://github.com/gs-applabs/GearWin/releases"><img alt="All release asset downloads, not unique users" src="https://img.shields.io/github/downloads/gs-applabs/GearWin/total?label=asset%20downloads"/></a> <a href="https://github.com/gs-applabs/GearWin/actions/workflows/installer-e2e.yml"><img alt="CI workflow status" src="https://github.com/gs-applabs/GearWin/actions/workflows/installer-e2e.yml/badge.svg"/></a> <a href="https://github.com/gs-applabs/GearWin/actions/workflows/product-snapshots.yml"><img alt="Screenshot workflow status" src="https://github.com/gs-applabs/GearWin/actions/workflows/product-snapshots.yml/badge.svg"/></a></p>
+
+<p align="center"><a href="docs/GS-APP-LABS-FAQ.md">FAQ / Συχνές ερωτήσεις</a> · <a href="https://github.com/gs-applabs/GearWin/issues/new/choose">Feedback / Προτάσεις</a></p>
+
 <p align="center"><strong>One Windows workspace for maintenance, security, diagnostics and recovery.</strong><br/>Ο υπολογιστής σου. Υπό τον έλεγχό σου.</p>
 
 <p align="center"><a href="https://github.com/gs-applabs/GearWin/releases/download/v7.0.0/GearWin-Setup-7.0.0.exe"><img alt="Download v7.0.0" src="https://img.shields.io/badge/DOWNLOAD-v7.0.0-087EA4?style=for-the-badge"/></a> <a href="https://github.com/gs-applabs/GearWin/releases/latest"><img alt="Release notes" src="https://img.shields.io/badge/RELEASE-NOTES-334155?style=for-the-badge"/></a></p>
