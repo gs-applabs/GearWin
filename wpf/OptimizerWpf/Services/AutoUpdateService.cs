@@ -24,7 +24,7 @@ namespace OptimizerWpf.Services
             var exePath = Environment.ProcessPath ?? "";
             if (string.IsNullOrEmpty(exePath)) return false;
             // Η εργασία τρέχει με HighestAvailable χωρίς UAC - ίδια προϋπόθεση ασφαλείας με την εκκίνηση με τα Windows (βλ. SecureStorage).
-            if (!SecureStorage.IsDirectoryAdminOnlyWritable(Path.GetDirectoryName(exePath))) return false;
+            if (!SecureStorage.IsProtectedExecutable(exePath)) return false;
             var xml = TaskSchedulerService.BuildDailyTaskXml(exePath, "--auto-updates", TaskSchedulerService.CurrentUserId(), "GearWin - nightly app updates");
             return await TaskSchedulerService.CreateAsync(TaskName, xml);
         }
