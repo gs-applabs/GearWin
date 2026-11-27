@@ -17,6 +17,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+      - name: Recovery fixture tests (no block device writes)
+        run: python3 -m unittest discover -s tools/recovery/tests -v
       - run: python3 tools/audit/source_inventory.py "${{ runner.temp }}/inventory"
       - uses: actions/upload-artifact@v4
         if: always()

@@ -3,6 +3,9 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from dataclasses import replace
+from unittest.mock import patch
+import os
 
 path = Path(__file__).resolve().parents[1] / "gearwin_clone.py"
 spec = importlib.util.spec_from_file_location("gearwin_clone", path)
@@ -62,6 +65,81 @@ class CloneSafetyTests(unittest.TestCase):
             target.write_bytes(b"z" * 100)
             with self.assertRaises(OSError):
                 clone.clone(str(source), str(target), 100)
+
+    def test_identity_change_after_confirmation_is_rejected(self):
+        disk = replace(self.a, major_minor="8:0", wwn="wwn-a")
+        for changed in (
+            replace(disk, serial="different"), replace(disk, model="different"),
+            replace(disk, major_minor="8:16"), replace(disk, size=8192),
+            replace(disk, wwn="wwn-b")
+        ):
+            with self.subTest(changed=changed), self.assertRaises(ValueError):
+                clone.confirm_identity(disk, changed)
+        clone.confirm_identity(disk, disk)
+
+    def test_missing_stable_identifier_rejected(self):
+        with self.assertRaises(ValueError):
+            clone.identity(replace(self.a, major_minor="8:0", serial=""))
+
+    def test_missing_kernel_identity_rejected(self):
+        with self.assertRaises(ValueError):
+            clone.identity(self.a)
+
+    def test_parse_tree_and_kernel_identity(self):
+        data = {"blockdevices": [{"type": "disk", "path": "/dev/sda",
+                "size": 4096, "maj:min": "8:0", "wwn": "wwn-a",
+                "children": [{"type": "part", "mountpoints": ["/"]}]}]}
+        disk = clone.parse_disks(data)["/dev/sda"]
+        self.assertTrue(disk.busy)
+        self.assertEqual(disk.major_minor, "8:0")
+        self.assertEqual(disk.wwn, "wwn-a")
+
+    def test_block_validator_rejects_regular_file(self):
+        with tempfile.TemporaryFile() as f, self.assertRaises(ValueError):
+            clone.validate_open_device(f.fileno(), self.a)
+
+    def test_fixture_hardlink_rejected_without_writing(self):
+        with tempfile.TemporaryDirectory() as root:
+            a = Path(root) / "a"
+            b = Path(root) / "b"
+            a.write_bytes(b"keep")
+            os.link(a, b)
+            with self.assertRaises(ValueError):
+                clone.clone(a, b, 4)
+            self.assertEqual(a.read_bytes(), b"keep")
+
+    def test_short_fixture_does_not_change_destination(self):
+        with tempfile.TemporaryDirectory() as root:
+            a = Path(root) / "a"
+            b = Path(root) / "b"
+            a.write_bytes(b"a")
+            b.write_bytes(b"keep")
+            with self.assertRaises(OSError):
+                clone.clone(a, b, 4)
+            self.assertEqual(b.read_bytes(), b"keep")
+
+    def test_failed_second_claim_closes_first(self):
+        a = replace(self.a, major_minor="8:0")
+        b = replace(self.b, major_minor="8:16")
+        with patch.object(clone.os, "open", side_effect=[99, OSError("busy")]), \
+             patch.object(clone, "validate_open_device", return_value=8), \
+             patch.object(clone.os, "close") as close:
+            with self.assertRaises(OSError):
+                clone.clone_block_devices(a, b)
+            close.assert_called_once_with(99)
+
+    def test_no_copy_when_inventory_changes_after_claim(self):
+        a = replace(self.a, major_minor="8:0")
+        b = replace(self.b, major_minor="8:16")
+        with patch.object(clone.os, "open", side_effect=[98, 99]), \
+             patch.object(clone.os, "close") as close, \
+             patch.object(clone, "validate_open_device", side_effect=[8, 16]), \
+             patch.object(clone, "list_disks", return_value={a.path:a, b.path:replace(b, serial="other")}), \
+             patch.object(clone, "copy_bytes") as copy:
+            with self.assertRaises(ValueError):
+                clone.clone_block_devices(a, b)
+            copy.assert_not_called()
+            self.assertEqual(close.call_count, 2)
 
 if __name__ == "__main__":
     unittest.main()

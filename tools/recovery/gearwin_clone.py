@@ -7,6 +7,9 @@ For routine SSD migration prefer Clonezilla's filesystem-aware workflow.
 import argparse
 from dataclasses import dataclass
 import hashlib
+import fcntl
+import struct
+from contextlib import ExitStack
 import json
 import os
 from pathlib import Path
@@ -24,6 +27,8 @@ class Disk:
     model: str
     readonly: bool
     busy: bool
+    major_minor: str = ""
+    wwn: str = ""
 
 def parse_disks(data):
     def busy(item):
@@ -40,12 +45,13 @@ def parse_disks(data):
         result[path] = Disk(path, int(obj.get("size") or 0),
                             str(obj.get("serial") or "").strip(),
                             str(obj.get("model") or "").strip(),
-                            bool(int(obj.get("ro") or 0)), busy(obj))
+                            bool(int(obj.get("ro") or 0)), busy(obj),
+                            str(obj.get("maj:min") or ""), str(obj.get("wwn") or "").strip())
     return result
 
 def list_disks():
     result = subprocess.run(
-        ["lsblk", "-J", "-b", "-o", "PATH,TYPE,SIZE,SERIAL,MODEL,RO,MOUNTPOINTS,FSTYPE"],
+        ["/usr/bin/lsblk", "-J", "-b", "-o", "NAME,PATH,TYPE,SIZE,SERIAL,MODEL,RO,MOUNTPOINTS,FSTYPE,MAJ:MIN,WWN"],
         check=True, capture_output=True, text=True, timeout=30)
     return parse_disks(json.loads(result.stdout))
 
@@ -74,20 +80,25 @@ def is_live_boot():
 
 def copy_bytes(src, dest, size, chunk_size=BLOCK_SIZE):
     """Sequential bounded-memory copy, used by production and virtual-image tests."""
+    if size <= 0 or chunk_size <= 0 or chunk_size > BLOCK_SIZE:
+        raise ValueError("Invalid copy size.")
+    sha = hashlib.sha256()
     left = size
     while left:
         block = src.read(min(left, chunk_size))
         if not block:
             raise OSError("Unexpected end of source.")
+        sha.update(block)
         view = memoryview(block)
         while len(view):
             amount = dest.write(view)
-            if amount is None or amount <= 0:
+            if amount is None or amount <= 0 or amount > len(view):
                 raise OSError("Destination write failed.")
             view = view[amount:]
         left -= len(block)
     dest.flush()
     os.fsync(dest.fileno())
+    return sha.hexdigest()
 
 def digest(filename, size):
     sha = hashlib.sha256()
@@ -101,28 +112,92 @@ def digest(filename, size):
             left -= len(block)
     return sha.hexdigest()
 
+def digest_stream(stream, size):
+    sha = hashlib.sha256()
+    stream.seek(0)
+    left = size
+    while left:
+        block = stream.read(min(left, BLOCK_SIZE))
+        if not block:
+            raise OSError("Unexpected end during verification.")
+        sha.update(block)
+        left -= len(block)
+    return sha.hexdigest()
+
+
 def clone(src, dst, size):
-    # Open destination without O_TRUNC to avoid altering disk geometry; fail on IO errors.
-    reader = os.open(src, os.O_RDONLY)
-    try:
-        writer = os.open(dst, os.O_WRONLY | os.O_SYNC)
-        try:
-            with os.fdopen(reader, "rb", buffering=0) as inp:
-                reader = -1
-                with os.fdopen(writer, "wb", buffering=0) as out:
-                    writer = -1
-                    copy_bytes(inp, out, size)
-        finally:
-            if writer != -1:
-                os.close(writer)
-    finally:
-        if reader != -1:
-            os.close(reader)
-    return digest(src, size) == digest(dst, size)
+    """Regular-file fixture only. Production uses clone_block_devices."""
+    with open(src, "rb", buffering=0) as inp, open(dst, "r+b", buffering=0) as out:
+        first, second = os.fstat(inp.fileno()), os.fstat(out.fileno())
+        if not stat.S_ISREG(first.st_mode) or not stat.S_ISREG(second.st_mode):
+            raise ValueError("Fixture copy accepts regular files only.")
+        if (first.st_dev, first.st_ino) == (second.st_dev, second.st_ino):
+            raise ValueError("Fixture files refer to the same inode.")
+        if size <= 0 or first.st_size < size or second.st_size < size:
+            raise OSError("Fixture capacity is insufficient.")
+        copied = copy_bytes(inp, out, size)
+        return copied == digest_stream(out, size) == digest_stream(inp, size)
+
+
+def identity(disk):
+    # A stable hardware identifier plus kernel device identity is mandatory.
+    if not disk.major_minor or not (disk.serial or disk.wwn):
+        raise ValueError("Disk identity is incomplete; use a different verified recovery method.")
+    return (disk.path, disk.size, disk.serial, disk.wwn, disk.model, disk.major_minor)
+
+
+def confirm_identity(before, after):
+    if identity(before) != identity(after):
+        raise ValueError("Disk identity changed; no copy started.")
+
+
+def validate_open_device(fd, disk, target=False):
+    info = os.fstat(fd)
+    if not stat.S_ISBLK(info.st_mode):
+        raise ValueError("Opened object is not a block device.")
+    actual = f"{os.major(info.st_rdev)}:{os.minor(info.st_rdev)}"
+    if actual != disk.major_minor:
+        raise ValueError("Opened kernel device differs from confirmed disk.")
+    base = Path("/sys/dev/block") / actual
+    if not base.exists() or (base / "partition").exists():
+        raise ValueError("Only confirmed whole disks are supported.")
+    # Reject device-mapper/RAID/other consumers, even if not mounted.
+    for node in [base, *(p for p in base.iterdir() if (p / "partition").exists())]:
+        if (node / "holders").is_dir() and any((node / "holders").iterdir()):
+            raise ValueError("Disk or partition has active kernel holders.")
+    size = struct.unpack("=Q", fcntl.ioctl(fd, 0x80081272, bytes(8)))[0]  # BLKGETSIZE64
+    if size != disk.size:
+        raise ValueError("Opened device capacity differs from confirmed disk.")
+    if target and struct.unpack("=i", fcntl.ioctl(fd, 0x125e, bytes(4)))[0]:  # BLKROGET
+        raise ValueError("Opened target is read-only.")
+    return info.st_rdev
+
+
+def clone_block_devices(src, dst):
+    # Linux block-device O_EXCL rejects claimed/mounted devices; keep both
+    # descriptors through copying and verification, never reopen by pathname.
+    flags = os.O_EXCL | os.O_CLOEXEC | os.O_NOFOLLOW
+    with ExitStack() as stack:
+        reader = os.open(src.path, os.O_RDONLY | flags)
+        stack.callback(os.close, reader)
+        source_id = validate_open_device(reader, src)
+        writer = os.open(dst.path, os.O_RDWR | flags | os.O_SYNC)
+        stack.callback(os.close, writer)
+        if validate_open_device(writer, dst, target=True) == source_id:
+            raise ValueError("Source and destination are the same kernel device.")
+        # Re-read inventory after both claims and before the first write.
+        a, b = inspect(list_disks(), src.path, dst.path)
+        confirm_identity(src, a)
+        confirm_identity(dst, b)
+        with os.fdopen(reader, "rb", buffering=0, closefd=False) as inp, \
+                os.fdopen(writer, "r+b", buffering=0, closefd=False) as out:
+            copied = copy_bytes(inp, out, src.size)
+            return copied == digest_stream(out, src.size) == digest_stream(inp, src.size)
+
 
 def describe(d):
     return (f"{d.path} | {d.size:,} bytes | model={d.model or '?'} | "
-            f"serial={d.serial or '?'} | busy={d.busy} | read-only={d.readonly}")
+            f"serial={d.serial or '?'} | WWN={d.wwn or '?'} | device={d.major_minor or '?'} | busy={d.busy} | read-only={d.readonly}")
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
@@ -155,17 +230,19 @@ def main():
     for disk in (src, dst):
         if not stat.S_ISBLK(os.stat(disk.path).st_mode):
             raise ValueError("Only physical whole-disk block devices can be cloned.")
-    latest = list_disks()
-    new_src, new_dst = inspect(latest, src.path, dst.path)
-    if (src.size, src.serial, dst.size, dst.serial) != (
-            new_src.size, new_src.serial, new_dst.size, new_dst.serial):
-        raise ValueError("Disk identity changed before execution.")
+    identity(src)
+    identity(dst)
+    if src.major_minor == dst.major_minor or (src.wwn and src.wwn == dst.wwn):
+        raise ValueError("Disk identities are not distinct.")
     if input(f"Type EXACT target path {dst.path}: ").strip() != dst.path:
         raise PermissionError("Target path confirmation failed.")
     if input(f"Type ERASE {dst.path} to overwrite it: ").strip() != f"ERASE {dst.path}":
         raise PermissionError("Second destructive-action confirmation failed.")
     print("Copying and SHA-256 verifying all source bytes. Never disconnect power.")
-    if not clone(src.path, dst.path, src.size):
+    latest_src, latest_dst = inspect(list_disks(), src.path, dst.path)
+    confirm_identity(src, latest_src)
+    confirm_identity(dst, latest_dst)
+    if not clone_block_devices(src, dst):
         raise OSError("Cloned data verification FAILED. Do not attempt to boot the target.")
     print("Byte-for-byte clone verified. Power off and disconnect SOURCE before first boot.")
     return 0
@@ -175,4 +252,5 @@ if __name__ == "__main__":
         sys.exit(main())
     except (OSError, ValueError, PermissionError, subprocess.SubprocessError) as error:
         print("GearWin clone failed:", error, file=sys.stderr)
+        print("If copying started, the target may be incomplete. Do not boot it.", file=sys.stderr)
         sys.exit(1)
