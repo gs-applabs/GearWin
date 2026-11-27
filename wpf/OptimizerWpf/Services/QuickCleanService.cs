@@ -52,7 +52,7 @@ namespace OptimizerWpf.Services
             {
                 new("UserTemp", LanguageService.T("QuickClean_UserTemp"), DirSize(Path.GetTempPath()), true),
                 new("WindowsTemp", LanguageService.T("QuickClean_WindowsTemp"), DirSize(WindowsTempDir), true),
-                new("RecycleBin", LanguageService.T("QuickClean_RecycleBin"), RecycleBinSize(), true),
+                new("RecycleBin", LanguageService.T("QuickClean_RecycleBin"), RecycleBinSize(), false),
                 new("ThumbnailCache", LanguageService.T("QuickClean_ThumbnailCache"), ThumbCacheSize(), true),
                 new("WindowsUpdateCache", LanguageService.T("QuickClean_WindowsUpdateCache"), DirSize(WindowsUpdateCacheDir), false),
                 new("DeliveryOptimization", LanguageService.T("QuickClean_DeliveryOptimization"), DirSize(DeliveryOptimizationDir), false),
@@ -152,6 +152,7 @@ namespace OptimizerWpf.Services
         internal static long DirSize(string dir)
         {
             if (!Directory.Exists(dir)) return 0;
+            try { if ((File.GetAttributes(dir) & FileAttributes.ReparsePoint) != 0) return 0; } catch { return 0; }
             long total = 0;
 
             string[] files;
@@ -171,6 +172,7 @@ namespace OptimizerWpf.Services
         private static void DeleteContents(string dir)
         {
             if (!Directory.Exists(dir)) return;
+            try { if ((File.GetAttributes(dir) & FileAttributes.ReparsePoint) != 0) return; } catch { return; }
             foreach (var f in SafeTopFiles(dir))
             {
                 try { File.Delete(f); } catch { }
