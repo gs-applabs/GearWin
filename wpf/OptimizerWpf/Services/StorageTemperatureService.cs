@@ -35,8 +35,10 @@ internal static class StorageTemperatureService
             if (volume.IsInvalid) return null;
             var extents = new byte[32];
             if (!DeviceIoControl(volume, VolumeDiskExtents, null, 0, extents, extents.Length, out int used, IntPtr.Zero)
-                || used < 32 || BinaryPrimitives.ReadUInt32LittleEndian(extents) != 1) return null;
-            uint number = BinaryPrimitives.ReadUInt32LittleEndian(extents.AsSpan(8));
+                || used < 0 || used > extents.Length) return null;
+            var diskNumber = ParseDiskNumber(extents.AsSpan(0, used));
+            if (!diskNumber.HasValue) return null;
+            uint number = diskNumber.Value;
             using var disk = Open(@"\\.\PhysicalDrive" + number);
             if (disk.IsInvalid) return SensorService.GetDiskTemperatureByNumber(number) ?? ReadReliabilityCounter(number);
             // Device first; adapter property is not used as a substitute for device temperature.
@@ -86,6 +88,13 @@ internal static class StorageTemperatureService
         }
         catch { }
         return null;
+    }
+
+    internal static uint? ParseDiskNumber(ReadOnlySpan<byte> extents)
+    {
+        // VOLUME_DISK_EXTENTS: aligned DISK_EXTENT begins at byte 8 on win-x64.
+        if (extents.Length < 32 || BinaryPrimitives.ReadUInt32LittleEndian(extents) != 1) return null;
+        return BinaryPrimitives.ReadUInt32LittleEndian(extents.Slice(8));
     }
 
     internal static int? ParseDescriptor(ReadOnlySpan<byte> data)
