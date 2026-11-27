@@ -26,6 +26,36 @@ namespace OptimizerWpf.Services
         private static long _lastRefresh;
         private static bool _closed;
 
+        private static readonly object SnapshotGate = new();
+        private static System.Threading.Tasks.Task<(int? Cpu, int? Gpu, int? Ram, string? Pawn)>? _temperatureTask;
+        private static System.Threading.Tasks.Task<int?>? _diskTask;
+        private static string? _diskTaskDrive;
+
+        internal static System.Threading.Tasks.Task<(int? Cpu, int? Gpu, int? Ram, string? Pawn)> ReadHomeTemperaturesAsync()
+        {
+            lock (SnapshotGate)
+            {
+                if (_temperatureTask is { IsCompleted: false }) return _temperatureTask;
+                return _temperatureTask = System.Threading.Tasks.Task.Run(() => (
+                    GetCpuTemperatureCelsius(), GetGpuTemperatureCelsius(),
+                    GetRamTemperatureCelsius(), GetPawnIoVersion()));
+            }
+        }
+
+        internal static System.Threading.Tasks.Task<int?> ReadHomeDiskAsync(string drive)
+        {
+            lock (SnapshotGate)
+            {
+                // A slow native request is not canceled by starting more native requests.
+                // Different selections retry on their existing UI refresh tick.
+                if (_diskTask is { IsCompleted: false })
+                    return string.Equals(_diskTaskDrive, drive, StringComparison.OrdinalIgnoreCase)
+                        ? _diskTask : System.Threading.Tasks.Task.FromResult<int?>(null);
+                _diskTaskDrive = drive;
+                return _diskTask = System.Threading.Tasks.Task.Run(() => StorageTemperatureService.Read(drive));
+            }
+        }
+
         internal static bool RefreshDue(long now, long last) => last == 0 || now - last >= 3000;
 
         public static void Close()
