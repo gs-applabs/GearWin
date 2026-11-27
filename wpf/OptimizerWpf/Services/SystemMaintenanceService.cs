@@ -28,5 +28,5 @@ internal static class SystemMaintenanceService
         => await CleanSelectedAsync(await QuickCleanService.ScanRecommendedAsync(), true, false);
 
     internal static Task<long> ScheduledCleanAsync() => QuickCleanService.RunExclusiveAsync(() =>
-        MaintenancePaths.VerifiedUserTemp() is string temp ? MaintenancePaths.CleanFiles(temp, TimeSpan.FromDays(7), recursive: false) : 0);
+        MaintenancePaths.VerifiedUserTemp() is string temp ? MaintenancePaths.CleanFiles(temp, TimeSpan.FromDays(7), recursive: false) : 0, CorePriority.Background);
 }
