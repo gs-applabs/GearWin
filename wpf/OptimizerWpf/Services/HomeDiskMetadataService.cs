@@ -14,21 +14,27 @@ internal static class HomeDiskMetadataService
     private static Task<Snapshot?>? _active;
     private static string? _drive;
 
+    internal static string? NormalizeDrive(string? drive)
+    {
+        var key = drive?.TrimEnd('\\').ToUpperInvariant();
+        return key is { Length: 2 } && char.IsAsciiLetter(key[0]) && key[1] == ':' ? key : null;
+    }
+
     internal static Task<Snapshot?> ReadAsync(string drive)
     {
-        drive = drive.TrimEnd('\\').ToUpperInvariant();
-        if (drive.Length != 2 || !char.IsAsciiLetter(drive[0]) || drive[1] != ':')
+        var key = NormalizeDrive(drive);
+        if (key == null)
             return Task.FromResult<Snapshot?>(null);
         lock (Gate)
         {
-            if (Cache.TryGetValue(drive, out var item) &&
+            if (Cache.TryGetValue(key, out var item) &&
                 SharedTelemetryService.IsFresh(Environment.TickCount64, item.At, 120000))
                 return Task.FromResult<Snapshot?>(item.Value);
             if (_active is { IsCompleted: false })
-                return string.Equals(_drive, drive, StringComparison.OrdinalIgnoreCase)
+                return string.Equals(_drive, key, StringComparison.OrdinalIgnoreCase)
                     ? _active : Task.FromResult<Snapshot?>(null);
-            _drive = drive;
-            return _active = ReadCoreAsync(drive);
+            _drive = key;
+            return _active = ReadCoreAsync(key);
         }
     }
 
@@ -48,5 +54,26 @@ internal static class HomeDiskMetadataService
         }).ConfigureAwait(false);
         lock (Gate) Cache[drive] = (result, Environment.TickCount64);
         return result;
+    }
+
+    private static Task<bool?>? _smartTask;
+    private static string? _smartDrive;
+    private static long _smartAt;
+
+    internal static Task<bool?> ReadSystemSmartAsync(string drive)
+    {
+        var key = NormalizeDrive(drive);
+        if (key == null) return Task.FromResult<bool?>(null);
+        lock (Gate)
+        {
+            if (_smartTask is { IsCompleted: false })
+                return _smartDrive == key ? _smartTask : Task.FromResult<bool?>(null);
+            if (_smartTask is { IsCompletedSuccessfully: true } && _smartDrive == key &&
+                SharedTelemetryService.IsFresh(Environment.TickCount64, _smartAt, 60000))
+                return _smartTask;
+            _smartDrive = key;
+            _smartAt = Environment.TickCount64;
+            return _smartTask = Task.Run(() => DriveTypeService.GetSmartHealthy(key));
+        }
     }
 }
