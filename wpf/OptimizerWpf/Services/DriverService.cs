@@ -266,6 +266,7 @@ namespace OptimizerWpf.Services
         // πραγματικού CDN link από την απάντηση.
         public static async Task<bool> InstallCatalogDriverAsync(CatalogCandidate candidate)
         {
+            using var lease = await GearWinCore.EnterAsync(CoreWork.SoftwareChange);
             // ΑΣΦΑΛΕΙΑ: το πακέτο οδηγού κατεβαίνει, επαληθεύεται (Authenticode) και ΜΕΤΑ εγκαθίσταται elevated (pnputil/wusa) -
             // σε φάκελο μόνο-Administrators, ώστε να μην αντικατασταθεί ανάμεσα στον έλεγχο και την εγκατάσταση (TOCTOU).
             var tempDir = SecureStorage.NewPrivateTempDir("DriverCatalog");
@@ -346,7 +347,11 @@ namespace OptimizerWpf.Services
             await process.WaitForExitAsync();
             return output.Trim() == "Valid";
         }
-        public static async Task<DriverScanResult> ScanAsync()
+        public static Task<DriverScanResult> ScanAsync() => ScanCoordinatedAsync(CorePriority.User);
+        internal static Task<DriverScanResult> ScanCoordinatedAsync(CorePriority priority) =>
+            GearWinCore.RunAsync(CoreWork.UpdateScan, ScanCoreAsync, priority);
+
+        private static async Task<DriverScanResult> ScanCoreAsync()
         {
             const string script = @"
 $ErrorActionPreference = 'Continue'
@@ -714,6 +719,7 @@ try {
         // 6.9.0: έκδοση που ΠΕΡΙΜΕΝΕΙ το αποτέλεσμα (η InstallInBackground παρακάτω δεν επέστρεφε ποτέ τίποτα - η γραμμή κατάστασης έμενε «παγωμένη»).
         public static async Task<bool> InstallAndWaitAsync(string updateId, CancellationToken ct = default)
         {
+            using var lease = await GearWinCore.EnterAsync(CoreWork.SoftwareChange, ct: ct);
             if (!System.Text.RegularExpressions.Regex.IsMatch(updateId ?? "", "^[0-9a-fA-F-]{36}$")) return false;
             var script = $@"
 $ErrorActionPreference = 'Stop'
@@ -726,7 +732,7 @@ try {{
     $downloader = $session.CreateUpdateDownloader(); $downloader.Updates = $toInstall; $downloader.Download() | Out-Null
     $installer = $session.CreateUpdateInstaller(); $installer.Updates = $toInstall
     $r = $installer.Install()
-    if ($r.ResultCode -eq 2 -or $r.ResultCode -eq 3) {{ exit 0 }} else {{ exit 2 }}
+    if ($r.ResultCode -eq 2) {{ exit 0 }} else {{ exit 2 }}
 }} catch {{ exit 3 }}
 ";
             var psi = new ProcessStartInfo("powershell.exe", PowerShellArgs.Command(script, hidden: true)) { UseShellExecute = false, CreateNoWindow = true };
@@ -742,6 +748,7 @@ try {{
         // 6.9.1: αντίγραφο των τρεχόντων οδηγών τρίτων (pnputil /export-driver) σε φάκελο με timestamp ΠΡΙΝ από κάθε εγκατάσταση οδηγού· κρατούνται τα 3 τελευταία.
         public static async Task<string?> ExportCurrentDriversAsync()
         {
+            using var lease = await GearWinCore.EnterAsync(CoreWork.Backup);
             try
             {
                 var rootDir = Path.Combine(SecureStorage.RootDir, "DriverExports");
@@ -782,12 +789,12 @@ try {{
         // DISM Export-Driver - εξάγει ΟΛΟΥΣ τους οδηγούς τρίτων κατασκευαστών (ΟΧΙ τους εργοστασιακούς
         // Windows) σε φάκελο. Ίδιος μηχανισμός με καθιερωμένα εργαλεία δημιουργίας αντιγράφων οδηγών.
         public static Task<bool> BackupAsync(string destinationPath) =>
-            RunProcessAsync("dism.exe", $"/Online /Export-Driver /Destination:\"{destinationPath}\"", TimeSpan.FromMinutes(10));
+            GearWinCore.RunAsync(CoreWork.Backup, () => RunProcessAsync("dism.exe", $"/Online /Export-Driver /Destination:\"{destinationPath}\"", TimeSpan.FromMinutes(10)));
 
         // pnputil - εγκαθιστά ξανά όλους τους οδηγούς από φάκελο αντιγράφου. Απαιτεί δικαιώματα
         // διαχειριστή (ήδη διαθέσιμα - βλ. app.manifest).
         public static Task<bool> RestoreAsync(string sourcePath) =>
-            RunProcessAsync("pnputil.exe", $"/add-driver \"{sourcePath}\\*.inf\" /subdirs /install", TimeSpan.FromMinutes(10));
+            GearWinCore.RunAsync(CoreWork.SoftwareChange, () => RunProcessAsync("pnputil.exe", $"/add-driver \"{sourcePath}\\*.inf\" /subdirs /install", TimeSpan.FromMinutes(10)));
 
         // Get-WindowsDriver (DISM cmdlet, ΟΧΙ ανάλυση κειμένου pnputil - το τελευταίο είναι localized
         // ανά γλώσσα Windows, ήδη προκάλεσε bug αλλού στο ps1 original). Φιλτράρει Inbox=false (ΜΟΝΟ
@@ -868,7 +875,7 @@ $result | ConvertTo-Json -Depth 4 -Compress
         {
             if (!System.Text.RegularExpressions.Regex.IsMatch(driverOemName ?? "", @"^oem\d+\.inf$", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
                 return Task.FromResult(false);
-            return RunProcessAsync("pnputil.exe", $"/delete-driver {driverOemName}", TimeSpan.FromMinutes(2));
+            return GearWinCore.RunAsync(CoreWork.SoftwareChange, () => RunProcessAsync("pnputil.exe", $"/delete-driver {driverOemName}", TimeSpan.FromMinutes(2)));
         }
 
         private static async Task<string> RunPowerShellScriptAsync(string script, TimeSpan timeout)
