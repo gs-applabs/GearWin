@@ -130,6 +130,7 @@ internal static class TweakRegistryJournal
                 stream.Write(bytes);
                 stream.Flush(true);
             }
+            ProtectedOperationJournal.SetTrustedOwner(stage);
             if (!SecureStorage.IsProtectedFile(stage)) throw new IOException("Untrusted tweak journal staging file.");
             File.Move(stage, path, overwrite: false);
             owned = false;

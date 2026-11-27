@@ -617,46 +617,15 @@ namespace OptimizerWpf.Services
             return (IReadOnlyList<ServiceRow>)rows;
         });
 
-        // Μόνο υπηρεσίες που ήταν ΗΔΗ Automatic αγγίζονται ποτέ - backup μέσω μοιρασμένου TweakBackupService.
-        public static Task<bool> SetServiceManualAsync(string serviceName) => GearWinCore.RunAsync(CoreWork.StartupChange, () => Task.Run(() =>
-        {
-            if (!SafeServicesToOptimize.ContainsKey(serviceName)) return false;
-            try
-            {
-                using var searcher = new ManagementObjectSearcher($"SELECT * FROM Win32_Service WHERE Name='{serviceName.Replace("'", "''")}'");
-                using var results = searcher.Get();
-                using var svc = results.Cast<ManagementObject>().FirstOrDefault();
-                if (svc == null) return false;
-                if (!string.Equals(svc["StartMode"]?.ToString(), "Auto", StringComparison.OrdinalIgnoreCase)) return false;
-                TweakBackupService.BackupIfNeeded($"SVC_{serviceName}", "Auto");
-                if (TweakBackupService.GetBackup($"SVC_{serviceName}") != "Auto") return false;
-                var result = svc.InvokeMethod("ChangeStartMode", new object[] { "Manual" });
-                return Convert.ToInt32(result) == 0;
-            }
-            catch { return false; }
-        }));
+        public static Task<bool> SetServiceManualAsync(string serviceName) => ChangeServiceStartAsync(serviceName, false);
 
-        public static Task<bool> RestoreServiceStartModeAsync(string serviceName) => GearWinCore.RunAsync(CoreWork.StartupChange, () => Task.Run(() =>
+        public static Task<bool> RestoreServiceStartModeAsync(string serviceName) => ChangeServiceStartAsync(serviceName, true);
+
+        private static Task<bool> ChangeServiceStartAsync(string serviceName, bool restore) => GearWinCore.RunAsync(CoreWork.StartupChange, () => Task.Run(() =>
         {
             if (!SafeServicesToOptimize.ContainsKey(serviceName)) return false;
-            try
-            {
-                var original = TweakBackupService.GetBackup($"SVC_{serviceName}");
-                if (original == null) return false;
-                // Το Win32_Service.StartMode επιστρέφει "Auto", αλλά η μέθοδος ChangeStartMode δέχεται "Automatic" —
-                // με "Auto" επέστρεφε κωδικό σφάλματος (21) και η υπηρεσία ΠΟΤΕ δεν επανερχόταν σε αυτόματη εκκίνηση.
-                if (original.Equals("Auto", StringComparison.OrdinalIgnoreCase)) original = "Automatic";
-                using var searcher = new ManagementObjectSearcher($"SELECT * FROM Win32_Service WHERE Name='{serviceName.Replace("'", "''")}'");
-                using var results = searcher.Get();
-                using var svc = results.Cast<ManagementObject>().FirstOrDefault();
-                if (svc == null) return false;
-                if (!string.Equals(svc["StartMode"]?.ToString(), "Manual", StringComparison.OrdinalIgnoreCase)) return false;
-                var result = svc.InvokeMethod("ChangeStartMode", new object[] { original });
-                var ok = Convert.ToInt32(result) == 0;
-                if (ok) TweakBackupService.Remove($"SVC_{serviceName}");
-                return ok;
-            }
-            catch { return false; }
+            try { return ServiceStartJournal.Change(serviceName, restore); }
+            catch (Exception ex) { System.Diagnostics.Trace.TraceError("Service startup transaction: " + ex.Message); return false; }
         }));
 
         // ===== Δοκιμή Ταχύτητας Δίσκου =====
