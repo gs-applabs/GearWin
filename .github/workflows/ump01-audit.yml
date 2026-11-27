@@ -9,7 +9,8 @@ permissions:
   contents: read
 concurrency:
   group: gearwin-audit-${{ github.ref }}
-  cancel-in-progress: true
+  # Preserve the running validation; newer commits replace pending work, not active tests.
+  cancel-in-progress: false
 jobs:
   source-inventory:
     runs-on: ubuntu-latest
