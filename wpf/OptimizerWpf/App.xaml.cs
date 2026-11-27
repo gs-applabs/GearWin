@@ -196,8 +196,7 @@ public partial class App : Application
         // ΝΕΟ - roadmap "Αυτόματο Gaming Mode" - ξεκινά ΜΟΝΟ αν ο χρήστης το έχει ενεργοποιήσει
         // ρητά (Βελτιστοποίηση), σταματά καθαρά στο κλείσιμο της εφαρμογής (επαναφέρει Gaming Mode
         // αν ήταν ενεργό αυτόματα, ώστε να μη μείνει "κολλημένο" μετά το κλείσιμο).
-        if (Services.AppSettingsService.Current.AutoGamingModeEnabled) Services.AutoGamingModeService.Start();
-        Exit += (_, _) => Services.AutoGamingModeService.Stop();
+
 
         // ΝΕΟ - roadmap "Κίνηση δικτύου ανά εφαρμογή" (v4.3.5) - δίχτυ ασφαλείας. Το NetworkView ήδη
         // σταματά το ETW session στο Unloaded (αλλαγή καρτέλας), αλλά αν ο χρήστης κλείσει ΟΛΟΚΛΗΡΗ
@@ -270,48 +269,24 @@ public partial class App : Application
         // υπάρχουν διαθέσιμες ενημερώσεις εφαρμογών/οδηγών, ακόμα κι όταν η εφαρμογή είναι
         // ελαχιστοποιημένη στο tray - βλ. Services/UpdateNotificationService.cs. Μετά το
         // TrayIconService.Start παραπάνω, αφού το ShowUpdateBalloon χρειάζεται το NotifyIcon έτοιμο.
-        Services.UpdateNotificationService.Start();
-        Exit += (_, _) => Services.UpdateNotificationService.Stop();
-
-        // 6.6.0 - ειδοποίηση νέας έκδοσης GearWin (balloon): πρώτος έλεγχος ~30 s μετά την εκκίνηση, μετά κάθε 24 ώρες.
         Services.PerformanceProfileService.LogStartup();
         Services.PerformanceProfileService.StartGovernor();
         Exit += (_, _) => Services.PerformanceProfileService.StopGovernor();
-        Services.ReleaseCheckService.Start();
-        Exit += (_, _) => Services.ReleaseCheckService.Stop();
-
-        // ΝΕΟ (6.1.0) - ειδοποιήσεις θερμοκρασίας/S.M.A.R.T. (ρυθμίζονται στο Κέντρο Συντήρησης).
-        Services.AlertService.Start();
-        Exit += (_, _) => Services.AlertService.Stop();
         Exit += (_, _) => Services.SensorService.Close();
         Exit += (_, _) => Services.SharedTelemetryService.Stop();
 
-        // ΝΕΟ - REQ-570-02 - όταν ξεκινά αυτόματα στο tray, άμεσος έλεγχος ενημερώσεων (ΟΧΙ αναμονή
-        // για το πρώτο tick του περιοδικού timer, βλ. UpdateNotificationService.Start) ώστε το
-        // balloon (αν βρεθούν ενημερώσεις) και η κάρτα "Ενημερώσεις Συστήματος" της Αρχικής να
-        // ενημερωθούν αμέσως, ίδιο RunCheckAsync με το κουμπί "Έλεγχος Τώρα" των Ρυθμίσεων.
-        // 6.1.0 - έλεγχος ενημερώσεων σε ΚΑΘΕ εκκίνηση (όχι μόνο --tray), με αναμονή δικτύου και ειδοποίηση.
-        _ = Services.UpdateNotificationService.StartupCheckAsync();
-
-        // 6.1.0 - μετανάστευση της "εκκίνηση με τα Windows" από το μη-λειτουργικό Run key σε εργασία Task Scheduler.
-        _ = Services.SystemService.EnsureLaunchTaskAsync();
-
-        // ΝΕΟ - roadmap "Widget επιφάνειας εργασίας" - ξεκινά ΜΟΝΟ αν ο χρήστης το έχει ενεργοποιήσει
-        // ρητά (Ρυθμίσεις Εμφάνισης), ίδιο μοτίβο με το AutoGamingModeEnabled παραπάνω.
-        if (Services.AppSettingsService.Current.DesktopWidgetEnabled) Services.DesktopWidgetService.Start();
-        Exit += (_, _) => Services.DesktopWidgetService.Stop();
-
-        // ΝΕΟ - roadmap "Αναζητήσιμο ιστορικό clipboard" (ρητό αίτημα χρήστη) - ενεργό ΠΑΝΤΑ όσο τρέχει
-        // η εφαρμογή (ίδιο μοτίβο με το TrayIconService παραπάνω, ΟΧΙ προαιρετικό όπως το Desktop
-        // Widget) - το global hotkey (Win+Shift+V) πρέπει να δουλεύει από την πρώτη εκκίνηση χωρίς να
-        // χρειάζεται ρητή ενεργοποίηση, ίδιο πνεύμα με τα υπόλοιπα "πάντα διαθέσιμα" tray/system
-        // χαρακτηριστικά.
-        Services.ClipboardManagerService.Start(main);
         Services.ClipboardManagerService.HotkeyPressed += () =>
         {
             main.Dispatcher.Invoke(() => new Views.ClipboardHistoryWindow().Show());
         };
-        Exit += (_, _) => Services.ClipboardManagerService.Stop();
+        // One preference-driven lifecycle, deferred until the initial shell can render.
+        main.Dispatcher.BeginInvoke(new Action(() =>
+        {
+            Services.CoreFeatureLifecycle.Start(main);
+            if (Services.AppSettingsService.Current.LaunchWithWindowsToTray)
+                _ = Services.SystemService.EnsureLaunchTaskAsync();
+        }), System.Windows.Threading.DispatcherPriority.ApplicationIdle);
+        Exit += (_, _) => Services.CoreFeatureLifecycle.Stop();
     }
 }
 
