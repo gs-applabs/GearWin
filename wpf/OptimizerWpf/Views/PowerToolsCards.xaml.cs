@@ -198,15 +198,19 @@ namespace OptimizerWpf.Views
                 ThemedMessageBox.Show(LanguageService.T("FolderLock_PasswordMismatch"), LanguageService.T("Sys_ErrorTitle"), MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
-            if (ThemedMessageBox.Show($"{LanguageService.T("FolderLock_LockConfirmPrefix")}{_lockFolderPath}{LanguageService.T("FolderLock_LockConfirmSuffix")}",
+            var safetyNotice = LanguageService.Current == "el"
+                ? "Θα δημιουργηθεί επαληθευμένο κρυπτογραφημένο αντίγραφο (έως 64 MiB). Ο αρχικός φάκελος παραμένει μη κρυπτογραφημένος. Συνέχεια;"
+                : "Create a verified encrypted copy (up to 64 MiB)? The original folder remains unencrypted.";
+            if (ThemedMessageBox.Show(safetyNotice,
                     LanguageService.T("Sys_ConfirmTitle"), MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
 
             BtnLockFolder.IsEnabled = false;
-            var progress = new Progress<string>(msg => { TxtFolderLockStatus.Text = msg; StatusService.SetBusy(msg); });
+            using var busy = StatusService.BeginScope(LanguageService.T("FolderLock_Compressing"));
+            var progress = new Progress<string>(msg => { TxtFolderLockStatus.Text = msg; busy.Update(msg); });
             try
             {
                 await FolderLockService.LockFolderAsync(_lockFolderPath, pwd, progress);
-                TxtFolderLockStatus.Text = $"{LanguageService.T("FolderLock_LockedDonePrefix")}{_lockFolderPath}{FolderLockService.VaultExtension}";
+                TxtFolderLockStatus.Text = (LanguageService.Current == "el" ? "Δημιουργήθηκε κρυπτογραφημένο αντίγραφο. Το πρωτότυπο διατηρήθηκε: " : "Encrypted copy created. Original retained: ") + _lockFolderPath + FolderLockService.VaultExtension;
                 TxtLockFolderPath.Text = "";
                 PwdLock.Password = "";
                 PwdLockConfirm.Password = "";
@@ -218,7 +222,7 @@ namespace OptimizerWpf.Views
             }
             finally
             {
-                StatusService.SetIdle(LanguageService.T("Ready"));
+                busy.End(LanguageService.T("Ready"));
                 BtnLockFolder.IsEnabled = true;
             }
         }
@@ -241,9 +245,12 @@ namespace OptimizerWpf.Views
             var pwd = PwdUnlock.Password;
             if (string.IsNullOrEmpty(pwd)) return;
 
+            if (!_unlockVaultPath.EndsWith(FolderLockService.VaultExtension, System.StringComparison.OrdinalIgnoreCase)) return;
             var destination = _unlockVaultPath[..^FolderLockService.VaultExtension.Length];
+            if (Directory.Exists(destination) || File.Exists(destination)) destination += ".unlocked";
             BtnUnlockFolder.IsEnabled = false;
-            var progress = new Progress<string>(msg => { TxtFolderLockStatus.Text = msg; StatusService.SetBusy(msg); });
+            using var busy = StatusService.BeginScope(LanguageService.T("FolderLock_Decrypting"));
+            var progress = new Progress<string>(msg => { TxtFolderLockStatus.Text = msg; busy.Update(msg); });
             try
             {
                 await FolderLockService.UnlockFolderAsync(_unlockVaultPath, pwd, destination, progress);
@@ -262,7 +269,7 @@ namespace OptimizerWpf.Views
             }
             finally
             {
-                StatusService.SetIdle(LanguageService.T("Ready"));
+                busy.End(LanguageService.T("Ready"));
                 BtnUnlockFolder.IsEnabled = true;
             }
         }
@@ -308,6 +315,10 @@ namespace OptimizerWpf.Views
         public PowerToolsCards()
         {
             InitializeComponent();
+            TxtVaultSafetyDescription.Text = LanguageService.Current == "el"
+                ? "Κρυπτογραφημένο αντίγραφο έως 64 MiB. Τα αρχικά αρχεία δεν διαγράφονται ούτε κρυπτογραφούνται επιτόπου. Εξαγωγή μόνο σε νέο φάκελο."
+                : "Encrypted copy up to 64 MiB. Originals are not deleted or encrypted in place. Restore to a new folder only.";
+            BtnLockFolder.Content = LanguageService.Current == "el" ? "Κρυπτογράφηση αντιγράφου" : "Encrypt copy";
             ListStartup.ItemsSource = _startup;
             ListServices.ItemsSource = _services;
             ListDuplicateGroups.ItemsSource = _duplicateGroups;
