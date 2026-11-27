@@ -9,7 +9,7 @@ namespace OptimizerWpf.Services;
 // The existing PerformanceProfileService remains the only adaptive governor.
 // This coordinator has no timer, polling thread, or persistent activity log.
 // Leases are acquired at service boundaries, never recursively inside a lease.
-internal enum CoreWork { CleanupScan, Cleanup, Memory, Repair, UpdateScan, Backup, Registry, HardwareScan }
+internal enum CoreWork { CleanupScan, Cleanup, Memory, Repair, UpdateScan, Backup, Registry, HardwareScan, HealthScan }
 internal enum CorePriority { Background, User }
 
 internal sealed class OperationCoordinator
