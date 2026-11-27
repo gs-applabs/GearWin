@@ -135,10 +135,9 @@ namespace OptimizerWpf.Services
 
         private static void ToggleWidget()
         {
-            if (DesktopWidgetService.IsRunning) { DesktopWidgetService.Stop(persistDisabled: true); return; }
-            DesktopWidgetService.Start();
-            AppSettingsService.Current.DesktopWidgetEnabled = true;
+            AppSettingsService.Current.DesktopWidgetEnabled = !DesktopWidgetService.IsRunning;
             AppSettingsService.Save();
+            CoreFeatureLifecycle.Apply();
         }
 
         private static async System.Threading.Tasks.Task RunQuickCleanAsync()
