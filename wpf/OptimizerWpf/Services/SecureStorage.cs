@@ -50,18 +50,20 @@ namespace OptimizerWpf.Services
             catch { return false; }
         }
 
-        internal static bool IsProtectedExecutable(string? path)
+        internal static bool IsProtectedFile(string? path)
         {
             try
             {
                 return !string.IsNullOrEmpty(path) &&
-                    string.Equals(Path.GetExtension(path), ".exe", StringComparison.OrdinalIgnoreCase) &&
                     MaintenancePaths.IsOrdinaryLocalPath(path) && File.Exists(path) &&
                     IsDirectoryAdminOnlyWritable(Path.GetDirectoryName(path)) &&
                     IsProtected(new FileInfo(path).GetAccessControl(AccessControlSections.Access | AccessControlSections.Owner));
             }
             catch { return false; }
         }
+
+        internal static bool IsProtectedExecutable(string? path) =>
+            string.Equals(Path.GetExtension(path), ".exe", StringComparison.OrdinalIgnoreCase) && IsProtectedFile(path);
 
         private static DirectorySecurity NewSecurity()
         {
