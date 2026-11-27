@@ -55,4 +55,16 @@ public class SensorFallbackTests
         BinaryPrimitives.WriteUInt16LittleEndian(malformed.AsSpan(12), 99);
         Assert.Null(StorageTemperatureService.ParseDescriptor(malformed));
     }
+
+    [Fact]
+    public void VolumeExtentMappingRejectsMultipleDisksAndShortBuffers()
+    {
+        var extents = new byte[32];
+        BinaryPrimitives.WriteUInt32LittleEndian(extents, 1);
+        BinaryPrimitives.WriteUInt32LittleEndian(extents.AsSpan(8), 3);
+        Assert.Equal(3u, StorageTemperatureService.ParseDiskNumber(extents));
+        Assert.Null(StorageTemperatureService.ParseDiskNumber(extents.AsSpan(0, 12)));
+        BinaryPrimitives.WriteUInt32LittleEndian(extents, 2);
+        Assert.Null(StorageTemperatureService.ParseDiskNumber(extents));
+    }
 }
