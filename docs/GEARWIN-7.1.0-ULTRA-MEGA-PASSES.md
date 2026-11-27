@@ -7,13 +7,13 @@ Baseline: `0d36ba06ffd5b1f90676d546d8abdfafe1062fbf`; review branch `release/7.1
 | Pass | Distinct recorded findings | Source mitigations | Runtime-certified fixes | Status |
 |---|---:|---:|---:|---|
 | UMP01 source audit | 3 test/measurement coverage gaps | 1 infrastructure mitigation (measurement workflow added) | 0 | open |
-| UMP02 safety, batches 1–9 | 76 safety/correctness findings | 76 addressed at least in part in source | 0 operation-level certifications | open |
-| UMP03 core/resources, batches 1–6 | 49 findings | 49 addressed at least in part in source | 0 | open |
+| UMP02 safety, batches 1–10 | 85 safety/correctness findings | 85 addressed at least in part in source | 0 operation-level certifications | open |
+| UMP03 core/resources, batches 1–7 | 53 findings | 53 addressed at least in part in source | 0 | open |
 | UMP04 unified maintenance, batches 1–2 | 24 findings | 24 addressed at least in part in source | 0 | open |
 | UMP05 central operation core, batches 1–5 | 25 findings | 25 addressed at least in part in source | 0 | open |
 | UMP06 status and navigation, batch 1 | 9 findings | 9 addressed at least in part in source | 0 | open |
 | UMP07 early artwork fix | 8 distinct icon/UI findings | 8 addressed at least in part in source | 0 visual certifications | open |
-| Total | 194 | 192 at least partly addressed | 0 operation-level certifications | open |
+| Total | 207 | 205 at least partly addressed | 0 operation-level certifications | open |
 
 The earlier manual review also identified deferred issues in profiles, resources, backups and navigation. These will be assigned stable IDs in their owning passes; do not inflate totals by counting them again. Full tracked-source lexical inventory completed; manual semantic review remains pending. The 7.0.0 baseline Windows build reported 391 desktop + 42 migration tests on 2026-11-27; the Linux job logs available are from 2026-11-23 (5 synthetic clone tests). Six CI jobs reported success in the run; an opt-in test can report pass without doing clicks. Baseline success is not a new branch test result.
 
@@ -423,3 +423,29 @@ Run 46000330016: 506 desktop and 42 migration tests passed (548 total), includin
 | S76 | Failed overlay startup never retried for same PID | bounded retry after 30 seconds |
 
 TraceEvent option reference: https://github.com/microsoft/perfview/blob/main/src/TraceEvent/TraceEventSession.cs . Verify against pinned package/runtime in CI. Separate ETW kernel and DXGI sessions are retained because they are distinct providers and purposes; no claim of unified native ETW session. Shared CPU/GPU service has no new timer. GPU renewal can briefly display unavailable, and 30-second enumeration cost/accuracy (multi-adapter, process churn, 3D only) must be measured. Shared GPU background work still needs fault/lifecycle and physical GPU testing; sensor alerts, foreground checks and other timers remain to integrate. No guarantee of FPS accuracy; DXGI event-name heuristic is not PresentMon. Network cap deliberately bounds memory but may omit new PIDs after prolonged high churn. Existing named ETW sessions after crash require explicit owner/operator recovery, not auto takeover. Shared ping cache may lag changes by 10 seconds and does not prove general internet reachability. Fifteen deterministic new fixtures (freshness, CPU delta and elapsed rate); cumulative 129 authored, 114 included in previous successful stages. Current commits through bc52e8f7223716160061e29b322f9e131134dbc9 need new compile/tests and real runtime validation. No merge or release.
+
+## Intermediate telemetry verification
+
+Run 46001340793, Windows job 140513493775: 521 desktop and 42 migration tests passed (563 total), including 15 telemetry fixtures; 31/31 icon assets and installer build successful. Normal-mode CPU summary 5.056%, full normal/tray measurement cycle canceled by newer commits. No new complete performance baseline.
+
+## UMP02 — tenth safety/correctness batch: temperature acquisition (9 findings)
+
+| ID | Finding | Source mitigation |
+|---|---|---|
+| S77 | Disk temperature depended on model name/first storage device, ambiguous for identical or hidden disks | read selected volume's single physical extent; match LHM v0.9.6 StorageDevice identifier by actual DriveNumber |
+| S78 | Unsupported sensor API left disk without alternative | read-only Windows device temperature query, LHM SMART, exact MSFT_Disk association fallback |
+| S79 | Late disk query could overwrite new selection | generation guard and requery current selection |
+| S80 | One hardware Update exception aborted all temperature reads | recursive per-hardware update with failure isolation |
+| S81 | DIMM thresholds and warning/critical temperature sensors could be displayed as live temperature | filter limit/threshold/resolution/warning/critical names; prefer package/core/composite names |
+| S82 | Invalid/nonfinite/out-of-range temperatures could reach UI | validate >1 and <=150 C, reject sentinel and malformed native descriptors |
+| S83 | Missing reading labeled locked based solely on HVCI registry configuration | neutral unavailable indicator, official PawnIO version metadata and diagnostic guidance |
+| S84 | Vendor native libraries could resolve outside trusted system directory | System32-only DLL search (older NVIDIA layouts outside System32 may remain unsupported) |
+| S85 | NVML fallback queried only device 0 | bounded enumeration of NVML devices and maximum valid reading |
+
+## UMP03 — seventh resource batch (4 findings)
+
+R50: Home read temperatures only at construction, no retry while visible; batch CPU/GPU/RAM reads on existing 20-second slow timer and initial visibility, no extra timer. R51: sensor open failure permanently disabled monitoring; retry after 60 seconds when requested, not continuous polling. R52: GPU vendor fallback duplicated work between alerts and Home; shared 3-second cache under sensor gate. R53: disk queries duplicated and could delay publication of CPU/GPU/RAM results; separate single-flight read and generation-aware reselection. Shared LHM lock can still delay both if vendor hardware update itself hangs; no claim of hard native timeout.
+
+19 new test cases (7 valid-range, 6 sensor-name, 4 descriptor value, 1 malformed descriptor, 1 volume extent). 148 cumulative newly authored cases; 129 included in previously passed tests. New sensor changes through 5bddbc4c28f27e5c203b60fac5ecafcea0c0ce0e require compile and physical-device validation.
+
+References: Microsoft Windows IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS, IOCTL_STORAGE_QUERY_PROPERTY, STORAGE_TEMPERATURE_DATA_DESCRIPTOR/INFO, MSFT_DiskToStorageReliabilityCounter; upstream LibreHardwareMonitor v0.9.6 StorageDevice.cs (identifier constructed from DriveNumber, SMART composite/threshold sensor names) and PawnIo.cs (installation registry metadata). Official driver https://pawnio.eu/ . No driver installation, unsigned modules, protection disablement, privileged write commands or new bundled dependencies. Driver version metadata does not prove service is functional. Official signed PawnIO can be installed separately with explicit consent and GearWin restart, but not guaranteed compatible with every machine/security policy. LHM package remains v0.9.6. Source license review: LHM upstream MPL-2.0 plus third-party components; do not describe entire dependency as MIT. No actual temperature measurements from physical hardware available in GitHub VM; test matrix must include Intel/AMD CPU, NVIDIA/AMD/Intel GPU, DIMM with/without thermal sensor, NVMe/SATA/USB, two identical disks, spanned volume, HVCI on and missing/installed official PawnIO. GPU temperature remains a representative single tile, not guaranteed every GPU measured. ADL legacy enumeration, vendor-specific CPU SDKs, newer unsupported CPU families, native I/O hangs, and disk hotplug remapping remain open. No merge or release.
