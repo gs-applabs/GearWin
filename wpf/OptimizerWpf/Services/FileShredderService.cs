@@ -1,6 +1,8 @@
 using System;
 using System.IO;
 using System.Security.Cryptography;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
 using System.Threading.Tasks;
 
 namespace OptimizerWpf.Services
@@ -13,16 +15,48 @@ namespace OptimizerWpf.Services
     // λογισμικού shredder σε SSD, ΟΧΙ κάτι που μπορούμε να αποφύγουμε. Το UI το αναφέρει ρητά.
     public static class FileShredderService
     {
-        public static Task<bool> ShredFileAsync(string path, int passes = 3) => Task.Run(() =>
+        [StructLayout(LayoutKind.Sequential)]
+        private struct FileIdentity
+        {
+            public uint Attributes, CreationLow, CreationHigh, AccessLow, AccessHigh, WriteLow, WriteHigh;
+            public uint VolumeSerial, SizeHigh, SizeLow, Links, IndexHigh, IndexLow;
+        }
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool GetFileInformationByHandle(SafeFileHandle handle, out FileIdentity info);
+
+        internal static bool IsAllowedTarget(string path)
         {
             try
             {
-                var fi = new FileInfo(path);
-                if (!fi.Exists) return false;
-                var length = fi.Length;
+                if (!MaintenancePaths.IsOrdinaryLocalPath(path) || !File.Exists(path)) return false;
+                var full = Path.GetFullPath(path);
+                foreach (var special in new[] { Environment.SpecialFolder.Windows, Environment.SpecialFolder.System,
+                    Environment.SpecialFolder.ProgramFiles, Environment.SpecialFolder.ProgramFilesX86,
+                    Environment.SpecialFolder.CommonApplicationData })
+                {
+                    var root = Environment.GetFolderPath(special);
+                    if (!string.IsNullOrEmpty(root) && MaintenancePaths.IsWithin(root, full)) return false;
+                }
+                return true;
+            }
+            catch { return false; }
+        }
+
+        // A single overwrite limits avoidable writes. This is not a guarantee of erasure on SSDs.
+        public static Task<bool> ShredFileAsync(string path, int passes = 1) => Task.Run(() =>
+        {
+            try
+            {
+                if (passes < 1 || passes > 3 || !IsAllowedTarget(path)) return false;
 
                 using (var stream = new FileStream(path, FileMode.Open, FileAccess.Write, FileShare.None))
                 {
+                    // Overwriting one hard link would modify all names of the same file.
+                    if (!GetFileInformationByHandle(stream.SafeFileHandle, out var identity) || identity.Links != 1)
+                        return false;
+                    var length = stream.Length;
                     var buffer = new byte[81920];
                     for (var pass = 0; pass < passes; pass++)
                     {
@@ -39,12 +73,8 @@ namespace OptimizerWpf.Services
                     }
                 }
 
-                // Μετονομασία σε τυχαίο όνομα πριν τη διαγραφή - αποκρύπτει το αρχικό όνομα αρχείου
-                // από το MFT/journal, στάνταρ πρακτική shredder εργαλείων.
-                var dir = Path.GetDirectoryName(path)!;
-                var randomPath = Path.Combine(dir, Guid.NewGuid().ToString("N"));
-                File.Move(path, randomPath);
-                File.Delete(randomPath);
+                if (!IsAllowedTarget(path)) return false;
+                File.Delete(path);
                 return true;
             }
             catch
