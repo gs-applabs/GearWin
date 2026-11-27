@@ -196,6 +196,8 @@ try {{
             new RecommendedApp("SystemLibs", "Visual C++ Redistributable x64", "Microsoft.VCRedist.2015+.x64"),
         };
 
+        private static bool ValidRecommendationId(string id) => id != null && System.Text.RegularExpressions.Regex.IsMatch(id, @"^[A-Za-z0-9._+-]{1,120}$");
+
         internal static bool OutputContainsPackageId(string output, string packageId)
         {
             if (!System.Text.RegularExpressions.Regex.IsMatch(packageId, @"^[A-Za-z0-9._+-]{1,120}$")) return false;
@@ -207,6 +209,7 @@ try {{
 
         public static async Task<bool> IsWingetAppInstalledAsync(string wingetId)
         {
+            using var lease = await GearWinCore.EnterAsync(CoreWork.UpdateScan);
             if (!System.Text.RegularExpressions.Regex.IsMatch(wingetId, @"^[A-Za-z0-9._+-]{1,120}$")) return false;
             try
             {
@@ -237,16 +240,17 @@ try {{
             catch { return false; }
         }
 
-        public static Task<bool> WingetInstallAsync(string wingetId) => RunProcessForSuccessAsync("winget.exe",
+        public static Task<bool> WingetInstallAsync(string wingetId) => !ValidRecommendationId(wingetId) ? Task.FromResult(false) : RunProcessForSuccessAsync("winget.exe",
             $"install --id {wingetId} --exact --silent --accept-source-agreements --accept-package-agreements");
 
-        public static Task<bool> WingetUninstallAsync(string wingetId) => RunProcessForSuccessAsync("winget.exe",
+        public static Task<bool> WingetUninstallAsync(string wingetId) => !ValidRecommendationId(wingetId) ? Task.FromResult(false) : RunProcessForSuccessAsync("winget.exe",
             $"uninstall --id {wingetId} --exact --silent");
 
         // ===== Διαχείριση UWP (Store apps only) =====
 
         public static async Task<IReadOnlyList<UwpAppInfo>> ScanUwpAppsAsync()
         {
+            using var lease = await GearWinCore.EnterAsync(CoreWork.UpdateScan);
             const string script = "Get-AppxPackage | Where-Object { -not $_.IsFramework -and -not $_.IsResourcePackage -and $_.SignatureKind -eq 'Store' } | " +
                                    "Select-Object Name, PackageFullName | Sort-Object Name | ConvertTo-Json -Compress";
             var output = await RunPsCaptureAsync(script);
@@ -340,6 +344,7 @@ try {{
         // είχαν try/finally, οπότε μια εξαίρεση άφηνε τη γραμμή κατάστασης "busy" και τα κουμπιά απενεργοποιημένα.
         private static async Task<bool> RunPsForSuccessAsync(string command)
         {
+            using var lease = await GearWinCore.EnterAsync(CoreWork.SoftwareChange);
             try
             {
                 using var process = Process.Start(new ProcessStartInfo("powershell.exe", PowerShellArgs.Command(command))
@@ -363,6 +368,7 @@ try {{
 
         private static async Task<bool> RunProcessForSuccessAsync(string fileName, string arguments)
         {
+            using var lease = await GearWinCore.EnterAsync(CoreWork.SoftwareChange);
             try
             {
                 using var process = Process.Start(new ProcessStartInfo(fileName, arguments) { UseShellExecute = false, CreateNoWindow = true });
