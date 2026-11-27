@@ -838,7 +838,7 @@ namespace OptimizerWpf.Views
             var result = await Task.Run(HealthScoreService.Compute);
             if (_unloaded) return;
 
-            HealthScoreHistoryService.RecordSample(result.Score);
+            if (result.IsComplete) HealthScoreHistoryService.RecordSample(result.Score);
             var sparkline = HealthScoreHistoryService.GetSparkline();
             TxtHealthSparkline.Text = sparkline;
             TxtHealthSparkline.Visibility = sparkline.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -864,7 +864,7 @@ namespace OptimizerWpf.Views
                 TxtDiskSmart.Visibility = Visibility.Collapsed;
             }
 
-            TxtHealthScore.Text = result.Score.ToString();
+            TxtHealthScore.Text = result.DisplayScore;
             var scoreColor = result.Score >= 80
                 ? new SolidColorBrush(Color.FromRgb(90, 200, 120))
                 : result.Score >= 50
@@ -873,7 +873,7 @@ namespace OptimizerWpf.Views
 
             TxtHealthScore.Foreground = scoreColor;
             TxtHealthLabel.Foreground = scoreColor;
-            TxtHealthLabel.Text = result.Score >= 80 ? LanguageService.T("Home_HealthGood") : result.Score >= 50 ? LanguageService.T("Home_HealthFair") : LanguageService.T("Home_HealthNeedsAttention");
+            TxtHealthLabel.Text = !result.IsComplete ? (LanguageService.Current == "el" ? "Ελλιπής έλεγχος" : "Incomplete check") : result.Score >= 80 ? LanguageService.T("Home_HealthGood") : result.Score >= 50 ? LanguageService.T("Home_HealthFair") : LanguageService.T("Home_HealthNeedsAttention");
 
             _lastHealthIssues = result.Issues;
             _lastScoreColor = scoreColor;
