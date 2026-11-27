@@ -195,27 +195,43 @@ namespace OptimizerWpf.Views
                   string.Join(Environment.NewLine, delays.Select(kv => $"• {kv.Key} — {kv.Value} s"));
         }
 
+        private bool _delayBusy;
         private async void BtnApplyDelay_Click(object sender, RoutedEventArgs e)
         {
-            if (CmbStartupItems.SelectedItem is not StartupItem item) return;
-            if (!int.TryParse(TxtDelaySeconds.Text.Trim(), out var seconds) || seconds < 5)
+            if (_delayBusy || CmbStartupItems.SelectedItem is not StartupItem item) return;
+            if (!int.TryParse(TxtDelaySeconds.Text.Trim(), out var seconds) || seconds < 5 || seconds > 3600)
             {
-                TxtStartupStatus.Text = LanguageService.T("Center_DelayInvalid");
+                TxtStartupStatus.Text = LanguageService.Current == "el" ? "Επιτρεπόμενη καθυστέρηση: 5–3600 δευτερόλεπτα." : "Allowed delay: 5–3600 seconds.";
                 return;
             }
-            BtnApplyDelay.IsEnabled = false;
-            var ok = await StartupDelayService.ApplyDelayAsync(item, seconds);
-            TxtStartupStatus.Text = LanguageService.T(ok ? "Center_DelayApplied" : "Center_DelayFailed");
-            BtnApplyDelay.IsEnabled = true;
-            if (ok) await LoadStartupItemsAsync();
+            await ChangeDelayAsync(item, seconds);
         }
 
         private async void BtnRemoveDelay_Click(object sender, RoutedEventArgs e)
         {
-            if (CmbStartupItems.SelectedItem is not StartupItem item) return;
-            var ok = await StartupDelayService.RemoveDelayAsync(item);
-            TxtStartupStatus.Text = LanguageService.T(ok ? "Center_DelayRemoved" : "Center_DelayFailed");
-            if (ok) await LoadStartupItemsAsync();
+            if (_delayBusy || CmbStartupItems.SelectedItem is not StartupItem item) return;
+            await ChangeDelayAsync(item, null);
+        }
+
+        private async System.Threading.Tasks.Task ChangeDelayAsync(StartupItem item, int? seconds)
+        {
+            _delayBusy = true;
+            BtnApplyDelay.IsEnabled = BtnRemoveDelay.IsEnabled = false;
+            using var busy = StatusService.BeginScope("Startup delay");
+            try
+            {
+                var ok = seconds.HasValue
+                    ? await StartupDelayService.ApplyDelayAsync(item, seconds.Value)
+                    : await StartupDelayService.RemoveDelayAsync(item);
+                await LoadStartupItemsAsync();
+                TxtStartupStatus.Text = ok
+                    ? LanguageService.T(seconds.HasValue ? "Center_DelayApplied" : "Center_DelayRemoved")
+                    : (LanguageService.Current == "el"
+                        ? "Η αλλαγή δεν επιβεβαιώθηκε. Ελέγξτε την καταχώριση και την εργασία στον Χρονοπρογραμματιστή. Οι παλιές εργασίες απαιτούν χειροκίνητο έλεγχο."
+                        : "Change not verified. Check the startup entry and Task Scheduler. Legacy tasks require manual review.");
+            }
+            catch (Exception ex) { TxtStartupStatus.Text = ex.Message; }
+            finally { BtnApplyDelay.IsEnabled = BtnRemoveDelay.IsEnabled = true; _delayBusy = false; }
         }
 
         // ── Αναφορά συστήματος ──────────────────────────────────────────────────────────────
