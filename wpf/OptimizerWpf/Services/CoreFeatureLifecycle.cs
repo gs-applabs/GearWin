@@ -41,8 +41,8 @@ internal static class CoreFeatureLifecycle
         ApplyChange(previous?.Release, wanted.Release, ReleaseCheckService.Start, ReleaseCheckService.Stop);
         ApplyChange(previous?.Alerts, wanted.Alerts, AlertService.Start, AlertService.Stop);
         ApplyChange(previous?.AutoGaming, wanted.AutoGaming, AutoGamingModeService.Start, AutoGamingModeService.Stop);
-        ApplyChange(previous?.Widget, wanted.Widget, DesktopWidgetService.Start, () => DesktopWidgetService.Stop());
-        ApplyChange(previous?.Clipboard, wanted.Clipboard, () => ClipboardManagerService.Start(main), ClipboardManagerService.Stop);
+        ApplyChange(DesktopWidgetService.IsRunning, wanted.Widget, DesktopWidgetService.Start, () => DesktopWidgetService.Stop());
+        ApplyChange(ClipboardManagerService.IsRunning, wanted.Clipboard, () => ClipboardManagerService.Start(main), ClipboardManagerService.Stop);
     }
 
     private static void ApplyChange(bool? previous, bool wanted, Action start, Action stop)
