@@ -115,6 +115,22 @@ namespace OptimizerWpf.Services
         // (ο κύριος, τεκμηριωμένος λόγος που εργαλεία σαν αυτό αποτυγχάνουν σιωπηλά σε πολλά σύγχρονα
         // Windows 11 συστήματα με VBS - ανεξάρτητα από elevation). Vendor εργαλεία (Gigabyte SIV/Control
         // Center κ.λπ.) συχνά έχουν το ΔΙΚΟ ΤΟΥΣ signed driver με διαφορετικό, εγκεκριμένο μονοπάτι.
+        internal static string? GetPawnIoVersion()
+        {
+            try
+            {
+                foreach (var view in new[] { RegistryView.Registry64, RegistryView.Registry32 })
+                {
+                    using var hive = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, view);
+                    using var key = hive.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\PawnIO");
+                    if (Version.TryParse(key?.GetValue("DisplayVersion") as string, out var version))
+                        return version.ToString();
+                }
+            }
+            catch { }
+            return null;
+        }
+
         public static bool IsHvciActive()
         {
             try
