@@ -19,6 +19,7 @@ internal static class SharedTelemetryService
     private static long _lastSampleAt;
     private static int? _lastGpu;
     private static Task<int?>? _inFlight;
+    private static int _releasePending;
 
     private sealed class Consumer : IDisposable
     {
@@ -34,7 +35,7 @@ internal static class SharedTelemetryService
                 _lastSampleAt = 0;
             }
             // Native disposal must not block a dispatcher during navigation.
-            _ = Task.Run(ReleaseIfUnused);
+            ScheduleRelease();
         }
     }
 
@@ -102,6 +103,28 @@ internal static class SharedTelemetryService
         _counterCreated = 0;
     }
 
+    // Rapid navigation must not enqueue unbounded disposal workers behind a slow GPU driver.
+    private static void ScheduleRelease()
+    {
+        if (Interlocked.CompareExchange(ref _releasePending, 1, 0) != 0) return;
+        _ = Task.Run(() =>
+        {
+            try { ReleaseIfUnused(); }
+            finally
+            {
+                Interlocked.Exchange(ref _releasePending, 0);
+                // Recheck demand after clearing the flag, without scheduling redundant
+                // work when counters were already released.
+                bool retry;
+                lock (CounterGate)
+                {
+                    lock (Gate) retry = (_stopped || _consumers == 0) && _counterCreated != 0;
+                }
+                if (retry) ScheduleRelease();
+            }
+        });
+    }
+
     private static void ReleaseIfUnused()
     {
         lock (CounterGate)
@@ -115,6 +138,6 @@ internal static class SharedTelemetryService
     {
         lock (Gate) { _stopped = true; _generation++; }
         // Never block exit on a potentially stalled vendor/PDH counter.
-        _ = Task.Run(ReleaseIfUnused);
+        ScheduleRelease();
     }
 }
