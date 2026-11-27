@@ -159,7 +159,7 @@ namespace OptimizerWpf.Views
             TxtHealthToolsStatus.Text = LanguageService.T("Health_ScanningShortcuts");
             using var busy = BusyScope.Begin(LanguageService.T("Health_FindingBrokenShortcuts"));
             var count = await HealthCleanupService.FixBrokenShortcutsAsync();
-            TxtHealthToolsStatus.Text = $"{LanguageService.T("Health_ShortcutsFoundPrefix")}{count}{LanguageService.T("Health_ShortcutsFoundSuffix")}";
+            TxtHealthToolsStatus.Text = $"{LanguageService.T("Health_ItemsFoundPrefix")}{count}{LanguageService.T("Health_ItemsFoundSuffix")}";
         }
 
         private void BtnDotNetVersion_Click(object sender, RoutedEventArgs e) =>
@@ -205,13 +205,23 @@ namespace OptimizerWpf.Views
             Directory.CreateDirectory(backupDir);
 
             using var busy = BusyScope.Begin(LanguageService.T("Health_DeletingRegistryItems"));
+            // A requested restore point must not silently fail before registry mutations.
+            if (await RestoreGuardService.EnsureRecentAsync() == RestoreGuardResult.Failed)
+            {
+                TxtRegCleanStatus.Text = LanguageService.T("Health_DeletePartialFailed");
+                s_regCleanStatusCache = TxtRegCleanStatus.Text;
+                return;
+            }
             var ok = await HealthCleanupService.DeleteFindingsAsync(selected, backupDir);
 
             TxtRegCleanStatus.Text = ok
                 ? $"{LanguageService.T("Health_DeletedItemsPrefix")}{selected.Count}{LanguageService.T("Health_DeletedItemsMid")}{backupDir}"
                 : LanguageService.T("Health_DeletePartialFailed");
             s_regCleanStatusCache = TxtRegCleanStatus.Text;
-            foreach (var f in selected) _findings.Remove(_findings.First(r => r.Finding == f));
+            // Keep the actual remaining findings visible even if the operation partially failed.
+            var remaining = await HealthCleanupService.ScanRegistryAsync();
+            _findings.Clear();
+            foreach (var finding in remaining) _findings.Add(new RegistryFindingRow(finding));
             await RefreshRegBackupsAsync();
         }
 
