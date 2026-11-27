@@ -1,6 +1,7 @@
 using System;
 using System.Buffers.Binary;
 using System.Runtime.InteropServices;
+using System.Management;
 using Microsoft.Win32.SafeHandles;
 
 namespace OptimizerWpf.Services;
@@ -37,16 +38,54 @@ internal static class StorageTemperatureService
                 || used < 32 || BinaryPrimitives.ReadUInt32LittleEndian(extents) != 1) return null;
             uint number = BinaryPrimitives.ReadUInt32LittleEndian(extents.AsSpan(8));
             using var disk = Open(@"\\.\PhysicalDrive" + number);
-            if (disk.IsInvalid) return null;
+            if (disk.IsInvalid) return ReadReliabilityCounter(number);
             // Device first; adapter property is not used as a substitute for device temperature.
             var query = new byte[12];
             BinaryPrimitives.WriteUInt32LittleEndian(query, 52);
             var buffer = new byte[4096];
-            return DeviceIoControl(disk, StorageQueryProperty, query, query.Length, buffer, buffer.Length,
+            var reading = DeviceIoControl(disk, StorageQueryProperty, query, query.Length, buffer, buffer.Length,
                 out used, IntPtr.Zero) && used >= 0 && used <= buffer.Length
                 ? ParseDescriptor(buffer.AsSpan(0, used)) : null;
+            return reading ?? ReadReliabilityCounter(number);
         }
         catch { return null; }
+    }
+
+    private static int? ReadReliabilityCounter(uint number)
+    {
+        try
+        {
+            using var searcher = new ManagementObjectSearcher(
+                new ManagementScope(@"root\Microsoft\Windows\Storage"),
+                new ObjectQuery($"SELECT * FROM MSFT_Disk WHERE Number = {number}"),
+                new EnumerationOptions { Timeout = TimeSpan.FromSeconds(4), ReturnImmediately = true });
+            using var disks = searcher.Get();
+            foreach (ManagementObject disk in disks)
+            {
+                using (disk)
+                using (var counters = disk.GetRelated("MSFT_StorageReliabilityCounter", "MSFT_DiskToStorageReliabilityCounter", null, null, null, null, false,
+                    new EnumerationOptions { Timeout = TimeSpan.FromSeconds(4), ReturnImmediately = true }))
+                {
+                    int? temperature = null;
+                    int count = 0;
+                    foreach (ManagementObject counter in counters)
+                    {
+                        using (counter)
+                        {
+                            count++;
+                            if (counter["Temperature"] is object value)
+                            {
+                                int temp = Convert.ToInt32(value);
+                                if (SensorService.IsValidTemperature(temp)) temperature = temp;
+                            }
+                        }
+                    }
+                    return count == 1 ? temperature : null;
+                }
+            }
+        }
+        catch { }
+        return null;
     }
 
     internal static int? ParseDescriptor(ReadOnlySpan<byte> data)
