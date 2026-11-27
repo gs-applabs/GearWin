@@ -240,4 +240,58 @@ public class MaintenanceSafetyTests
         };
         Assert.Equal(expected, string.Join(",", SystemMaintenanceService.BuildCleanupPlan(items, space, browser)));
     }
+
+    [Fact]
+    public void IncompleteHealthCheckNeverDisplaysPerfectScore()
+    {
+        var result = new HealthResult(100, new[] { new HealthIssue("Unavailable", "Unknown") });
+        Assert.False(result.IsComplete);
+        Assert.Equal("—", result.DisplayScore);
+        var known = new HealthResult(100, System.Array.Empty<HealthIssue>());
+        Assert.True(known.IsComplete);
+        Assert.Equal("100", known.DisplayScore);
+    }
+
+    [Theory]
+    [InlineData(1, null, null)]
+    [InlineData(0, null, false)]
+    [InlineData(1, 1, true)]
+    public void FirewallUnknownIsNotConfirmedOn(int? first, int? second, bool? expected)
+        => Assert.Equal(expected, SecurityStatusService.AllEnabled(new[] { first, second }));
+
+    [Fact]
+    public void CleanupEstimateExcludesRecentFiles()
+    {
+        var root = System.IO.Path.Combine(System.IO.Path.GetTempPath(), System.Guid.NewGuid().ToString("N"));
+        System.IO.Directory.CreateDirectory(root);
+        try
+        {
+            var old = System.IO.Path.Combine(root, "old.txt");
+            System.IO.File.WriteAllBytes(old, new byte[128]);
+            System.IO.File.SetLastWriteTimeUtc(old, System.DateTime.UtcNow.AddDays(-10));
+            System.IO.File.WriteAllBytes(System.IO.Path.Combine(root, "recent.txt"), new byte[512]);
+            Assert.Equal(128L, MaintenancePaths.MeasureFiles(root, System.TimeSpan.FromDays(7)));
+            Assert.Equal(128L, MaintenancePaths.CleanFiles(root, System.TimeSpan.FromDays(7)));
+            Assert.Equal(0L, MaintenancePaths.MeasureFiles(root, System.TimeSpan.FromDays(7)));
+        }
+        finally { System.IO.Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public async System.Threading.Tasks.Task CommonCleanupGateSerializesWorkers()
+    {
+        int active = 0, max = 0;
+        long Work()
+        {
+            var n = System.Threading.Interlocked.Increment(ref active);
+            if (n > max) max = n;
+            System.Threading.Thread.Sleep(60);
+            System.Threading.Interlocked.Decrement(ref active);
+            return 1;
+        }
+        var a = QuickCleanService.RunExclusiveAsync(Work);
+        var b = QuickCleanService.RunExclusiveAsync(Work);
+        Assert.Equal(new long[] { 1, 1 }, await System.Threading.Tasks.Task.WhenAll(a, b));
+        Assert.Equal(1, max);
+    }
 }
