@@ -119,7 +119,7 @@ namespace OptimizerWpf.Views
             }
 
             if (_cancelled) return;
-            try { _scoreResult = await Task.Run(HealthScoreService.ComputeFresh); }
+            try { _scoreResult = await HealthScoreService.ComputeAsync(fresh: true); }
             catch { _scoreResult = null; }
             if (_cancelled) return;
             // ΝΕΟ - roadmap ιδέα #7 (ρητό αίτημα χρήστη: "κάνε τα 4-7") - βλ.
@@ -311,7 +311,7 @@ namespace OptimizerWpf.Views
             }
             if (memory) summary.Add(MemoryCleanerService.Describe(await MemoryCleanerService.CleanAsync()));
             _memory = await Task.Run(MemoryCleanerService.Snapshot);
-            _scoreResult = await Task.Run(HealthScoreService.ComputeFresh);
+            _scoreResult = await HealthScoreService.ComputeAsync(fresh: true);
             _results.Clear();
             BuildResults();
 
