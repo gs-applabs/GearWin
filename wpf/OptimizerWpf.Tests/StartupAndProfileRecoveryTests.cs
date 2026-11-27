@@ -47,4 +47,13 @@ public class StartupAndProfileRecoveryTests
     [InlineData(null, false, false)]
     public void PendingOrExternallyChangedProfileIsNeverReportedAsActive(bool? committed, bool matches, bool expected)
         => Assert.Equal(expected, PowerModeService.IsConfirmedActive(committed, matches));
+
+    [Theory]
+    [InlineData("original", "original", true, true)]
+    [InlineData("original", "changed", true, false)]
+    [InlineData("original", "original", false, false)]
+    [InlineData("original", null, true, false)]
+    public void InterruptedMoveCanResumeOnlyWhenRawDataAndTypeMatch(string raw, string? staged, bool sameKind, bool expected)
+        => Assert.Equal(expected, SystemService.CanResumeStartupMove(raw, Microsoft.Win32.RegistryValueKind.ExpandString,
+            staged, sameKind ? Microsoft.Win32.RegistryValueKind.ExpandString : Microsoft.Win32.RegistryValueKind.String));
 }
