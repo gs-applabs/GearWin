@@ -256,45 +256,39 @@ namespace OptimizerWpf.Services
         // οδηγία χρήστη: "άσε τα as they are") - μόνο ανάγνωση μεγέθους εδώ, επαναχρησιμοποιεί το ίδιο
         // DetectBrowsers() ώστε να μετρά ΑΚΡΙΒΩΣ τους ίδιους φακέλους που θα καθάριζε το υπάρχον κουμπί.
         public static Task<long> ScanBrowserCacheSizeAsync() => Task.Run(() =>
-        {
-            long total = 0;
-            foreach (var browser in DetectBrowsers())
-            {
-                foreach (var basePath in browser.Paths)
-                {
-                    if (browser.Name is "Chrome" or "Edge" or "Brave" or "Vivaldi")
-                    {
-                        foreach (var profileDir in SafeEnumerateDirectories(basePath))
-                            foreach (var cacheSub in new[] { "Cache", "Code Cache", "GPUCache" })
-                                total += GetDirectorySize(Path.Combine(profileDir, cacheSub));
-                    }
-                    else
-                    {
-                        total += GetDirectorySize(basePath);
-                    }
-                }
-            }
-            return total;
-        });
+            DetectBrowsers().Sum(BrowserCacheSize));
 
-        private static long GetDirectorySize(string dir) => QuickCleanService.DirSize(dir);
+        internal static long BrowserCacheSize(BrowserCacheEntry browser) =>
+            BrowserCacheDirectories(browser).Sum(QuickCleanService.DirSize);
 
-        public static Task<long> ClearBrowserCacheAsync(BrowserCacheEntry browser) => Task.Run(() =>
+        internal static IEnumerable<string> BrowserCacheDirectories(BrowserCacheEntry browser)
         {
-            long removed = 0;
-            foreach (var basePath in browser.Paths)
+            foreach (var basePath in browser.Paths.Distinct(StringComparer.OrdinalIgnoreCase))
             {
                 if (!MaintenancePaths.IsOrdinaryLocalPath(basePath)) continue;
                 if (browser.Name is "Chrome" or "Edge" or "Brave" or "Vivaldi")
                 {
                     foreach (var profileDir in SafeEnumerateDirectories(basePath))
                         foreach (var cacheSub in new[] { "Cache", "Code Cache", "GPUCache" })
-                            removed += MaintenancePaths.CleanFiles(Path.Combine(profileDir, cacheSub), TimeSpan.FromDays(2));
+                            yield return Path.Combine(profileDir, cacheSub);
                 }
-                else removed += MaintenancePaths.CleanFiles(basePath, TimeSpan.FromDays(2));
+                else if (browser.Name is "Opera" or "OperaGX")
+                {
+                    // Opera paths are profile roots, NEVER cache roots. Only named cache
+                    // subdirectories can be touched; bookmarks, cookies, logins stay intact.
+                    foreach (var cacheSub in new[] { "Cache", "Code Cache", "GPUCache" })
+                        yield return Path.Combine(basePath, cacheSub);
+                }
+                else if (browser.Name == "Firefox" &&
+                    string.Equals(Path.GetFileName(Path.TrimEndingDirectorySeparator(basePath)), "cache2", StringComparison.OrdinalIgnoreCase))
+                    yield return basePath;
+                // Unknown browsers: fail closed.
             }
-            return removed;
-        });
+        }
+
+        public static Task<long> ClearBrowserCacheAsync(BrowserCacheEntry browser) => Task.Run(() =>
+            BrowserCacheDirectories(browser).Distinct(StringComparer.OrdinalIgnoreCase)
+                .Sum(path => MaintenancePaths.CleanFiles(path, TimeSpan.FromDays(2))));
 
         public static Task<WinREStatus> GetWinREStatusAsync() => Task.Run(() =>
         {
