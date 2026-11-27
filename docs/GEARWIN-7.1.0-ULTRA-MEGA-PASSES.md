@@ -8,11 +8,12 @@ Baseline: `0d36ba06ffd5b1f90676d546d8abdfafe1062fbf`; review branch `release/7.1
 |---|---:|---:|---:|---|
 | UMP01 source audit | 3 test/measurement coverage gaps | 1 infrastructure mitigation (measurement workflow added) | 0 | open |
 | UMP02 safety, batches 1–5 | 46 safety/correctness findings | 46 addressed at least in part in source | 0 operation-level certifications | open |
-| UMP03 core/resources, batches 1–3 | 36 findings | 36 addressed at least in part in source | 0 | open |
+| UMP03 core/resources, batches 1–4 | 39 findings | 39 addressed at least in part in source | 0 | open |
 | UMP04 unified maintenance, batches 1–2 | 24 findings | 24 addressed at least in part in source | 0 | open |
-| UMP06 early status fix | 1 finding | 1 addressed in source | 0 | open |
+| UMP05 central operation core, batch 1 | 5 findings | 5 addressed at least in part in source | 0 | open |
+| UMP06 early status fix | 2 findings | 2 addressed at least in part in source | 0 | open |
 | UMP07 early artwork fix | 8 distinct icon/UI findings | 8 addressed at least in part in source | 0 visual certifications | open |
-| Total | 118 | 116 at least partly addressed | 0 operation-level certifications | open |
+| Total | 127 | 125 at least partly addressed | 0 operation-level certifications | open |
 
 The earlier manual review also identified deferred issues in profiles, resources, backups and navigation. These will be assigned stable IDs in their owning passes; do not inflate totals by counting them again. Full tracked-source lexical inventory completed; manual semantic review remains pending. The 7.0.0 baseline Windows build reported 391 desktop + 42 migration tests on 2026-11-27; the Linux job logs available are from 2026-11-23 (5 synthetic clone tests). Six CI jobs reported success in the run; an opt-in test can report pass without doing clicks. Baseline success is not a new branch test result.
 
@@ -255,3 +256,28 @@ Run 45993640140 (commit 2f5080388e8d41dc5d02cc9433045a7b0df5aeea): inventory, ic
 | M24 | Security summary could state all good with unknown firewall/UAC data | incomplete status for unavailable readings; known warnings preserved |
 
 Six new fixture cases (partial health, three firewall cases, age estimate, concurrent cleanup workers), plus one corrected existing firewall expectation; 70 cumulative newly authored cases. All changes through c4902cc3b076cfac1887cdcaa47dacc1047482e5 pending compile/test on current revision. Named mutex only covers same interactive Windows session/user and this app, not third-party tools or other sessions; fixture tests verify worker serialization, not cross-process scheduler integration. Per-file exact preview manifest, hard-link/reparse substitution race, precise allocated bytes and cancellation of long scans remain open. No automatic repair scheduled; DISM/SFC repair only after explicit user consent. Standalone repair buttons still need shared servicing coordination. New labels Greek/English; full translations, actual visual screenshots, and all prior interim restrictions remain release gates. No merge or release.
+
+## UMP05 — unified GearWinCore, first integration batch (explicit user requirement)
+
+The existing PerformanceProfileService is the sole adaptive governor. GearWinCore is an event-driven admission layer, not a second monitoring engine or process. One OperationCoordinator owns active/pending leases, max 32 queued, admits 1–3 concurrent compatible operations according to current tier. User requests take priority over conflicting queued background work; running work is not forcibly interrupted. Lease release is idempotent and cancellation removes queued work. Shutdown stops new admission and cancels pending requests. No additional polling timers or activity disk writes are introduced. Service-boundary leases, never nested: composite workflows invoke independently coordinated leaf services. Existing safety checks, restore guards, exact-value registry backup, path validation and user confirmation stay in place.
+
+| ID | Finding | Source mitigation |
+|---|---|---|
+| C01 | Independent service gates allowed conflicting disk/memory/servicing/backup work to coexist | one conflict-aware admission coordinator across connected services |
+| C02 | No shared priority for user operations versus startup/periodic scans | user-first queued admission; background scans tagged |
+| C03 | Existing tier limited some internal scans but not aggregate admitted operations | 1–3 compatible operation slots driven by existing governor |
+| C04 | No central bounded, cancellable waiting queue | 32 pending limit, cancellation and idempotent release |
+| C05 | No central shutdown admission policy | stop admission and cancel waiting leases; do not forcibly abort running repairs/backups |
+
+### Integration matrix (source only)
+- Connected: QuickClean scans/cleanup (including manual browser and scheduled cleanup through shared engine), MemoryCleaner, standalone SFC/DISM/CHKDSK/WinSxS command capture, Registry Cleaner selected-value delete/restore, BackupService system image creation, HealthScore async snapshots from Home/PC Manager hero/full Health Check/preview/shell/scheduled maintenance, UpdateNotificationService startup/periodic/manual scan.
+- Existing cross-process named mutex for cleanup remains. Other domains currently process-local only. Headless auto-update, individual Winget/driver/Windows Update install/scan callers, user tweak/profile mutations, migration/clone, game saves, vault, shredder, startup delay, network resets, diagnostics, clipboard and hardware monitoring require a separate boundary mapping before migration. Hardware safety alerts must not wait behind multi-hour backup. No blanket replacement of existing services; no second governor. Do not remove independent transaction/safety guards.
+- Core policy limitations: a running background job is not preempted; manual caller joining an existing queued background update does not yet raise its priority; central cancellation only controls waiting, not already running tools; tier cap limits admitted workflows, not their internal threads. Cross-session/interprocess conflict policy remains open beyond cleanup. A bounded queue rejection must be surfaced in every UI caller before release. Validate close/reopen, queued status, headless processes, lock ordering, and sustained background fairness. Keep user preferences and confirmation semantics intact. No new UI feature.
+
+## UMP03 — fourth batch
+R37: cached battery/power-saver state could remain stale until manual reevaluation — refresh on existing governor tick every 30 ticks, no new timer. R38: governor restart retained old CPU samples/counters — clear on stop. R39: performance startup log grew without bound — rotate at 256 KiB. No new measured reduction yet.
+
+## UMP06 — early second finding
+N02: startup/periodic update notification paired legacy FIFO SetBusy/SetIdle — use per-operation scopes to avoid completing unrelated operations.
+
+Seven new isolated coordinator fixtures (conflicts, user priority, dynamic capacity, cancellation, blocked user, shutdown, bounded queue), 77 cumulative newly authored cases. Latest fully verified intermediate remains 498 tests and installer from run 45993640140. Run 45995423289 for previous batch had no jobs available during this turn. Central core changes through 645fac275796219207bf5c2685155c06d0a048fd need fresh compilation and real integration testing. No merge or release; all interim safety restrictions and existing release gates retained.
