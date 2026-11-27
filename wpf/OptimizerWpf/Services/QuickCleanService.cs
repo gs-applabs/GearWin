@@ -63,7 +63,18 @@ namespace OptimizerWpf.Services
             return (IReadOnlyList<QuickCleanItem>)items;
         });
 
+        private static readonly System.Threading.SemaphoreSlim CleanupGate = new(1, 1);
+
         public static async Task<long> CleanAsync(IReadOnlyList<string> keys)
+        {
+            // Copy before awaiting: callers may own a mutable selection list.
+            var selected = keys.Distinct(StringComparer.Ordinal).ToArray();
+            await CleanupGate.WaitAsync().ConfigureAwait(false);
+            try { return await CleanCoreAsync(selected).ConfigureAwait(false); }
+            finally { HealthScoreService.Invalidate(); CleanupGate.Release(); }
+        }
+
+        private static async Task<long> CleanCoreAsync(IReadOnlyList<string> keys)
         {
             long freed = 0;
             foreach (var key in keys)
