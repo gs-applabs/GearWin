@@ -379,7 +379,7 @@ namespace OptimizerWpf.Views
             if (row.Icon != null) return;
             if (HealthView.BrowserExeCandidates.TryGetValue(row.Entry.Name, out var candidates))
                 row.Icon = candidates.Select(AppIconService.GetIconForFile).FirstOrDefault(i => i != null);
-            row.Icon ??= AppIconService.GetIconForFile(AppIconService.FindInstalledIconPath(row.Entry.Label) ?? "");
+            // Unknown identity stays neutral, not a similarly named application.
         }
     }
 }
