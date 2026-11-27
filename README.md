@@ -6,6 +6,19 @@
 
 <p align="center"><a href="#at-a-glance--με-μια-ματιά">Overview / Επισκόπηση</a> · <a href="#full-documentation--αναλυτική-τεκμηρίωση">Full documentation / Τεκμηρίωση</a> · <a href="https://github.com/gs-applabs/GearWin/issues">Support / Υποστήριξη</a> · <a href="https://github.com/gs-applabs">GS App Labs</a></p>
 
+## Current screenshot gallery / Νέα στιγμιότυπα
+
+<table>
+<tr>
+<td width="50%" valign="top"><a href="docs/product-snapshots/0-Home-0.png"><img src="docs/product-snapshots/0-Home-0.png" width="100%" alt="System dashboard / Πίνακας συστήματος"/></a><br/><sub>System dashboard / Πίνακας συστήματος</sub></td>
+<td width="50%" valign="top"><a href="docs/product-snapshots/1-System-1.png"><img src="docs/product-snapshots/1-System-1.png" width="100%" alt="System tools / Εργαλεία συστήματος"/></a><br/><sub>System tools / Εργαλεία συστήματος</sub></td>
+</tr>
+</table>
+
+**[Browse application screenshots / Προβολή στιγμιοτύπων](docs/product-snapshots/README.md)** · [Capture workflow / Μηχανισμός λήψης](../../actions/workflows/product-snapshots.yml)
+
+<sub>Actual application rendering on Windows CI. / Πραγματική απεικόνιση σε Windows CI.</sub>
+
 ## At a glance / Με μια ματιά
 
 | | What you can do / Τι μπορείς να κάνεις |
@@ -243,9 +256,3 @@ The repository no longer contains a copy of the reference tool; some design idea
 text in the user's language (`installer/license_*.txt`).*
 
 **Το λογισμικό παρέχεται "ΩΣ ΕΧΕΙ", χωρίς καμία εγγύηση. / Provided "AS IS", without warranty of any kind.**
-
-
-## Current screenshot gallery / Νέα στιγμιότυπα
-
-[Browse application screenshots / Προβολή στιγμιοτύπων](docs/product-snapshots/README.md)
-
