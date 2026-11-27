@@ -141,7 +141,17 @@ public partial class MainWindow : Window
         SizeChanged += (_, _) => AdaptTabStripToWidth();
         Loaded += (_, _) => { AdaptTabStripToWidth(); NameTabButtonsForAutomation(); };
 
-        _ = CheckHealthAttentionAsync();
+        // A hidden tray shell must not trigger a device/health scan.
+        bool initialAttentionRequested = false;
+        void RequestInitialAttention()
+        {
+            if (initialAttentionRequested || !IsLoaded || !IsVisible || WindowState == WindowState.Minimized) return;
+            initialAttentionRequested = true;
+            _ = CheckHealthAttentionAsync();
+        }
+        Loaded += (_, _) => RequestInitialAttention();
+        IsVisibleChanged += (_, _) => RequestInitialAttention();
+        StateChanged += (_, _) => RequestInitialAttention();
     }
 
     private static readonly (string Key, Func<MainWindow, TextBlock> Label)[] TabLabels =
