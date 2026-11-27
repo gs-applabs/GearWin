@@ -55,13 +55,14 @@ internal static class CoreFeatureLifecycle
 
     internal static void Stop()
     {
+        var previous = _applied;
         _main = null;
         _applied = null;
-        UpdateNotificationService.Stop();
-        ReleaseCheckService.Stop();
-        AlertService.Stop();
-        AutoGamingModeService.Stop();
-        DesktopWidgetService.Stop();
-        ClipboardManagerService.Stop();
+        if (previous?.UpdateTimer == true) ApplyChange(true, false, UpdateNotificationService.Start, UpdateNotificationService.Stop);
+        if (previous?.Release == true) ApplyChange(true, false, ReleaseCheckService.Start, ReleaseCheckService.Stop);
+        if (previous?.Alerts == true) ApplyChange(true, false, AlertService.Start, AlertService.Stop);
+        if (previous?.AutoGaming == true) ApplyChange(true, false, AutoGamingModeService.Start, AutoGamingModeService.Stop);
+        if (previous?.Widget == true) ApplyChange(true, false, DesktopWidgetService.Start, () => DesktopWidgetService.Stop());
+        if (previous?.Clipboard == true) ApplyChange(true, false, () => { }, ClipboardManagerService.Stop);
     }
 }
