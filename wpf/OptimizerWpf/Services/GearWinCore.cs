@@ -51,6 +51,7 @@ internal sealed class OperationCoordinator
         return IsHeavyMutation(a) || IsHeavyMutation(b);
     }
 
+    internal bool HasHeavyWork { get { lock (_gate) return _active.Any(r => IsHeavyMutation(r.Kind)); } }
     internal int ActiveCount { get { lock (_gate) return _active.Count; } }
     internal int PendingCount { get { lock (_gate) return _pending.Count; } }
 
@@ -178,22 +179,55 @@ internal static class GearWinCore
         return null;
     }
 
+    private static string WorkLabel(CoreWork kind) => kind switch
+    {
+        CoreWork.CleanupScan => LanguageService.Current == "el" ? "Σάρωση καθαρισμού" : "Cleanup scan",
+        CoreWork.Cleanup => LanguageService.Current == "el" ? "Καθαρισμός" : "Cleanup",
+        CoreWork.Memory => LanguageService.Current == "el" ? "Συντήρηση RAM" : "Memory maintenance",
+        CoreWork.Repair => LanguageService.Current == "el" ? "Επισκευή Windows" : "Windows repair",
+        CoreWork.UpdateScan => LanguageService.Current == "el" ? "Έλεγχος ενημερώσεων" : "Update scan",
+        CoreWork.Backup => LanguageService.Current == "el" ? "Αντίγραφο ασφαλείας" : "Backup",
+        CoreWork.Registry => LanguageService.Current == "el" ? "Μητρώο" : "Registry",
+        CoreWork.HealthScan => LanguageService.Current == "el" ? "Έλεγχος υγείας" : "Health check",
+        CoreWork.SoftwareChange => LanguageService.Current == "el" ? "Αλλαγές εφαρμογών" : "Software changes",
+        CoreWork.ProfileChange => LanguageService.Current == "el" ? "Προφίλ απόδοσης" : "Performance profile",
+        CoreWork.NetworkChange => LanguageService.Current == "el" ? "Ρυθμίσεις δικτύου" : "Network changes",
+        CoreWork.StartupChange => LanguageService.Current == "el" ? "Ρυθμίσεις εκκίνησης" : "Startup changes",
+        CoreWork.Diagnostics => LanguageService.Current == "el" ? "Διαγνωστικός έλεγχος" : "Diagnostics",
+        CoreWork.Benchmark => LanguageService.Current == "el" ? "Μέτρηση απόδοσης" : "Benchmark",
+        CoreWork.FileProtection => LanguageService.Current == "el" ? "Προστασία αρχείων" : "File protection",
+        CoreWork.TransferScan => LanguageService.Current == "el" ? "Έλεγχος μεταφοράς" : "Transfer check",
+        CoreWork.TweakChange => LanguageService.Current == "el" ? "Ρυθμίσεις Windows" : "Windows settings",
+        _ => LanguageService.Current == "el" ? "Έλεγχος υλικού" : "Hardware check"
+    };
+
+    // Track pending and running work from admission to disposal, including exceptions.
     internal static async Task<IDisposable> EnterAsync(CoreWork kind, CorePriority priority = CorePriority.User, CancellationToken ct = default)
     {
-        var local = await Coordinator.AcquireAsync(kind, priority, ct).ConfigureAwait(false);
-        if (!OperationCoordinator.IsHeavyMutation(kind)) return local;
+        var label = WorkLabel(kind);
+        var status = StatusService.BeginScope(label + (LanguageService.Current == "el" ? " (αναμονή)" : " (waiting)"));
+        IDisposable? local = null, process = null;
         try
         {
-            var process = await CoreProcessLease.AcquireAsync(CoreProcessLease.Name, TimeSpan.FromSeconds(30), ct).ConfigureAwait(false);
-            if (ct.IsCancellationRequested)
+            local = await Coordinator.AcquireAsync(kind, priority, ct).ConfigureAwait(false);
+            if (OperationCoordinator.IsHeavyMutation(kind))
             {
-                process.Dispose();
-                ct.ThrowIfCancellationRequested();
+                process = await CoreProcessLease.AcquireAsync(CoreProcessLease.Name, TimeSpan.FromSeconds(30), ct).ConfigureAwait(false);
             }
-            return new CombinedLease(local, process);
+            ct.ThrowIfCancellationRequested();
+            status.Update(label + (LanguageService.Current == "el" ? " (εκτέλεση)" : " (running)"));
+            var work = process == null ? local : new CombinedLease(local, process);
+            return new CombinedLease(status, work);
         }
-        catch { local.Dispose(); throw; }
+        catch
+        {
+            try { process?.Dispose(); }
+            finally { try { local?.Dispose(); } finally { status.Dispose(); } }
+            throw;
+        }
     }
+
+    internal static bool HasHeavyWork => Coordinator.HasHeavyWork;
 
     internal static async Task RunAsync(CoreWork kind, Func<Task> work, CorePriority priority = CorePriority.User, CancellationToken ct = default)
     {
