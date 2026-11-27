@@ -112,6 +112,16 @@ internal sealed class OperationCoordinator
 
     internal void PolicyChanged() { lock (_gate) Dispatch(); }
 
+    internal bool TryStopWhenSafe()
+    {
+        lock (_gate)
+        {
+            if (_active.Any(r => IsHeavyMutation(r.Kind))) return false;
+            StopAccepting();
+            return true;
+        }
+    }
+
     internal void StopAccepting()
     {
         lock (_gate)
@@ -227,7 +237,7 @@ internal static class GearWinCore
         }
     }
 
-    internal static bool HasHeavyWork => Coordinator.HasHeavyWork;
+    internal static bool TryStopWhenSafe() => Coordinator.TryStopWhenSafe();
 
     internal static async Task RunAsync(CoreWork kind, Func<Task> work, CorePriority priority = CorePriority.User, CancellationToken ct = default)
     {
