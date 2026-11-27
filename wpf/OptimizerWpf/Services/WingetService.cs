@@ -23,17 +23,27 @@ namespace OptimizerWpf.Services
     {
         // 6.9.1: ακύρωση σάρωσης - το token ορίζεται από την οθόνη ενημερώσεων· κάθε εξωτερικό εργαλείο (winget/pip/npm/git...) σκοτώνεται (δέντρο διεργασιών)
         // όταν ακυρωθεί και οι πάροχοι ελέγχουν το token μεταξύ τους.
-        public static CancellationToken ScanToken { get; set; } = CancellationToken.None;
+        private static readonly AsyncLocal<CancellationToken> LegacyScanToken = new();
+        private static readonly AsyncLocal<CancellationToken> ActiveScanToken = new();
+        // Compatibility with existing UI/test callers; token flows only with its own async operation.
+        public static CancellationToken ScanToken { get => LegacyScanToken.Value; set => LegacyScanToken.Value = value; }
 
-        public static async Task<IReadOnlyList<WingetUpdate>> ScanAsync()
+        public static Task<IReadOnlyList<WingetUpdate>> ScanAsync() =>
+            ScanCoordinatedAsync(ScanToken, true, CorePriority.User);
+
+        internal static Task<IReadOnlyList<WingetUpdate>> ScanCoordinatedAsync(CancellationToken ct, bool includeWindows, CorePriority priority) =>
+            GearWinCore.RunAsync(CoreWork.UpdateScan, () => ScanCoreAsync(ct, includeWindows), priority, ct);
+
+        private static async Task<IReadOnlyList<WingetUpdate>> ScanCoreAsync(CancellationToken ct, bool includeWindows)
         {
-            ScanToken.ThrowIfCancellationRequested();
+            ActiveScanToken.Value = ct;
+            ct.ThrowIfCancellationRequested();
             var results = new List<WingetUpdate>();
             var seenIds = new HashSet<string>();
 
             // Windows Update (μηχανισμός WMT 6.7, βλ. WindowsUpdateService): ανεξάρτητο από το winget - πριν, οι ενημερώσεις
             // Windows δεν εμφανίζονταν ΠΟΥΘΕΝΑ στη λίστα (μόνο ένας αριθμός στην Αρχική από το background check).
-            foreach (var wu in await ScanWindowsUpdatesAsync())
+            if (includeWindows) foreach (var wu in await ScanWindowsUpdatesAsync())
                 if (seenIds.Add($"windowsupdate:{wu.Id}")) results.Add(wu);
 
             var (wingetOutput, _, wingetStarted) = await RunToolAsync("winget.exe",
@@ -52,7 +62,7 @@ namespace OptimizerWpf.Services
             // Microsoft Store CLI ("store updates") - αντικατέστησε το παλιό "winget upgrade --source
             // msstore" στο ps1 (v1.9.6): τεκμηριωμένα πιο αξιόπιστο, το ΙΔΙΟ εργαλείο που χρησιμοποιεί
             // το Store εσωτερικά.
-            ScanToken.ThrowIfCancellationRequested();
+            ActiveScanToken.Value.ThrowIfCancellationRequested();
             foreach (var u in await ScanMsStoreAsync())
             {
                 if (seenIds.Add($"{u.Source}:{u.Id}")) results.Add(u);
@@ -74,7 +84,7 @@ namespace OptimizerWpf.Services
             };
             foreach (var (providerName, scan) in otherScans)
             {
-                ScanToken.ThrowIfCancellationRequested();
+                ActiveScanToken.Value.ThrowIfCancellationRequested();
                 List<WingetUpdate> found;
                 try { found = await scan(); }
                 catch (OperationCanceledException) { throw; }
@@ -103,7 +113,7 @@ namespace OptimizerWpf.Services
             var list = new List<WingetUpdate>();
             try
             {
-                var scan = await WindowsUpdateService.ScanDetailedAsync();
+                var scan = await WindowsUpdateService.ScanWithinLeaseAsync();
                 if (!scan.Success) return list;
                 foreach (var u in scan.Updates)
                 {
@@ -161,7 +171,10 @@ namespace OptimizerWpf.Services
 
         // Για την προγραμματισμένη νυχτερινή ενημέρωση (AutoUpdateService): μόνο πηγές winget, σιωπηλά, χωρίς αλληλεπίδραση. Το winget
         // σέβεται τα pins (winget pin) και παραλείπει πακέτα χωρίς γνωστή έκδοση (χωρίς --include-unknown) - ασφαλές για μη επιβλεπόμενη εκτέλεση.
-        public static async Task<(bool Started, int ExitCode, string Output)> UpgradeAllSilentAsync()
+        public static Task<(bool Started, int ExitCode, string Output)> UpgradeAllSilentAsync() =>
+            GearWinCore.RunAsync(CoreWork.SoftwareChange, UpgradeAllCoreAsync, CorePriority.Background);
+
+        private static async Task<(bool Started, int ExitCode, string Output)> UpgradeAllCoreAsync()
         {
             var (output, exitCode, started) = await RunToolAsync("winget.exe",
                 "upgrade --all --silent --accept-source-agreements --accept-package-agreements --disable-interactivity", TimeSpan.FromMinutes(90));
@@ -182,6 +195,7 @@ namespace OptimizerWpf.Services
                 if (ok && reboot) RestartRequiredAfterUpdates = true;
                 return (ok, ok ? null : error);
             }
+            using var lease = await GearWinCore.EnterAsync(CoreWork.SoftwareChange);
             if (source == GitRepoUpdateService.Source) return await GitRepoUpdateService.PullAsync(id);
             var (fileName, arguments) = GetUpgradeCommandForSource(source, id);
             var (_, exitCode, started) = await RunToolAsync(fileName, arguments, TimeSpan.FromMinutes(5));
@@ -244,6 +258,7 @@ namespace OptimizerWpf.Services
         // έκδοση, π.χ. συμβατότητα). Λειτουργεί ΜΟΝΟ για πακέτα από την πηγή winget (--id).
         public static async Task<bool> PinAsync(string id)
         {
+            using var lease = await GearWinCore.EnterAsync(CoreWork.SoftwareChange);
             var (_, exitCode, started) = await RunToolAsync("winget.exe", $"pin add --id \"{id}\" --accept-source-agreements", TimeSpan.FromSeconds(30));
             return started && exitCode == 0;
         }
@@ -262,6 +277,7 @@ namespace OptimizerWpf.Services
         // εγκαταστάσεις στη σειρά, οπότε ΠΟΛΥ μεγαλύτερο timeout από τα υπόλοιπα εργαλεία εδώ.
         public static async Task<bool> ImportAsync(string filePath)
         {
+            using var lease = await GearWinCore.EnterAsync(CoreWork.SoftwareChange);
             var (_, exitCode, started) = await RunToolAsync("winget.exe",
                 $"import -i \"{filePath}\" --accept-package-agreements --accept-source-agreements --ignore-versions", TimeSpan.FromMinutes(20));
             return started && exitCode == 0;
@@ -291,6 +307,7 @@ namespace OptimizerWpf.Services
 
         public static async Task<(bool Ok, string? Reason)> InstallSdioAsync()
         {
+            using var lease = await GearWinCore.EnterAsync(CoreWork.SoftwareChange);
             var (_, exitCode, started) = await RunToolAsync("winget.exe",
                 "install --id " + SdioPackageId + " --exact --silent --accept-source-agreements --accept-package-agreements --disable-interactivity", TimeSpan.FromMinutes(10));
             if (!started) return (false, null);
@@ -299,6 +316,7 @@ namespace OptimizerWpf.Services
 
         public static async Task<(bool Ok, string? Reason)> UninstallAsync(string id, string source)
         {
+            using var lease = await GearWinCore.EnterAsync(CoreWork.SoftwareChange);
             if (!IsSafePackageId(id, source)) return (false, "Unsafe package id rejected");
             var cmd = GetUninstallCommandForSource(source, id);
             if (cmd == null) return (false, null);
@@ -667,16 +685,18 @@ $out | ConvertTo-Json -Compress";
             {
                 var proc = process!; // μη-nullable alias - η null περίπτωση έχει ήδη επιστρέψει παραπάνω (το using(process) από μόνο του δεν στενεύει τη nullability ανάλυση)
                 var stdoutTask = proc.StandardOutput.ReadToEndAsync();
-                _ = proc.StandardError.ReadToEndAsync(); // το stderr δεν διαβαζόταν ποτέ → block αν γέμιζε το pipe
+                var stderrTask = proc.StandardError.ReadToEndAsync(); // το stderr δεν διαβαζόταν ποτέ → block αν γέμιζε το pipe
                 try
                 {
-                    using var cts = CancellationTokenSource.CreateLinkedTokenSource(ScanToken);
+                    using var cts = CancellationTokenSource.CreateLinkedTokenSource(ActiveScanToken.Value);
                     cts.CancelAfter(timeout);
                     await proc.WaitForExitAsync(cts.Token);
+                    await Task.WhenAll(stdoutTask, stderrTask).WaitAsync(cts.Token);
                 }
                 catch (OperationCanceledException)
                 {
-                    try { proc.Kill(true); } catch { } // ολόκληρο το δέντρο (winget/powershell παιδιά)
+                    try { proc.Kill(true); } catch { }
+                    ActiveScanToken.Value.ThrowIfCancellationRequested();
                     return ("", -1, true);
                 }
                 var stdout = await stdoutTask;
