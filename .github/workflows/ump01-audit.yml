@@ -31,11 +31,15 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
+      - name: Prepare and audit package-specific icons
+        shell: pwsh
+        run: ./tools/prepare-recommended-icons.ps1 -ReportDir "$env:RUNNER_TEMP/gearwin-audit/icons"
       - name: Build and collect explicit test results
         shell: pwsh
         run: |
           $out = Join-Path $env:RUNNER_TEMP 'gearwin-audit'
           New-Item -ItemType Directory -Force $out | Out-Null
+          $env:GEARWIN_REQUIRE_RECOMMENDED_ICONS = '1'
           dotnet test wpf/OptimizerWpf.Tests -c Release --logger 'trx;LogFileName=desktop.trx' --results-directory $out
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           dotnet test migration/GearWin.Migration.Tests -c Release --logger 'trx;LogFileName=migration.trx' --results-directory $out
