@@ -236,7 +236,7 @@ public partial class MainWindow : Window
         try
         {
             var result = await System.Threading.Tasks.Task.Run(Services.HealthScoreService.Compute);
-            var needsAttention = result.Score < 70;
+            var needsAttention = !result.IsComplete || result.Score < 70;
             DotHealthAttention.Visibility = needsAttention ? Visibility.Visible : Visibility.Collapsed;
             RefreshHealthMotion();
         }
