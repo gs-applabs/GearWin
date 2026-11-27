@@ -8,7 +8,11 @@ using Microsoft.Win32;
 namespace OptimizerWpf.Services
 {
     public record HealthIssue(string Title, string FixType);
-    public record HealthResult(int Score, IReadOnlyList<HealthIssue> Issues);
+    public record HealthResult(int Score, IReadOnlyList<HealthIssue> Issues)
+    {
+        public bool IsComplete => !Issues.Any(i => i.FixType == "Unknown");
+        public string DisplayScore => IsComplete ? Score.ToString() : "—";
+    }
 
     // Direct C# port of Get-SystemHealthScore from Optimizer.ps1 (line ~17852) - same checks, same
     // score deductions, same v2.8.2 fix (PendingFileRenameOperations removed from the reboot check -
@@ -71,13 +75,16 @@ namespace OptimizerWpf.Services
             return new HealthResult(score, issues);
         }
 
+        private static (int Delta, HealthIssue? Issue) Unknown(string check)
+            => (0, new HealthIssue((LanguageService.Current == "el" ? "Ανεπαρκή δεδομένα: " : "Insufficient data: ") + LanguageService.T(check), "Unknown"));
+
         private static (int Delta, HealthIssue? Issue) CheckSystemDriveSpace()
         {
             try
             {
                 var sysRoot = Path.GetPathRoot(Environment.SystemDirectory) ?? "C:\\";
                 var drive = new DriveInfo(sysRoot);
-                if (!drive.IsReady || drive.TotalSize <= 0) return (0, null);
+                if (!drive.IsReady || drive.TotalSize <= 0) return Unknown("HealthScore_DiskLowSpace");
 
                 var freePct = Math.Round(100.0 * drive.TotalFreeSpace / drive.TotalSize);
                 if (freePct < 10)
@@ -85,7 +92,7 @@ namespace OptimizerWpf.Services
                 if (freePct < 20)
                     return (-10, new HealthIssue(LanguageService.T("HealthScore_DiskLowSpace"), "Storage"));
             }
-            catch { /* drive can be unready mid-check - skip, matches the WinForms try/catch-empty pattern */ }
+            catch { return Unknown("HealthScore_DiskLowSpace"); }
             return (0, null);
         }
 
@@ -106,7 +113,7 @@ namespace OptimizerWpf.Services
                 if (cbsPending != null || wuPending != null)
                     return (-10, new HealthIssue(LanguageService.T("HealthScore_RebootPending"), "Restart"));
             }
-            catch { }
+            catch { return Unknown("HealthScore_RebootPending"); }
             return (0, null);
         }
 
@@ -118,10 +125,8 @@ namespace OptimizerWpf.Services
                 defenderScope.Connect();
                 using var searcher = new ManagementObjectSearcher(defenderScope, new ObjectQuery("SELECT RealTimeProtectionEnabled FROM MSFT_MpComputerStatus"));
                 using var results = searcher.Get();
-                var status = results.Cast<ManagementBaseObject>().FirstOrDefault();
-                if (status == null) return (0, null);
-
-                var realTimeOn = (bool)(status["RealTimeProtectionEnabled"] ?? true);
+                using var status = results.Cast<ManagementBaseObject>().FirstOrDefault();
+                if (status == null || status["RealTimeProtectionEnabled"] is not bool realTimeOn) return Unknown("HealthScore_DefenderOff");
                 if (realTimeOn) return (0, null);
 
                 // Real-time protection is off - check whether another active AV explains it (Windows
@@ -157,7 +162,7 @@ namespace OptimizerWpf.Services
 
                 return (-20, new HealthIssue(LanguageService.T("HealthScore_DefenderOff"), "Defender"));
             }
-            catch { return (0, null); }
+            catch { return Unknown("HealthScore_DefenderOff"); }
         }
 
         private static (int Delta, HealthIssue? Issue) CheckStartupCount()
@@ -180,7 +185,7 @@ namespace OptimizerWpf.Services
                     return (-10, new HealthIssue($"{LanguageService.T("HealthScore_TooManyStartupPrefix")}{startupCount}{LanguageService.T("HealthScore_TooManyStartupSuffix")}", "Startup"));
                 }
             }
-            catch { }
+            catch { return Unknown("HealthScore_TooManyStartupPrefix"); }
             return (0, null);
         }
 
@@ -207,7 +212,7 @@ namespace OptimizerWpf.Services
                     return (-10, new HealthIssue(LanguageService.T("HealthScore_NoRestorePointFound"), "RestorePoint"));
                 }
             }
-            catch { }
+            catch { return Unknown("HealthScore_NoRestorePointFound"); }
             return (0, null);
         }
     }
