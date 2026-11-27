@@ -162,12 +162,25 @@ namespace OptimizerWpf.Services
         // στο System32 - flat, τεκμηριωμένο C API, P/Invoke-able απευθείας όπως το NVML. Το Ryzen
         // Master Monitoring SDK (CPU AMD) ΠΑΡΑΜΕΝΕΙ εκτός πεδίου - αυτό ΔΕΝ εγκαθίσταται αυτόματα με
         // κανέναν οδηγό, χρειάζεται πραγματικά ξεχωριστό bundling/εγκατάσταση.
-        public static int? GetGpuTemperatureCelsius() =>
-            GetTemperature(HardwareType.GpuNvidia, GpuCoreNames) ??
-            GetTemperature(HardwareType.GpuAmd, GpuCoreNames) ??
-            GetTemperature(HardwareType.GpuIntel, GpuCoreNames) ??
-            GetNvidiaTemperatureViaNvml() ??
-            GetAmdTemperatureViaAdl();
+        private static long _gpuTemperatureAt;
+        private static int? _gpuTemperature;
+
+        public static int? GetGpuTemperatureCelsius()
+        {
+            lock (SensorGate)
+            {
+                if (_closed) return null;
+                long now = Environment.TickCount64;
+                if (_gpuTemperatureAt != 0 && now - _gpuTemperatureAt < 3000) return _gpuTemperature;
+                _gpuTemperature = GetTemperature(HardwareType.GpuNvidia, GpuCoreNames) ??
+                    GetTemperature(HardwareType.GpuAmd, GpuCoreNames) ??
+                    GetTemperature(HardwareType.GpuIntel, GpuCoreNames) ??
+                    GetNvidiaTemperatureViaNvml() ??
+                    GetAmdTemperatureViaAdl();
+                _gpuTemperatureAt = Environment.TickCount64;
+                return _gpuTemperature;
+            }
+        }
 
         // ΝΕΟ - ρητό αίτημα χρήστη: "πρόσθεσε και το voltage της GPU" (στο Widget Επιφάνειας Εργασίας) -
         // ίδιο μοτίβο/αισθητήρες ονόματα με το GetGpuTemperatureCelsius παραπάνω, απλά SensorType.Voltage
@@ -284,9 +297,16 @@ namespace OptimizerWpf.Services
                 if (Nvml.nvmlInit_v2() != 0) return null;
                 try
                 {
-                    if (Nvml.nvmlDeviceGetHandleByIndex_v2(0, out var device) != 0) return null;
-                    if (Nvml.nvmlDeviceGetTemperature(device, 0 /* NVML_TEMPERATURE_GPU */, out var temp) != 0) return null;
-                    return IsValidTemperature(temp) ? (int)temp : null;
+                    if (Nvml.nvmlDeviceGetCount_v2(out uint count) != 0) return null;
+                    int? highest = null;
+                    for (uint index = 0; index < Math.Min(count, 64u); index++)
+                    {
+                        if (Nvml.nvmlDeviceGetHandleByIndex_v2(index, out var device) != 0 ||
+                            Nvml.nvmlDeviceGetTemperature(device, 0, out var temp) != 0 ||
+                            !IsValidTemperature(temp)) continue;
+                        highest = Math.Max(highest ?? 0, (int)temp);
+                    }
+                    return highest;
                 }
                 finally
                 {
@@ -310,6 +330,10 @@ namespace OptimizerWpf.Services
             [System.Runtime.InteropServices.DefaultDllImportSearchPaths(System.Runtime.InteropServices.DllImportSearchPath.System32)]
             [System.Runtime.InteropServices.DllImport("nvml.dll")]
             public static extern int nvmlInit_v2();
+
+            [System.Runtime.InteropServices.DefaultDllImportSearchPaths(System.Runtime.InteropServices.DllImportSearchPath.System32)]
+            [System.Runtime.InteropServices.DllImport("nvml.dll")]
+            public static extern int nvmlDeviceGetCount_v2(out uint count);
 
             [System.Runtime.InteropServices.DefaultDllImportSearchPaths(System.Runtime.InteropServices.DllImportSearchPath.System32)]
             [System.Runtime.InteropServices.DllImport("nvml.dll")]
@@ -426,8 +450,8 @@ namespace OptimizerWpf.Services
             {
                 foreach (var name in preferredNames)
                 {
-                    var match = sensors.FirstOrDefault(s => s.Name.Contains(name, StringComparison.OrdinalIgnoreCase));
-                    if (match != null) return (int)Math.Round(match.Value!.Value);
+                    var matches = sensors.Where(s => s.Name.Contains(name, StringComparison.OrdinalIgnoreCase)).ToArray();
+                    if (matches.Length != 0) return (int)Math.Round(matches.Max(s => s.Value!.Value));
                 }
             }
 
