@@ -45,7 +45,7 @@ namespace OptimizerWpf.Services
         }
 
         // A single overwrite limits avoidable writes. This is not a guarantee of erasure on SSDs.
-        public static Task<bool> ShredFileAsync(string path, int passes = 1) => Task.Run(() =>
+        public static Task<bool> ShredFileAsync(string path, int passes = 1) => GearWinCore.RunAsync(CoreWork.FileProtection, () => Task.Run(() =>
         {
             try
             {
@@ -81,6 +81,6 @@ namespace OptimizerWpf.Services
             {
                 return false;
             }
-        });
+        }));
     }
 }
