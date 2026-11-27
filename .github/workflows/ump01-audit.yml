@@ -2,6 +2,8 @@ name: UMP01 audit baseline
 on:
   push:
     branches: [release/7.1.0-ultra]
+  pull_request:
+    branches: [release/7.0.0-validation]
   workflow_dispatch:
 permissions:
   contents: read
