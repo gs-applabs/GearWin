@@ -22,6 +22,8 @@ namespace OptimizerWpf.Services
     {
         private static DispatcherTimer? _timer;
         private static bool _checkInFlight;
+        private static int _generation;
+        private static bool _stopped;
         private static readonly object ScanGate = new();
         private static Task? _activeScan;
         private static readonly object LogGate = new();
@@ -54,6 +56,8 @@ namespace OptimizerWpf.Services
         public static void Start()
         {
             if (_timer != null) return;
+            _stopped = false;
+            _generation++;
             // Ο ίδιος ο timer τρέχει συχνά (κάθε 2 λεπτά) αλλά το RunCheckIfDueAsync παρακάτω κάνει
             // πραγματική σάρωση μόνο όταν έχει περάσει το πραγματικό διάστημα (UpdateCheckIntervalHours,
             // προεπιλογή 6 ώρες) - φθηνός έλεγχος ρολογιού συχνά, ακριβή σάρωση winget/οδηγών σπάνια.
@@ -72,6 +76,7 @@ namespace OptimizerWpf.Services
             if (!AppSettingsService.Current.UpdateNotificationsEnabled) { Log("StartupCheckAsync: skipped, UpdateNotificationsEnabled=false"); return; }
             Log("StartupCheckAsync: starting, waiting 8s then for network (up to 3 min)");
             _checkInFlight = true;
+            var generation = _generation;
             // ΔΙΟΡΘΩΣΗ (ρητό αίτημα χρήστη: "όταν γίνεται η διαδικασία θα φαίνεται στη γραμμή
             // κατάστασης, που δεν βλέπω κάτι") - μέχρι τώρα ΟΛΟ αυτό το 8s+έως 3' στάδιο αναμονής ΚΑΙ
             // η ίδια η σάρωση ήταν αόρατα στη γραμμή κατάστασης (μόνο το χειροκίνητο "Έλεγχος Τώρα" το
@@ -81,11 +86,12 @@ namespace OptimizerWpf.Services
             {
                 await Task.Delay(TimeSpan.FromSeconds(8));
                 var waited = 0;
-                while (waited < 18 && !System.Net.NetworkInformation.NetworkInterface.GetIsNetworkAvailable())
+                while (!_stopped && generation == _generation && waited < 18 && !System.Net.NetworkInformation.NetworkInterface.GetIsNetworkAvailable())
                 {
                     await Task.Delay(TimeSpan.FromSeconds(10));
                     waited++;
                 }
+                if (_stopped || generation != _generation || !AppSettingsService.Current.UpdateNotificationsEnabled) return;
                 Log($"StartupCheckAsync: network available={System.Net.NetworkInformation.NetworkInterface.GetIsNetworkAvailable()} after {waited * 10}s wait - running check");
                 await RunCheckAsync(announce: true, background: true);
             }
@@ -95,13 +101,15 @@ namespace OptimizerWpf.Services
 
         public static void Stop()
         {
+            _stopped = true;
+            _generation++;
             _timer?.Stop();
             _timer = null;
         }
 
         private static async Task RunCheckIfDueAsync()
         {
-            if (_checkInFlight || !AppSettingsService.Current.UpdateNotificationsEnabled) return;
+            if (_stopped || _checkInFlight || !AppSettingsService.Current.UpdateNotificationsEnabled) return;
             var last = AppSettingsService.Current.LastUpdateCheckAt;
             var intervalHours = Math.Max(1, AppSettingsService.Current.UpdateCheckIntervalHours);
             if (last.HasValue && DateTime.Now - last.Value < TimeSpan.FromHours(intervalHours)) return;
@@ -127,18 +135,21 @@ namespace OptimizerWpf.Services
 
         private static async Task RunCoordinatedAsync(bool announce, bool background)
         {
-            if (background && !AppSettingsService.Current.UpdateNotificationsEnabled) return;
-            await RunCheckCoreAsync(announce, background ? CorePriority.Background : CorePriority.User);
+            if (background && (_stopped || !AppSettingsService.Current.UpdateNotificationsEnabled)) return;
+            await RunCheckCoreAsync(announce, background ? CorePriority.Background : CorePriority.User, _generation);
         }
 
-        private static async Task RunCheckCoreAsync(bool announce, CorePriority priority)
+        private static async Task RunCheckCoreAsync(bool announce, CorePriority priority, int generation)
         {
+            bool Stale() => priority == CorePriority.Background && (_stopped || generation != _generation || !AppSettingsService.Current.UpdateNotificationsEnabled);
+            if (Stale()) return;
             Log($"RunCheckAsync: starting (announce={announce})");
             AppSettingsService.Current.LastUpdateCheckAt = DateTime.Now;
 
             try
             {
                 var appUpdates = await WingetService.ScanCoordinatedAsync(System.Threading.CancellationToken.None, includeWindows: false, priority: priority);
+                if (Stale()) return;
                 Log($"RunCheckAsync: winget scan found {appUpdates.Count} app update(s)");
                 UpdatesHubService.ReportAppScan(appUpdates.Count);
                 MaybeNotify(appUpdates.Count,
@@ -154,7 +165,9 @@ namespace OptimizerWpf.Services
 
             try
             {
+                if (Stale()) return;
                 var driverResult = await DriverService.ScanCoordinatedAsync(priority);
+                if (Stale()) return;
                 Log($"RunCheckAsync: driver scan found {driverResult.Updates.Count} update(s) (PolicyBlocked={driverResult.PolicyBlocked})");
                 if (!driverResult.PolicyBlocked)
                 {
@@ -172,7 +185,9 @@ namespace OptimizerWpf.Services
             // Services/WindowsUpdateService.cs. Ίδιο μοτίβο best-effort/MaybeNotify με τα δύο παραπάνω.
             try
             {
+                if (Stale()) return;
                 var scan = await WindowsUpdateService.ScanCoordinatedAsync(priority);
+                if (Stale()) return;
                 var (success, allWinUpdates, winError) = (scan.Success, scan.Updates, scan.Error);
                 // Οι προαιρετικές ενημερώσεις (π.χ. προεπισκοπήσεις) δεν ενοχλούν με ειδοποίηση - εμφανίζονται στη λίστα της καρτέλας.
                 var winUpdates = allWinUpdates.Where(u => !u.IsOptional).ToList();
