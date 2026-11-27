@@ -7,13 +7,13 @@ Baseline: `0d36ba06ffd5b1f90676d546d8abdfafe1062fbf`; review branch `release/7.1
 | Pass | Distinct recorded findings | Source mitigations | Runtime-certified fixes | Status |
 |---|---:|---:|---:|---|
 | UMP01 source audit | 3 test/measurement coverage gaps | 1 infrastructure mitigation (measurement workflow added) | 0 | open |
-| UMP02 safety, batches 1–10 | 85 safety/correctness findings | 85 addressed at least in part in source | 0 operation-level certifications | open |
+| UMP02 safety, batches 1–11 | 95 safety/correctness findings | 95 addressed at least in part in source | 0 operation-level certifications | open |
 | UMP03 core/resources, batches 1–10 | 81 findings | 81 addressed at least in part in source | 0 | open |
 | UMP04 unified maintenance, batches 1–2 | 24 findings | 24 addressed at least in part in source | 0 | open |
 | UMP05 central operation core, batches 1–7 | 39 findings | 39 addressed at least in part in source | 0 | open |
 | UMP06 status and navigation, batch 1 | 9 findings | 9 addressed at least in part in source | 0 | open |
 | UMP07 early artwork fix | 8 distinct icon/UI findings | 8 addressed at least in part in source | 0 visual certifications | open |
-| Total | 249 | 247 at least partly addressed | 0 operation-level certifications | open |
+| Total | 259 | 257 at least partly addressed | 0 operation-level certifications | open |
 
 The earlier manual review also identified deferred issues in profiles, resources, backups and navigation. These will be assigned stable IDs in their owning passes; do not inflate totals by counting them again. Full tracked-source lexical inventory completed; manual semantic review remains pending. The 7.0.0 baseline Windows build reported 391 desktop + 42 migration tests on 2026-11-27; the Linux job logs available are from 2026-11-23 (5 synthetic clone tests). Six CI jobs reported success in the run; an opt-in test can report pass without doing clicks. Baseline success is not a new branch test result.
 
@@ -528,3 +528,24 @@ User requirement: demand-driven activation must NOT become a blanket prohibition
 | C39 | Benchmark admitted hardware-scan domain despite need for quiet storage activity | benchmark blocks hardware/system inventory while permitting process inspection; no claim that uncoordinated external I/O is eliminated |
 
 Ten new regression cases: six compatible pairs at low tier, bounded observational lane, independent inspection while mutation is queued, benchmark isolation, and anti-starvation ordering. Reworked one existing governor test for the new contract. 182 cumulative newly authored cases; 129 included in previously confirmed CI (563 tests). The workflow 46005543469 for prior feature-lifecycle head had queued jobs when inspected; no new compiled/test result or endurance result. Latest source through 9f31dee8349b251249ad6d6dd6b734bacd2a0f38 requires CI. The design budgets (2–3 regular user leases plus up to 2 snapshots) are initial bounded choices, not measured optimum. Background work still yields to user requests and running work is not revoked. Conservative cross-process heavy mutex is retained: mutations with unknown overlapping file/registry/servicing/power/network scope remain serialized, including potentially independent writes, until explicit per-resource identity is verified. This is not yet a complete resource-specific reader/writer lock manager. Not all tools use the coordinator, hardware provider delays remain possible, and GUI modal behavior has not been validated. No change to Windows priorities of unrelated user processes, no new always-on scheduler, no forced RAM trimming. No merge or release.
+
+## P0.01 — completed intermediate CI evidence (not final candidate)
+
+Run 46005543469, Windows job 140531018633: 564 desktop + 42 migration tests = 606 passed, installer build and clean-installed normal/tray sampling succeeded. 172 newly authored cases included at this intermediate stage; 10 later concurrency cases are not verified by this run. Root process, 13 samples each, normal 60.52s: CPU 5.977%, max WS 257.88 MiB, max private 146.62 MiB, write transfer 2348 bytes, handles 946→1092. Tray 60.41s: CPU 0.071%, max WS 130.12 MiB, max private 46.20 MiB, write transfer 0 bytes, handles 529→669. Tray CPU/private memory met provisional targets for this short window, WS did not; normal CPU far above target. Handle rise demands extended workload/warmup investigation, not proof of leak. No physical SSD-wear or 24-hour claim. Latest head requires separate validation. Roadmap revision commit 58e394b98b9fc0e88935e26b6f6ef09d6cbbdaf5.
+
+## P0.02/P0.03 — UMP02 safety batch 11 (10 distinct findings)
+
+| ID | Finding | Source mitigation |
+|---|---|---|
+| S86 | Registry uninstall string passed verbatim to elevated cmd.exe | no shell execution of registry-provided commands; fixed system msiexec path, reconstructed argument list |
+| S87 | Arbitrary registry identity/name could be trusted as installed machine MSI | require matching GUID registration, WindowsInstaller flag, machine context, Windows Installer installed name and state; otherwise Windows Settings |
+| S88 | Deep uninstall ignored failed configured restore-point protection | stop direct MSI uninstall on guard failure |
+| S89 | Success/restart code removed row without verifying product absence | separate restart/failure/settings/unverified outcomes; only unknown product after exit zero confirms removal |
+| S90 | Residual folders matched by substring and included shared ProgramData | exact name candidates in local/roaming AppData with ordinary-path checks; advisory only |
+| S91 | Elevated recursive residual deletion accepted arbitrary path and could erase shared/user data | remove destructive API and automatic deletion flow; manual review until ownership/rollback proof |
+| S92 | UWP removal interpolated unvalidated package identity, without eligibility recheck | bounded identity grammar, exact current-user Store package, exclude framework/resource/nonremovable, verify absence |
+| S93 | UWP read-only inventory could hang indefinitely | trusted system PowerShell, concurrent stream drains, 30s cancellation/termination for read-only scan only |
+| S94 | UWP scan swallowed parsing/provider failure as empty list; leaked JSON document | propagate scan errors, preserve previous UI snapshot on failure, dispose document |
+| S95 | Deep uninstall/UWP refresh and action could overlap, unhandled exceptions/stuck status | per-view guard, scope/finally, explicit outcomes and restore guard for UWP |
+
+27 added tests (19 MSI registration/command/residual name, 8 exact UWP identity). 209 cumulative authored cases, 172 included in confirmed intermediate CI; latest source changes through 51d90aa7f612550f91b6e42c562b42739e3156d7 not yet compiled. Source commits fe627be, 8660cb2, 5489a78, 7b0e9ba, ed8e454, 846b10c, 51d90aa. Native MSI APIs and actual uninstall transaction require disposable integration test. Non-MSI/per-user or unusual command registrations temporarily delegate to Windows Settings; do not claim feature parity. Restore safe direct workflows later only with verified authority and package identity. Advisory folder matches are not ownership proof, and no data folders are deleted. Built-in Appx wildcard operations, package-manager executable trust, mutation supervision, installer success/readback and path race hardening remain P0.02–P0.05 work. No forced timeout kill of MSI/servicing. No merge or release.
