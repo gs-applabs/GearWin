@@ -79,7 +79,7 @@ namespace OptimizerWpf.Views
             _refreshTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(PerformanceProfileService.Current.HomeRefreshSeconds) };
             _refreshTimer.Tick += (_, _) => { RefreshCpuRamGpu(); RefreshNetworkGraph(); };
             _diskRefreshTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(20) };
-            _diskRefreshTimer.Tick += (_, _) => { RefreshDisk(); _ = RefreshNetworkStatusAsync(); _ = RefreshTemperaturesAsync(); };
+            _diskRefreshTimer.Tick += (_, _) => { RefreshDisk(); _ = RefreshNetworkStatusAsync(); _ = RefreshTemperaturesAsync(); if (_diskIconNeedsRetry) _ = UpdateDiskIconAsync(); };
 
             // Constructor-time Window.GetWindow is frequently null. Attach after Loaded.
             Window? parentWindow = null;
@@ -99,11 +99,23 @@ namespace OptimizerWpf.Views
                 if (!_refreshTimer.IsEnabled) _refreshTimer.Start();
                 if (!_diskRefreshTimer.IsEnabled) { _diskRefreshTimer.Start(); _ = RefreshTemperaturesAsync(); }
             }
-            Action perfChanged = () => Dispatcher.BeginInvoke(new Action(UpdatePolling));
+            int pollingRefreshQueued = 0;
+            Action perfChanged = () =>
+            {
+                if (Dispatcher.HasShutdownStarted || System.Threading.Interlocked.Exchange(ref pollingRefreshQueued, 1) != 0) return;
+                Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    System.Threading.Interlocked.Exchange(ref pollingRefreshQueued, 0);
+                    UpdatePolling();
+                }));
+            };
             EventHandler windowChanged = (_, _) => UpdatePolling();
             DependencyPropertyChangedEventHandler visibilityChanged = (_, _) => UpdatePolling();
             Loaded += (_, _) =>
             {
+                if (_viewLifetime != null) return;
+                _viewLifetime = new System.Threading.CancellationTokenSource();
+                _unloaded = false;
                 parentWindow = Window.GetWindow(this);
                 if (parentWindow != null)
                 {
@@ -115,6 +127,7 @@ namespace OptimizerWpf.Views
                 IsVisibleChanged += visibilityChanged;
                 PerformanceProfileService.Changed += perfChanged;
                 UpdatePolling();
+                InitializeVisibleView();
             };
             Unloaded += (_, _) =>
             {
@@ -130,53 +143,38 @@ namespace OptimizerWpf.Views
                 parentWindow = null;
             };
 
+            Unloaded += (_, _) =>
+            {
+                _unloaded = true;
+                var lifetime = _viewLifetime;
+                _viewLifetime = null;
+                if (lifetime != null) { lifetime.Cancel(); lifetime.Dispose(); }
+                _refreshTimer.Stop();
+                _diskRefreshTimer.Stop();
+                DisposeCounters();
+                ActionLogService.Changed -= RefreshRecentActivity;
+                UpdatesHubService.Changed -= RefreshUpdatesSummary;
+                ImpactTrackingService.Changed -= RenderHealthIssues;
+            };
+        }
+
+        private void InitializeVisibleView()
+        {
             RefreshCpuRamGpu();
             RefreshDisk();
             _ = RefreshNetworkStatusAsync();
             _ = UpdateDiskIconAsync();
             _ = RefreshHealthScoreAsync();
             CheckHealthCheckReminder();
-
             _ = LoadGpuNameAsync();
-
-            // ΝΕΟ - roadmap ""Τι έκανε πρόσφατα η εφαρμογή"" - βλ. ActionLogService (ήδη υπάρχον, hook
-            // στο StatusService.Changed). Ζωντανή ενημέρωση μέσω του event - όχι timer, ίδιο πνεύμα
-            // "ελάφρυνση εφαρμογής" με τα υπόλοιπα στοιχεία αυτής της καρτέλας.
             RefreshRecentActivity();
             ActionLogService.Changed += RefreshRecentActivity;
             LoadPinnedTweaks();
-
-            // ΝΕΟ - βλ. σχόλιο στο XAML: η κάρτα "Ενημερώσεις Συστήματος" δείχνει το ΤΕΛΕΥΤΑΙΟ γνωστό
-            // στιγμιότυπο του UpdatesHubService (ζωντανά ενημερωνόμενο, ίδιο μοτίβο event με το
-            // ActionLogService παραπάνω) - όχι δική της σάρωση, το background UpdateNotificationService
-            // (ή οι σαρώσεις της καρτέλας Βελτιστοποίηση) τροφοδοτούν το hub.
             RefreshUpdatesSummary();
             UpdatesHubService.Changed += RefreshUpdatesSummary;
             _ = LoadSecuritySummaryAsync();
-
-            // ΝΕΟ - roadmap ιδέα #5 - βλ. GetImpactSummaryLines/RenderHealthIssues παρακάτω.
             RenderHealthIssues();
             ImpactTrackingService.Changed += RenderHealthIssues;
-
-            // ΔΙΟΡΘΩΣΗ ("ελάφρυνση εφαρμογής"): κάθε επιστροφή στην Αρχική δημιουργεί ΝΕΟ HomeView
-            // (βλ. MainWindow.ShowTabContent) - χωρίς αυτό, οι timers του ΠΑΛΙΟΥ instance θα
-            // συνέχιζαν να τρέχουν επ' αόριστον στο παρασκήνιο (διαρροή) κάθε φορά που ο χρήστης
-            // αλλάζει καρτέλα και ξαναγυρνάει. Το ίδιο ισχύει για το static event παραπάνω - χωρίς
-            // αφαίρεση εγγραφής, κάθε παλιό HomeView θα εξακολουθούσε να ενημερώνεται επ' αόριστον.
-            Unloaded += (_, _) =>
-            {
-                _refreshTimer.Stop();
-                _diskRefreshTimer.Stop();
-                // Κάθε επίσκεψη στην Αρχική δημιουργεί ΝΕΟ HomeView με νέα PerformanceCounter (CPU + ένα ανά GPU
-                // engine instance, δεκάδες/εκατοντάδες PDH handles) που ΔΕΝ γίνονταν ποτέ Dispose — διαρροή native
-                // handles σε κάθε εναλλαγή καρτελών. Dispose εδώ· το _unloaded προστατεύει από το background init
-                // που μπορεί να τελειώσει ΜΕΤΑ το Unloaded.
-                _unloaded = true;
-                DisposeCounters();
-                ActionLogService.Changed -= RefreshRecentActivity;
-                UpdatesHubService.Changed -= RefreshUpdatesSummary;
-                ImpactTrackingService.Changed -= RenderHealthIssues;
-            };
         }
 
         private void RefreshUpdatesSummary()
@@ -253,7 +251,7 @@ namespace OptimizerWpf.Views
                 .Concat(TweakService.LighterWindowsTweaksSimple().Select(t => new TweakRowVm(t, "Lighter", detectNow: false)))
                 .Where(r => pins.Contains(r.PinKey) || pins.Contains(r.LegacyPinKey))
                 .ToList();
-            _ = TweakRowVm.DetectAllAsync(all);
+            _ = TweakRowVm.DetectAllAsync(all, ViewToken);
 
             ListPinnedTweaks.ItemsSource = all;
             TxtNoPinned.Visibility = all.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -264,8 +262,9 @@ namespace OptimizerWpf.Views
         {
             try
             {
-                var items = await SecurityStatusService.GetAsync();
-                if (_unloaded) return;
+                var token = ViewToken;
+                var items = await SecurityStatusService.GetAsync().WaitAsync(token);
+                if (token.IsCancellationRequested || _unloaded) return;
                 var good = items.Count(i => i.Level == SecurityLevel.Good);
                 var total = items.Count(i => i.Level != SecurityLevel.Info);
                 TxtSecuritySummary.Text = string.Format(LanguageService.T("Home_SecuritySummary"), good, total);
@@ -331,13 +330,22 @@ namespace OptimizerWpf.Views
 
         private async Task LoadGpuNameAsync()
         {
-            TxtGpuName.Text = await Task.Run(GpuInfoService.GetName);
+            var token = ViewToken;
+            try
+            {
+                var name = await GpuInfoService.GetNameAsync().WaitAsync(token);
+                if (!token.IsCancellationRequested && !_unloaded) TxtGpuName.Text = name;
+            }
+            catch (OperationCanceledException) when (token.IsCancellationRequested) { }
+            catch (Exception ex) { System.Diagnostics.Trace.TraceError(ex.Message); }
         }
 
         internal static double PollSeconds(double configuredSeconds, bool active) =>
             active ? Math.Max(2, configuredSeconds) : Math.Max(8, configuredSeconds);
 
-        private bool _unloaded;
+        private bool _unloaded = true;
+        private System.Threading.CancellationTokenSource? _viewLifetime;
+        private System.Threading.CancellationToken ViewToken => _viewLifetime?.Token ?? new System.Threading.CancellationToken(true);
 
         private void DisposeCounters()
         {
@@ -351,7 +359,7 @@ namespace OptimizerWpf.Views
             _gpuReading = true;
             try
             {
-                var value = await SharedTelemetryService.ReadGpuAsync();
+                var value = await SharedTelemetryService.ReadGpuAsync().WaitAsync(ViewToken);
                 if (_unloaded || _gpuSubscription == null) return;
                 TxtGpuPercent.Text = value.HasValue ? $"{value}%" : "—";
                 if (value.HasValue) AnimateBar(BarGpu, value.Value);
@@ -370,7 +378,7 @@ namespace OptimizerWpf.Views
             _networkRefreshInFlight = true;
             try
             {
-            var (connected, latencyMs) = await NetworkService.CheckInternetAsync();
+            var (connected, latencyMs) = await NetworkService.CheckInternetAsync().WaitAsync(ViewToken);
             if (_unloaded) return;
             DotNetworkStatus.Fill = new SolidColorBrush(connected ? Color.FromRgb(76, 175, 80) : Color.FromRgb(220, 53, 69));
             TxtNetworkStatus.Text = connected
@@ -450,7 +458,7 @@ namespace OptimizerWpf.Views
             _temperatureReading = true;
             try
             {
-                var sample = await SensorService.ReadHomeTemperaturesAsync();
+                var sample = await SensorService.ReadHomeTemperaturesAsync().WaitAsync(ViewToken);
                 if (_unloaded || !IsVisible) return;
                 SetTempText(TxtCpuTemp, sample.Cpu, "CPU", sample.Pawn);
                 SetTempText(TxtGpuTemp, sample.Gpu, "GPU", sample.Pawn);
@@ -468,7 +476,7 @@ namespace OptimizerWpf.Views
             var generation = _diskSelectionGeneration;
             try
             {
-                var temperature = await SensorService.ReadHomeDiskAsync(drive);
+                var temperature = await SensorService.ReadHomeDiskAsync(drive).WaitAsync(ViewToken);
                 if (!_unloaded && IsVisible && generation == _diskSelectionGeneration)
                     SetTempText(TxtDiskTemp, temperature, "Disk", null);
             }
@@ -553,26 +561,30 @@ namespace OptimizerWpf.Views
         // DriveTypeService can take a moment, so this runs off the UI thread and is only called
         // when the selected drive actually changes (at startup and on prev/next), not on every
         // 1-second RefreshMetrics tick.
+        private bool _diskIconNeedsRetry;
+        private bool _diskIconReading;
+
         private async Task UpdateDiskIconAsync()
         {
             var drive = CurrentDrive;
-            if (drive == null) return;
-
+            if (drive == null || _unloaded) return;
+            if (_diskIconReading) { _diskIconNeedsRetry = true; return; }
+            _diskIconReading = true;
+            _diskIconNeedsRetry = false;
             var generation = _diskSelectionGeneration;
-            using var busy = StatusService.BeginScope($"{LanguageService.T("Home_DetectingDiskType")}{drive}...");
-            var model = await Task.Run(() => DriveTypeService.GetDiskModel(drive));
-            var kind = await Task.Run(() => DriveTypeService.Detect(drive));
-            var isGuess = false;
-            // ΔΙΟΡΘΩΣΗ (χρήστης ανέφερε: "από την ονομασία των δίσκων μπορείς να καταλάβεις τι
-            // είδος είναι") - αν η πραγματική ανίχνευση WMI αποτύχει εντελώς, δοκιμάζεται εκτίμηση
-            // βάσει γνωστών μοτίβων στο όνομα μοντέλου (π.χ. "SN580" -> NVMe) ως δεύτερη γραμμή
-            // άμυνας - ΣΗΜΕΙΩΣΗ ΕΙΛΙΚΡΙΝΕΙΑΣ: επισημαίνεται ρητά ως "εκτίμηση", όχι σίγουρη ανίχνευση.
-            if (kind == PhysicalDriveKind.Unknown)
+            var token = ViewToken;
+            HomeDiskMetadataService.Snapshot? snapshot;
+            try { snapshot = await HomeDiskMetadataService.ReadAsync(drive).WaitAsync(token); }
+            catch (OperationCanceledException) when (token.IsCancellationRequested) { return; }
+            catch (Exception ex) { System.Diagnostics.Trace.TraceError(ex.Message); return; }
+            finally { _diskIconReading = false; }
+            if (_unloaded || token.IsCancellationRequested) return;
+            if (generation != _diskSelectionGeneration || snapshot == null)
             {
-                var guessed = DriveTypeService.GuessFromModelName(model);
-                if (guessed != PhysicalDriveKind.Unknown) { kind = guessed; isGuess = true; }
+                _diskIconNeedsRetry = true;
+                return;
             }
-            if (_unloaded || generation != _diskSelectionGeneration) return;
+            var (model, kind, isGuess) = snapshot;
             // ΔΙΟΡΘΩΣΗ (χρήστης ανέφερε: "ζήτησα διαφορετικά εικονίδια για κάθε είδος δίσκου όταν
             // γίνεται η εναλλαγή") - το "Unknown" (ανίχνευση τύπου απέτυχε) χρησιμοποιούσε ΤΟ ΙΔΙΟ
             // glyph+χρώμα με το HDD - αν ένας δίσκος ανιχνευόταν Unknown, η εναλλαγή σε/από αυτόν
@@ -826,19 +838,22 @@ namespace OptimizerWpf.Views
         {
             if (_healthBusy) return;
             _healthBusy = true;
-            try { await RefreshHealthScoreCoreAsync(); }
+            var token = ViewToken;
+            try { await RefreshHealthScoreCoreAsync(token); }
+            catch (OperationCanceledException) when (token.IsCancellationRequested) { }
+            catch (Exception ex) { if (!_unloaded) StatusService.Report(ex.Message); }
             finally { _healthBusy = false; }
         }
 
-        private async Task RefreshHealthScoreCoreAsync()
+        private async Task RefreshHealthScoreCoreAsync(System.Threading.CancellationToken token)
         {
             TxtHealthLabel.Text = LanguageService.T("Home_Calculating");
             using var busy = StatusService.BeginScope(LanguageService.T("Home_CalculatingHealthScore"));
             // HealthScoreService.Compute() does several WMI queries (Defender status, AV product,
             // restore points) which can take a noticeable moment - runs off the UI thread so the
             // window stays responsive while it's working (see the async-UI rule this project follows).
-            var result = await HealthScoreService.ComputeAsync();
-            if (_unloaded) return;
+            var result = await HealthScoreService.ComputeAsync().WaitAsync(token);
+            if (token.IsCancellationRequested || _unloaded) return;
 
             if (result.IsComplete) HealthScoreHistoryService.RecordSample(result.Score);
             var sparkline = HealthScoreHistoryService.GetSparkline();
@@ -850,7 +865,8 @@ namespace OptimizerWpf.Views
             // παραμένει στην καρτέλα Σύστημα). GetSmartHealthy κάνει WMI ερωτήματα - εκτελείται off the
             // UI thread, ίδιο μοτίβο με το HealthScoreService.Compute() παραπάνω.
             var sysDrive = System.IO.Path.GetPathRoot(Environment.SystemDirectory) ?? "C:\\";
-            var smartHealthy = await Task.Run(() => DriveTypeService.GetSmartHealthy(sysDrive));
+            var smartHealthy = await Task.Run(() => DriveTypeService.GetSmartHealthy(sysDrive)).WaitAsync(token);
+            if (token.IsCancellationRequested || _unloaded) return;
             if (smartHealthy.HasValue)
             {
                 TxtDiskSmart.Text = smartHealthy.Value
