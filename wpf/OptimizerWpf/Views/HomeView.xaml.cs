@@ -25,9 +25,16 @@ namespace OptimizerWpf.Views
         // τιμή ακαριαία κάθε 1s ("τίναγμα") - σύντομο DoubleAnimation αντί για απευθείας SetValue.
         private static void AnimateBar(System.Windows.Controls.ProgressBar bar, double newValue)
         {
-            var anim = new System.Windows.Media.Animation.DoubleAnimation(newValue, TimeSpan.FromMilliseconds(180))
-            { EasingFunction = new System.Windows.Media.Animation.QuadraticEase() };
-            bar.BeginAnimation(System.Windows.Controls.Primitives.RangeBase.ValueProperty, anim);
+            var property = System.Windows.Controls.Primitives.RangeBase.ValueProperty;
+            var target = (double)bar.GetAnimationBaseValue(property);
+            if (Math.Abs(target - newValue) < 0.01) return;
+            var previous = bar.Value;
+            bar.BeginAnimation(property, null);
+            bar.Value = newValue;
+            if (!PerformanceProfileService.Current.AnimationsEnabled || !bar.IsVisible) return;
+            var anim = new System.Windows.Media.Animation.DoubleAnimation(previous, newValue, TimeSpan.FromMilliseconds(180))
+            { EasingFunction = new System.Windows.Media.Animation.QuadraticEase(), FillBehavior = System.Windows.Media.Animation.FillBehavior.Stop };
+            bar.BeginAnimation(property, anim);
         }
 
         // Matches the WinForms app's periodic-refresh pattern (a Timer ticking on the UI thread,
@@ -67,40 +74,59 @@ namespace OptimizerWpf.Views
             // background thread ώστε να μην καθυστερούν το πρώτο paint του κύριου παραθύρου - τα πεδία
             // _cpuCounter/_gpuCounters είναι ήδη null-checked στο RefreshCpuRamGpu (παρακάτω), οπότε
             // απλά παραλείπεται το CPU%/GPU% για τα πρώτα ticks μέχρι να ολοκληρωθεί η αρχικοποίηση.
-            _ = Task.Run(() => { TryInitCpuCounter(); TryInitGpuCounters(); });
+            _ = InitializeCountersAsync();
 
             _refreshTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(PerformanceProfileService.Current.HomeRefreshSeconds) };
-            Action perfChanged = () => Dispatcher.BeginInvoke(new Action(() => _refreshTimer.Interval = TimeSpan.FromSeconds(PerformanceProfileService.Current.HomeRefreshSeconds)));
-            PerformanceProfileService.Changed += perfChanged;
-            Unloaded += (_, _) => PerformanceProfileService.Changed -= perfChanged;
             _refreshTimer.Tick += (_, _) => { RefreshCpuRamGpu(); RefreshNetworkGraph(); };
-            _refreshTimer.Start();
-
-            // ΝΕΟ - roadmap "Πιο αραιό polling όταν η εφαρμογή δεν έχει focus" - το CPU/RAM/GPU 1s
-            // timer συνέχιζε στον ίδιο ρυθμό ακόμα κι όταν το παράθυρο δεν είναι focused, σε αντίθεση
-            // με το ήδη υπάρχον animated background που ήδη παύει (Deactivated/StateChanged, βλ.
-            // MainWindow.xaml.cs's TitleGear). Ίδιο μοτίβο εδώ, ίδιο σκεπτικό "ελάφρυνση εφαρμογής" -
-            // 1s όσο ενεργό, 4s στο παρασκήνιο (ακόμα ζωντανό, απλά λιγότερο συχνό - όχι πλήρης παύση
-            // όπως το background, αφού οι τιμές αυτές είναι χρήσιμο να παραμένουν ενημερωμένες).
-            var parentWindow = Window.GetWindow(this);
-            if (parentWindow != null)
-            {
-                EventHandler onDeactivated = (_, _) => _refreshTimer.Interval = TimeSpan.FromSeconds(4);
-                EventHandler onActivated = (_, _) => _refreshTimer.Interval = TimeSpan.FromSeconds(PerformanceProfileService.Current.HomeRefreshSeconds);
-                parentWindow.Deactivated += onDeactivated;
-                parentWindow.Activated += onActivated;
-                Unloaded += (_, _) =>
-                {
-                    parentWindow.Deactivated -= onDeactivated;
-                    parentWindow.Activated -= onActivated;
-                };
-            }
-
             _diskRefreshTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(20) };
-            // ΝΕΟ v3.2.0 - η κατάσταση δικτύου μπήκε στον ΙΔΙΟ αραιό timer με τον δίσκο (όχι νέος
-            // timer) - ίδιο σκεπτικό "ελάφρυνση εφαρμογής": η σύνδεση δεν αλλάζει αισθητά κάθε 1s.
             _diskRefreshTimer.Tick += (_, _) => { RefreshDisk(); _ = RefreshNetworkStatusAsync(); };
-            _diskRefreshTimer.Start();
+
+            // Constructor-time Window.GetWindow is frequently null. Attach after Loaded.
+            Window? parentWindow = null;
+            void UpdatePolling()
+            {
+                if (_unloaded || !IsLoaded || !IsVisible || parentWindow == null ||
+                    parentWindow.WindowState == WindowState.Minimized)
+                {
+                    _refreshTimer.Stop();
+                    _diskRefreshTimer.Stop();
+                    return;
+                }
+                _refreshTimer.Interval = TimeSpan.FromSeconds(PollSeconds(
+                    PerformanceProfileService.Current.HomeRefreshSeconds, parentWindow.IsActive));
+                if (!_refreshTimer.IsEnabled) _refreshTimer.Start();
+                if (!_diskRefreshTimer.IsEnabled) _diskRefreshTimer.Start();
+            }
+            Action perfChanged = () => Dispatcher.BeginInvoke(new Action(UpdatePolling));
+            EventHandler windowChanged = (_, _) => UpdatePolling();
+            DependencyPropertyChangedEventHandler visibilityChanged = (_, _) => UpdatePolling();
+            Loaded += (_, _) =>
+            {
+                parentWindow = Window.GetWindow(this);
+                if (parentWindow != null)
+                {
+                    parentWindow.Activated += windowChanged;
+                    parentWindow.Deactivated += windowChanged;
+                    parentWindow.StateChanged += windowChanged;
+                    parentWindow.IsVisibleChanged += visibilityChanged;
+                }
+                IsVisibleChanged += visibilityChanged;
+                PerformanceProfileService.Changed += perfChanged;
+                UpdatePolling();
+            };
+            Unloaded += (_, _) =>
+            {
+                PerformanceProfileService.Changed -= perfChanged;
+                IsVisibleChanged -= visibilityChanged;
+                if (parentWindow != null)
+                {
+                    parentWindow.Activated -= windowChanged;
+                    parentWindow.Deactivated -= windowChanged;
+                    parentWindow.StateChanged -= windowChanged;
+                    parentWindow.IsVisibleChanged -= visibilityChanged;
+                }
+                parentWindow = null;
+            };
 
             RefreshCpuRamGpu();
             RefreshDisk();
@@ -303,30 +329,36 @@ namespace OptimizerWpf.Views
             TxtGpuName.Text = await Task.Run(GpuInfoService.GetName);
         }
 
-        private void TryInitCpuCounter()
-        {
-            try
-            {
-                var cpu = new PerformanceCounter("Processor", "% Processor Time", "_Total");
-                cpu.NextValue(); // first call always returns 0 - prime it
-                if (_unloaded) { cpu.Dispose(); return; }
-                _cpuCounter = cpu;
-            }
-            catch
-            {
-                // Counter category can be missing/disabled on some systems (locked-down policy,
-                // corrupted counter database) - degrade to "--%" instead of crashing the tab.
-                _cpuCounter = null;
-            }
-        }
+        internal static double PollSeconds(double configuredSeconds, bool active) =>
+            active ? Math.Max(2, configuredSeconds) : Math.Max(8, configuredSeconds);
 
         private bool _unloaded;
 
-        private void TryInitGpuCounters()
+        private async Task InitializeCountersAsync()
         {
-            var counters = GpuInfoService.CreateUsageCounters();
-            if (_unloaded && counters != null) { foreach (var c in counters) c.Dispose(); return; }
-            _gpuCounters = counters;
+            // Publish the counters on the dispatcher only after initialization. This avoids
+            // a worker publishing a counter after Unloaded has disposed the old view.
+            var result = await Task.Run(() =>
+            {
+                PerformanceCounter? cpu = null;
+                PerformanceCounter[]? gpu = null;
+                try
+                {
+                    cpu = new PerformanceCounter("Processor", "% Processor Time", "_Total");
+                    cpu.NextValue();
+                }
+                catch { cpu?.Dispose(); cpu = null; }
+                try { gpu = GpuInfoService.CreateUsageCounters(); } catch { }
+                return (cpu, gpu);
+            });
+            if (_unloaded)
+            {
+                result.cpu?.Dispose();
+                if (result.gpu != null) foreach (var counter in result.gpu) counter.Dispose();
+                return;
+            }
+            _cpuCounter = result.cpu;
+            _gpuCounters = result.gpu;
         }
 
         private void DisposeCounters()
@@ -339,13 +371,22 @@ namespace OptimizerWpf.Views
         // ΝΕΟ v3.2.0 (χρήστης ζήτησε: "δείκτης κατάστασης δικτύου στην Αρχική") - βλ.
         // NetworkService.CheckInternetAsync για το πλήρες σκεπτικό (τοπική σύνδεση vs πραγματικό
         // Internet, ping με σύντομο timeout).
+        private bool _networkRefreshInFlight;
         private async Task RefreshNetworkStatusAsync()
         {
+            if (_unloaded || _networkRefreshInFlight) return;
+            _networkRefreshInFlight = true;
+            try
+            {
             var (connected, latencyMs) = await NetworkService.CheckInternetAsync();
+            if (_unloaded) return;
             DotNetworkStatus.Fill = new SolidColorBrush(connected ? Color.FromRgb(76, 175, 80) : Color.FromRgb(220, 53, 69));
             TxtNetworkStatus.Text = connected
                 ? $"{LanguageService.T("Home_NetworkConnected")}{latencyMs} ms"
                 : LanguageService.T("Home_NetworkDisconnected");
+            }
+            catch { }
+            finally { _networkRefreshInFlight = false; }
         }
 
         private void BtnOpenNetworkTab_Click(object sender, RoutedEventArgs e) => (System.Windows.Window.GetWindow(this) as OptimizerWpf.MainWindow)?.SelectTab("Network#1");
