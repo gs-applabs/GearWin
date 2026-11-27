@@ -22,12 +22,12 @@ namespace OptimizerWpf.Services
     {
         private const string Ns = "http://schemas.microsoft.com/windows/2004/02/mit/task";
 
-        public static string BuildLogonTaskXml(string exePath, string arguments, int delaySeconds, string userId, string description)
+        public static string BuildLogonTaskXml(string exePath, string arguments, int delaySeconds, string userId, string description, bool elevated = true)
         {
             var delay = delaySeconds > 0 ? $"<Delay>PT{delaySeconds}S</Delay>" : "";
             return Wrap(
                 $"<LogonTrigger><Enabled>true</Enabled><UserId>{Esc(userId)}</UserId>{delay}</LogonTrigger>",
-                exePath, arguments, userId, description);
+                exePath, arguments, userId, description, elevated);
         }
 
         // Εβδομαδιαία, Κυριακή στις 03:00 (ίδια ώρα με την προηγούμενη υλοποίηση).
@@ -44,7 +44,7 @@ namespace OptimizerWpf.Services
                 "<ScheduleByDay><DaysInterval>1</DaysInterval></ScheduleByDay></CalendarTrigger>",
                 exePath, arguments, userId, description);
 
-        private static string Wrap(string trigger, string exePath, string arguments, string userId, string description) =>
+        private static string Wrap(string trigger, string exePath, string arguments, string userId, string description, bool elevated = true) =>
             $@"<?xml version=""1.0"" encoding=""UTF-16""?>
 <Task version=""1.4"" xmlns=""{Ns}"">
   <RegistrationInfo><Description>{Esc(description)}</Description></RegistrationInfo>
@@ -53,7 +53,7 @@ namespace OptimizerWpf.Services
     <Principal id=""Author"">
       <UserId>{Esc(userId)}</UserId>
       <LogonType>InteractiveToken</LogonType>
-      <RunLevel>HighestAvailable</RunLevel>
+      <RunLevel>{(elevated ? "HighestAvailable" : "LeastPrivilege")}</RunLevel>
     </Principal>
   </Principals>
   <Settings>
