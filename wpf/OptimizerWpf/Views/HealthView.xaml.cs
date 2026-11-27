@@ -315,9 +315,10 @@ namespace OptimizerWpf.Views
     // Εγγυάται SetIdle ακόμα κι αν ο handler πετάξει εξαίρεση (αλλιώς η status bar έμενε "busy").
     internal sealed class BusyScope : IDisposable
     {
-        private BusyScope() { }
-        public static BusyScope Begin(string label) { StatusService.SetBusy(label); return new BusyScope(); }
-        public void Dispose() => StatusService.SetIdle(LanguageService.T("Ready"));
+        private readonly StatusService.Scope _scope;
+        private BusyScope(string label) { _scope = StatusService.BeginScope(label); }
+        public static BusyScope Begin(string label) => new BusyScope(label);
+        public void Dispose() => _scope.End(LanguageService.T("Ready"));
     }
 
     public class RegistryFindingRow : INotifyPropertyChanged
