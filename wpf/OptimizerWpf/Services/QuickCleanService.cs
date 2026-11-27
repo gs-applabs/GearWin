@@ -16,7 +16,7 @@ namespace OptimizerWpf.Services
     // Delivery Optimization, cache shader κάρτας γραφικών, και cache περιηγητών - όλα τα παρακάτω.
     public static class QuickCleanService
     {
-        private static string SystemRoot => Environment.GetEnvironmentVariable("SystemRoot") ?? @"C:\Windows";
+        private static string SystemRoot => Environment.GetFolderPath(Environment.SpecialFolder.Windows);
         private static string LocalAppData => Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
 
         private static string WindowsTempDir => Path.Combine(SystemRoot, "Temp");
@@ -115,26 +115,7 @@ namespace OptimizerWpf.Services
             return freed;
         }
 
-        private static long BrowserCacheSize(BrowserCacheEntry browser)
-        {
-            long total = 0;
-            foreach (var basePath in browser.Paths)
-            {
-                if (browser.Name is "Chrome" or "Edge" or "Brave" or "Vivaldi")
-                {
-                    foreach (var profileDir in SafeDirs(basePath))
-                    {
-                        foreach (var cacheSub in new[] { "Cache", "Code Cache", "GPUCache" })
-                            total += DirSize(Path.Combine(profileDir, cacheSub));
-                    }
-                }
-                else
-                {
-                    total += DirSize(basePath);
-                }
-            }
-            return total;
-        }
+        private static long BrowserCacheSize(BrowserCacheEntry browser) => HealthCleanupService.BrowserCacheSize(browser);
 
         // ΔΙΟΡΘΩΣΗ (εξονυχιστικός έλεγχος εντόπισε): Directory.EnumerateFiles(dir, "*",
         // SearchOption.AllDirectories) είναι ΤΕΜΠΕΛΗΣ (lazy) - το UnauthorizedAccessException από έναν
