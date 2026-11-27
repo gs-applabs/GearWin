@@ -90,7 +90,9 @@ namespace OptimizerWpf.Services
                 Directory.CreateDirectory(dir);
                 var d = Detected;
                 var forced = Environment.GetEnvironmentVariable("GEARWIN_FORCE_TIER");
-                File.AppendAllText(Path.Combine(dir, "performance.log"),
+                var log = Path.Combine(dir, "performance.log");
+                if (File.Exists(log) && new FileInfo(log).Length > 256 * 1024) File.Move(log, log + ".previous", overwrite: true);
+                File.AppendAllText(log,
                     $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] Performance tier: {ConfiguredTier}{(ParseMode(forced).HasValue ? " (forced)" : AppSettingsService.Current.PerformanceMode is "low" or "balanced" or "high" ? " (setting)" : " (detected)")} - RAM {d.RamGb} GB, {d.LogicalCores} logical cores, battery {d.OnBattery}, power saver {d.PowerSaver}{Environment.NewLine}");
             }
             catch { }
@@ -119,6 +121,7 @@ namespace OptimizerWpf.Services
         private static DispatcherTimer? _timer;
         private static readonly List<double> Samples = new();
         private static ulong _lastIdle, _lastKernel, _lastUser;
+        private static int _powerTicks;
 
         public static void StartGovernor()
         {
@@ -126,6 +129,20 @@ namespace OptimizerWpf.Services
             _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
             _timer.Tick += (_, _) =>
             {
+                // Reuse this governor tick to refresh power policy, no second timer.
+                if (++_powerTicks >= 30)
+                {
+                    _powerTicks = 0;
+                    var before = Detected;
+                    var after = Detect();
+                    if (before.OnBattery != after.OnBattery || before.PowerSaver != after.PowerSaver)
+                    {
+                        _specs = after;
+                        _downgrade = Math.Min(_downgrade, (int)ConfiguredTier);
+                        Samples.Clear();
+                        Changed?.Invoke();
+                    }
+                }
                 var cpu = SampleCpu();
                 if (cpu < 0) return;
                 Samples.Add(cpu);
@@ -142,7 +159,7 @@ namespace OptimizerWpf.Services
             _timer.Start();
         }
 
-        public static void StopGovernor() { _timer?.Stop(); _timer = null; }
+        public static void StopGovernor() { _timer?.Stop(); _timer = null; Samples.Clear(); _lastIdle = _lastKernel = _lastUser = 0; _powerTicks = 0; }
 
         private static double SampleCpu()
         {
