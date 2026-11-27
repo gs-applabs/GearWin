@@ -7,13 +7,13 @@ Baseline: `0d36ba06ffd5b1f90676d546d8abdfafe1062fbf`; review branch `release/7.1
 | Pass | Distinct recorded findings | Source mitigations | Runtime-certified fixes | Status |
 |---|---:|---:|---:|---|
 | UMP01 source audit | 3 test/measurement coverage gaps | 1 infrastructure mitigation (measurement workflow added) | 0 | open |
-| UMP02 safety, batches 1–5 | 46 safety/correctness findings | 46 addressed at least in part in source | 0 operation-level certifications | open |
+| UMP02 safety, batches 1–6 | 51 safety/correctness findings | 51 addressed at least in part in source | 0 operation-level certifications | open |
 | UMP03 core/resources, batches 1–4 | 39 findings | 39 addressed at least in part in source | 0 | open |
 | UMP04 unified maintenance, batches 1–2 | 24 findings | 24 addressed at least in part in source | 0 | open |
-| UMP05 central operation core, batch 1 | 5 findings | 5 addressed at least in part in source | 0 | open |
+| UMP05 central operation core, batches 1–2 | 12 findings | 12 addressed at least in part in source | 0 | open |
 | UMP06 early status fix | 2 findings | 2 addressed at least in part in source | 0 | open |
 | UMP07 early artwork fix | 8 distinct icon/UI findings | 8 addressed at least in part in source | 0 visual certifications | open |
-| Total | 127 | 125 at least partly addressed | 0 operation-level certifications | open |
+| Total | 139 | 137 at least partly addressed | 0 operation-level certifications | open |
 
 The earlier manual review also identified deferred issues in profiles, resources, backups and navigation. These will be assigned stable IDs in their owning passes; do not inflate totals by counting them again. Full tracked-source lexical inventory completed; manual semantic review remains pending. The 7.0.0 baseline Windows build reported 391 desktop + 42 migration tests on 2026-11-27; the Linux job logs available are from 2026-11-23 (5 synthetic clone tests). Six CI jobs reported success in the run; an opt-in test can report pass without doing clicks. Baseline success is not a new branch test result.
 
@@ -281,3 +281,24 @@ R37: cached battery/power-saver state could remain stale until manual reevaluati
 N02: startup/periodic update notification paired legacy FIFO SetBusy/SetIdle — use per-operation scopes to avoid completing unrelated operations.
 
 Seven new isolated coordinator fixtures (conflicts, user priority, dynamic capacity, cancellation, blocked user, shutdown, bounded queue), 77 cumulative newly authored cases. Latest fully verified intermediate remains 498 tests and installer from run 45993640140. Run 45995423289 for previous batch had no jobs available during this turn. Central core changes through 645fac275796219207bf5c2685155c06d0a048fd need fresh compilation and real integration testing. No merge or release; all interim safety restrictions and existing release gates retained.
+
+## Intermediate core verification
+
+Run 45996232379: 31 icon assets verified, 469/469 desktop and 42/42 migration tests passed, including the first seven isolated coordinator cases and six prior maintenance fixtures. Installer build succeeded; process measurement stage was canceled by newer commits. This is 511 successful tests, not a fully completed new end-to-end run. Last completed installer + measurement run remains 45993640140.
+
+## UMP05 — unified GearWinCore, second integration batch (7 new findings)
+
+| ID | Finding | Source mitigation |
+|---|---|---|
+| C06 | Direct provider scans bypassed the notification workflow's coordinator | coordinate Winget, Windows Update, driver, recommended package checks and UWP scan at service boundaries |
+| C07 | Installation/uninstall and driver backup/restore operations bypassed shared heavy-operation policy | SoftwareChange and Backup domains, including Winget install/upgrade/uninstall/import/pin, driver installation/backup/restore/delete and Bloatware command helpers |
+| C08 | Static global scan cancellation could affect unrelated external commands | explicit manual scan token, AsyncLocal operation context and compatibility property |
+| C09 | Automatic update notification ran Windows Update inside Winget scan and then again separately | notification scans application providers without WUA and calls WUA once; manual combined scan retains all providers |
+| C10 | Redirected output could wait after process timeout | stdout and stderr drain included in timeout; propagate real scan cancellation |
+| C11 | Profile mutations bypassed shared heavy-work coordination | ProfileChange domain for manual Office/Gaming changes and publication of flags; release before optional RAM maintenance |
+| C12 | Optional periodic profile changes had no nonqueued admission policy | TryAcquireBackground skips while busy or user waiting, no queued periodic backlog |
+
+### Safety follow-up (5 new findings, UMP02)
+S47: WUA ResultCode 3 (completed with errors) previously returned full success; report failure/partial result. S48: driver WUA script treated ResultCode 3 as full success; only 2 succeeds. S49: nighttime update task disable returned true even if scheduler deletion failed; return real result. S50: headless nighttime job ran without checking persisted opt-in; honor NightlyUpdatesEnabled. S51: unattended Windows installs continued after failure/reboot required; stop batch, no automatic reboot.
+
+Eight additional fixture cases (five conflict domain pairs, nonqueued background, waiting-user preference, scan token isolation). 85 cumulative new cases authored, 77 included in the preceding successful test stages; current changes through 562903e9088cbc5907973fffebc9b3d639a48d09 not yet compiled. Direct leaf scans now use same update domain; notification orchestration must not acquire outer UpdateScan lease. The manual combined Winget scan calls WUA within its existing lease explicitly. No nested leases in these connected paths. Current core is process-local; existing cleanup mutex only, no global cross-process coordination for software changes, repair, backups or profile writes. Legacy direct detached driver install, catalog/vendor scans, other startup/tweak/network tools, deep uninstall command, rollback callbacks and explicit auto-profile stop/exit restoration still require integration. Driver export and install are individually coordinated, not a single atomic transaction. 29 recommendation checks are still separate calls; plan single inventory scan and distinct unknown status next. Recheck installed-state on success, provider partial results, cancellation of native COM work, shutdown and queue refusal at every UI boundary; no hard kill of servicing as a new policy. No runtime measurement or final operation-level certification of the new changes. No merge or release.
