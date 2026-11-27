@@ -7,9 +7,11 @@ Baseline: `0d36ba06ffd5b1f90676d546d8abdfafe1062fbf`; review branch `release/7.1
 | Pass | Distinct recorded findings | Source mitigations | Runtime-certified fixes | Status |
 |---|---:|---:|---:|---|
 | UMP01 source audit | 3 test/measurement coverage gaps | 1 infrastructure mitigation (measurement workflow added) | 0 | open |
-| UMP02 safety, batches 1–4 | 43 safety/correctness findings | 43 addressed at least in part in source | 0 operation-level certifications | open |
+| UMP02 safety, batches 1–5 | 46 safety/correctness findings | 46 addressed at least in part in source | 0 operation-level certifications | open |
+| UMP03 core/resources, batch 1 | 12 findings | 12 addressed at least in part in source | 0 | open |
+| UMP06 early status fix | 1 finding | 1 addressed in source | 0 | open |
 | UMP07 early artwork fix | 8 distinct icon/UI findings | 8 addressed at least in part in source | 0 visual certifications | open |
-| Total | 54 | 52 at least partly addressed | 0 operation-level certifications | open |
+| Total | 70 | 68 at least partly addressed | 0 operation-level certifications | open |
 
 The earlier manual review also identified deferred issues in profiles, resources, backups and navigation. These will be assigned stable IDs in their owning passes; do not inflate totals by counting them again. Full tracked-source lexical inventory completed; manual semantic review remains pending. The 7.0.0 baseline Windows build reported 391 desktop + 42 migration tests on 2026-11-27; the Linux job logs available are from 2026-11-23 (5 synthetic clone tests). Six CI jobs reported success in the run; an opt-in test can report pass without doing clicks. Baseline success is not a new branch test result.
 
@@ -131,3 +133,40 @@ Timeouts must not be interpreted as confirmed absence. The old boolean installed
 | I08 | Parallel favicon downloads, retries and cache writes on use | no runtime icon networking, small normalized embedded images |
 
 Asset catalog: 31 sources total (29 existing recommendations + 2 browser-only). 27 have SHA-256 from the pinned upstream manifest; four have immutable commit URLs but still need independently reviewed/pinned source hashes. Build preparation script writes source and normalized hashes, contact sheet and normalized icon pack. No user-visible feature additions. New RecommendedIconTests contains 20 case instances; cumulative newly authored cases 40. Updated existing Edge/Teams test to check distinct package-specific assets. New changes not yet tested on the final commit. Catalog metadata and source mapping do NOT prove all assets visually correct. Build and visual review must succeed before release; source ZIP must include normalized assets, plus notices and applicable source rights review. Registry precise restoration remains open; earlier temporary safety restrictions are not final.
+
+## Icon verification (run 45991483809)
+
+Windows icon preparation passed, 31/31 PNG assets downloaded, checked and normalized. Desktop 432/432 and migration 42/42 tests passed with required icons enabled. Installer stage was canceled by newer commits (not a failure or a completed installer run). Four previously unpinned source hashes were captured from the VM logs and added to the catalog in 53d2d93d8fb43fc4ecdc11f44ca7bf591f8c8722. All 31 now have expected SHA-256, 27 upstream manifest hashes and four observed hashes. This verifies decoding and package mapping, not human visual review or trademark clearance. The final pinned build remains to be tested.
+
+## UMP02 — fifth batch (3 new findings)
+
+| ID | Finding | Source mitigation |
+|---|---|---|
+| S44 | Whole-key .reg restoration overwrites unrelated/current values | per-value JSON backups; restore only absent or already identical values |
+| S45 | Elevated import accepted arbitrary legacy .reg content from user-writable storage | new restricted backup directory, allowlisted typed records; old .reg files remain visible but not executable by cleaner |
+| S46 | Deleting entire uninstall/App Paths trees, startup values or SharedDLL refs can break valid apps or shortcuts | review-only containment; only confirmed missing HKCU MuiCache string values eligible for deletion |
+
+S08 existing stale-findings mitigation strengthened: recheck actual value and missing path immediately before delete; not counted again. This is not a transactional guarantee against concurrent registry writers. Legacy backups remain on disk. Full safe cleanup for the other four categories, precise rollback testing, ACL verification and UI localization remain open.
+
+## UMP03 — first core/resources batch (12 new findings)
+
+| ID | Finding | Source mitigation |
+|---|---|---|
+| R01 | Save rewrote settings even when unchanged | serialized content dirty check |
+| R02 | Concurrent saves shared a fixed .tmp path | persistence lock and unique staging |
+| R03 | Failed settings read could replace original with defaults | retain original and refuse automatic saves until valid import |
+| R04 | Export could copy stale settings after failed save | return failure and export current serialized content only on successful save |
+| R05 | Import accepted unrelated JSON objects | require recognized Language property and typed object; more schema checks pending |
+| R06 | Clipboard capture serialized/encrypted/wrote full history per event on UI thread | 1.5-second coalescing timer and worker write; explicit removal/exit flush |
+| R07 | Clipboard entries and load size unbounded | 65,536-character entries, 50 entries, read cap |
+| R08 | Failed clipboard listener registration still marked service running | unregister and detach on failure, track hotkey registration |
+| R09 | RAM Boost flushed modified page list causing avoidable disk I/O | remove global flush |
+| R10 | RAM Boost purged standby cache and caused potential re-reading/page faults | remove global standby purge |
+| R11 | RAM cleanup indiscriminately trimmed processes regardless of available memory | pressure gate; report available RAM instead of free-only improvement |
+| R12 | Concurrent Boost calls could overlap | serialized memory cleanup gate |
+
+## UMP06 — early status fix
+
+N01: failed hotkey registration incorrectly called SetIdle and removed another active operation. New informational Report method retains active operations. Full identity-based migration of legacy calls remains open.
+
+Ten additional test cases: 5 registry allowlist, 1 settings no-op write, 4 RAM-pressure fixtures. Cumulative 50 newly authored cases; 40 covered by prior successful test stages, last 10 pending. New safety and resource commits not yet compiled on the final revision. Clipboard write errors are traced, not yet user-visible; coalesced history can lose recent entries on abrupt process termination. The RAM pressure threshold is provisional (max of 512 MiB or 10% physical memory) and separate SystemView direct trim still needs integration. Current working-set trim is not yet a performance improvement certification. Existing 6 skins and 14 languages need review, with English fallback for new strings. No merge or release.
