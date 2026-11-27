@@ -32,27 +32,32 @@ namespace OptimizerWpf.Views
         private async void BtnStartBackup_Click(object sender, RoutedEventArgs e)
         {
             if (ListBackupTargetDrives.SelectedItem is not string targetDrive) return;
-            if (ThemedMessageBox.Show(
-                    $"{LanguageService.T("Backup_StartButton")} → {targetDrive}",
-                    LanguageService.T("Backup_StartButton"), MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
-                return;
-
             BackupControls.IsEnabled = false;
-            ListBackupVersions.ItemsSource = null;
-            TxtBackupStatus.Text = LanguageService.T("Backup_Running");
-            StatusService.SetBusy(LanguageService.T("Backup_Running"));
             try
             {
-                var (success, output) = await BackupService.StartSystemImageBackupAsync(targetDrive);
+                var target = await BackupService.PrepareTargetAsync(targetDrive);
+                var warning = LanguageService.Current == "el"
+                    ? "Επιβεβαιώστε τον τόμο αντιγράφου ασφαλείας. Τα παλαιότερα αντίγραφα ενδέχεται να επηρεαστούν από τη διαχείριση χώρου των Windows."
+                    : "Confirm the backup volume. Windows backup space management may affect older backups.";
+                if (ThemedMessageBox.Show(
+                        $"{warning}\n\n{target.Drive} — {target.Label}\nDisk {target.DiskNumber}\n{target.VolumeGuid}",
+                        LanguageService.T("Backup_StartButton"), MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
+                    return;
+                ListBackupVersions.ItemsSource = null;
+                TxtBackupStatus.Text = LanguageService.T("Backup_Running");
+                using var scope = StatusService.BeginScope(LanguageService.T("Backup_Running"));
+                var (success, output) = await BackupService.StartSystemImageBackupAsync(target);
                 TxtBackupStatus.Text = LanguageService.T(success ? "Backup_Success" : "Backup_Failed");
-                if (!success && !string.IsNullOrWhiteSpace(output))
-                    ListBackupVersions.ItemsSource = new[] { output };
+                // Even success must show the catalog and its verification limitations.
+                if (!string.IsNullOrWhiteSpace(output)) ListBackupVersions.ItemsSource = new[] { output };
+                scope.End(LanguageService.T("Ready"));
             }
-            finally
+            catch (System.Exception ex)
             {
-                BackupControls.IsEnabled = true;
-                StatusService.SetIdle(LanguageService.T("Ready"));
+                TxtBackupStatus.Text = LanguageService.T("Backup_Failed");
+                ListBackupVersions.ItemsSource = new[] { ex.Message };
             }
+            finally { BackupControls.IsEnabled = true; }
         }
 
         private async void BtnViewBackupVersions_Click(object sender, RoutedEventArgs e)

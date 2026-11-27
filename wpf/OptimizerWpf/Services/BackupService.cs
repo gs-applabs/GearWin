@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Management;
+using System.Runtime.InteropServices;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -12,52 +14,109 @@ namespace OptimizerWpf.Services
     {
         private static readonly SemaphoreSlim BackupGate = new(1, 1);
 
-        public static async Task<(bool Success, string Output)> StartSystemImageBackupAsync(string targetDrive)
-        {
-            if (!IsDriveLetter(targetDrive))
-                return (false, "Select a local backup volume.");
+        internal sealed record BackupTarget(string Drive, string VolumeGuid, uint DiskNumber, string Label);
 
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool GetVolumeNameForVolumeMountPoint(string mount, StringBuilder volume, uint length);
+
+        internal static string NormalizeDrive(string? drive)
+        {
+            if (drive == null || drive.Length != 2 || !char.IsAsciiLetter(drive[0]) || drive[1] != ':')
+                throw new ArgumentException("Select a local backup volume.");
+            return char.ToUpperInvariant(drive[0]) + ":";
+        }
+
+        internal static string VolumeArgument(string volume)
+        {
+            const string prefix = @"\\?\Volume{";
+            if (!volume.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) ||
+                !volume.EndsWith("}\\", StringComparison.Ordinal) ||
+                !Guid.TryParseExact(volume.Substring(prefix.Length, volume.Length - prefix.Length - 2), "D", out var guid) ||
+                guid == Guid.Empty)
+                throw new IOException("Invalid volume GUID.");
+            return prefix + guid.ToString("D") + "}";
+        }
+
+        private static string ReadVolumeGuid(string drive)
+        {
+            var volume = new StringBuilder(128);
+            if (!GetVolumeNameForVolumeMountPoint(drive + "\\", volume, (uint)volume.Capacity))
+                throw new IOException("Could not identify the selected volume.", new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error()));
+            return VolumeArgument(volume.ToString());
+        }
+
+        private static BackupTarget PrepareTarget(string drive)
+        {
+            drive = NormalizeDrive(drive);
+            string identity = ReadVolumeGuid(drive);
+            var disk = SeparateBackupDisk(drive) ?? throw new IOException(
+                "The backup volume must be on a separate physical disk from the Windows and boot partitions.");
+            var label = new DriveInfo(drive).VolumeLabel;
+            if (ReadVolumeGuid(drive) != identity) throw new IOException("Backup volume changed during identification.");
+            return new BackupTarget(drive, identity, disk, label);
+        }
+
+        internal static Task<BackupTarget> PrepareTargetAsync(string drive) => Task.Run(() => PrepareTarget(drive));
+
+        internal static bool SameTarget(BackupTarget expected, BackupTarget actual) =>
+            expected.Drive == actual.Drive && expected.VolumeGuid == actual.VolumeGuid &&
+            expected.DiskNumber == actual.DiskNumber && expected.Label == actual.Label;
+
+        internal static async Task<(bool Success, string Output)> StartSystemImageBackupAsync(BackupTarget target)
+        {
             if (!await BackupGate.WaitAsync(0))
                 return (false, "A system image backup is already running.");
 
             try
             {
                 using var lease = await GearWinCore.EnterAsync(CoreWork.Backup);
-                if (!await Task.Run(() => IsSeparateBackupDisk(targetDrive)))
-                    return (false, "The backup volume must be on a separate physical disk from the Windows and boot partitions.");
+                if (!SameTarget(target, await PrepareTargetAsync(target.Drive)))
+                    return (false, "Backup volume changed after confirmation. No backup started.");
 
-                var backup = await RunAsync("start", "backup", $"-backupTarget:{targetDrive}", "-allCritical", "-vssCopy", "-quiet");
+                // wbadmin accepts a volume GUID for the backup target. Do not rely on a
+                // drive letter that can be reassigned by Windows while the job is queued.
+                var backup = await RunAsync("start", "backup", "-backupTarget:" + target.VolumeGuid,
+                    "-allCritical", "-vssCopy", "-quiet");
                 if (!backup.Success) return backup;
-                var catalog = await RunAsync("get", "versions", $"-backupTarget:{targetDrive}");
-                if (!catalog.Success || string.IsNullOrWhiteSpace(catalog.Output))
+                if (!SameTarget(target, await PrepareTargetAsync(target.Drive)))
+                    return (false, "Backup reported success but the confirmed volume identity changed; verification unavailable.");
+                var catalog = await RunAsync("get", "versions", "-backupTarget:" + target.Drive);
+                if (!SameTarget(target, await PrepareTargetAsync(target.Drive)) ||
+                    !catalog.Success || string.IsNullOrWhiteSpace(catalog.Output))
                     return (false, "Windows Backup reported success but the backup catalog could not be checked; " +
                         "do not assume the image can be restored. " + catalog.Output);
                 return (true, "Windows Backup completed and the selected disk's backup catalog is readable. " +
-                    "Bare-metal boot recovery is NOT validated.\n" + catalog.Output);
+                    "A newly created version and bare-metal boot recovery are NOT independently validated.\n" + catalog.Output);
             }
-            catch (Exception ex) when (ex is ManagementException or IOException or UnauthorizedAccessException or System.Runtime.InteropServices.COMException)
+            catch (Exception ex) when (ex is ManagementException or IOException or UnauthorizedAccessException or
+                System.Runtime.InteropServices.COMException or ArgumentException or OperationCanceledException or TimeoutException)
             {
                 return (false, ex.Message);
             }
-            finally
+            finally { BackupGate.Release(); }
+        }
+
+        public static async Task<(bool Success, string Output)> GetBackupVersionsAsync(string targetDrive)
+        {
+            try
             {
-                BackupGate.Release();
+                var drive = NormalizeDrive(targetDrive);
+                var identity = ReadVolumeGuid(drive);
+                var result = await RunAsync("get", "versions", "-backupTarget:" + drive);
+                return ReadVolumeGuid(drive) == identity ? result : (false, "Catalog volume changed during query.");
+            }
+            catch (Exception ex) when (ex is ArgumentException or IOException or UnauthorizedAccessException)
+            {
+                return (false, ex.Message);
             }
         }
 
-        public static Task<(bool Success, string Output)> GetBackupVersionsAsync(string targetDrive) =>
-            IsDriveLetter(targetDrive)
-                ? RunAsync("get", "versions", $"-backupTarget:{targetDrive}")
-                : Task.FromResult((false, "Select a local backup volume."));
-
-        private static bool IsDriveLetter(string drive) =>
-            drive.Length == 2 && char.IsAsciiLetter(drive[0]) && drive[1] == ':';
-
-        private static bool IsSeparateBackupDisk(string targetDrive)
+        private static uint? SeparateBackupDisk(string targetDrive)
         {
             var volume = new DriveInfo(targetDrive);
             if (!volume.IsReady || volume.DriveType is not (DriveType.Fixed or DriveType.Removable))
-                return false;
+                return null;
 
             using var searcher = new ManagementObjectSearcher(@"root\Microsoft\Windows\Storage",
                 "SELECT DiskNumber, DriveLetter, IsBoot, IsSystem FROM MSFT_Partition");
@@ -89,12 +148,12 @@ namespace OptimizerWpf.Services
                     if (char.ToUpperInvariant(letter) == char.ToUpperInvariant(targetDrive[0]))
                     {
                         if (targetDisk is not null)
-                            return false;
+                            return null;
                         targetDisk = disk;
                     }
                 }
             }
-            return bootFound && systemFound && targetDisk is uint number && !criticalDisks.Contains(number);
+            return bootFound && systemFound && targetDisk is uint number && !criticalDisks.Contains(number) ? number : null;
         }
 
         private static async Task<(bool Success, string Output)> RunAsync(params string[] arguments)
@@ -114,8 +173,8 @@ namespace OptimizerWpf.Services
                 using var process = Process.Start(startInfo);
                 if (process is null)
                     return (false, "Windows Backup could not be started.");
-                var stdout = process.StandardOutput.ReadToEndAsync();
-                var stderr = process.StandardError.ReadToEndAsync();
+                var stdout = HealthCleanupService.ReadBoundedOutputAsync(process.StandardOutput, 32768);
+                var stderr = HealthCleanupService.ReadBoundedOutputAsync(process.StandardError, 32768);
                 await process.WaitForExitAsync();
                 return (process.ExitCode == 0, (await stdout + await stderr).Trim());
             }
