@@ -129,8 +129,17 @@ namespace OptimizerWpf.Services
                 // Αδειάζουμε τα pipes ώστε να μη μπλοκάρει η διεργασία σε μεγάλη έξοδο.
                 var o = p.StandardOutput.ReadToEndAsync();
                 var e = p.StandardError.ReadToEndAsync();
-                await p.WaitForExitAsync();
-                await Task.WhenAll(o, e);
+                using var timeout = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(30));
+                try
+                {
+                    await p.WaitForExitAsync(timeout.Token);
+                    await Task.WhenAll(o, e).WaitAsync(timeout.Token);
+                }
+                catch (OperationCanceledException)
+                {
+                    try { if (!p.HasExited) p.Kill(entireProcessTree: true); } catch { }
+                    return false;
+                }
                 return p.ExitCode == 0;
             }
             catch { return false; }
