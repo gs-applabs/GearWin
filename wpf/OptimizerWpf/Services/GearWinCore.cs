@@ -36,6 +36,8 @@ internal sealed class OperationCoordinator
     private readonly Func<int> _capacity;
     private const int MaxPending = 32;
     private bool _stopping;
+    private long _softwareEpoch;
+    internal long SoftwareEpoch => Interlocked.Read(ref _softwareEpoch);
     internal OperationCoordinator(Func<int> capacity) => _capacity = capacity;
 
     internal static bool IsHeavyMutation(CoreWork kind) => kind is CoreWork.Cleanup or CoreWork.Memory or CoreWork.Repair or CoreWork.Backup or CoreWork.Registry or CoreWork.SoftwareChange or CoreWork.ProfileChange or CoreWork.NetworkChange or CoreWork.StartupChange;
@@ -101,7 +103,8 @@ internal sealed class OperationCoordinator
     {
         lock (_gate)
         {
-            _active.Remove(request);
+            if (_active.Remove(request) && request.Kind == CoreWork.SoftwareChange)
+                Interlocked.Increment(ref _softwareEpoch);
             Dispatch();
         }
     }
@@ -146,6 +149,7 @@ internal static class GearWinCore
 
     static GearWinCore() => PerformanceProfileService.Changed += Coordinator.PolicyChanged;
 
+    internal static long SoftwareEpoch => Coordinator.SoftwareEpoch;
     internal static void Stop() => Coordinator.StopAccepting();
     internal static IDisposable? TryEnterBackground(CoreWork kind) => Coordinator.TryAcquireBackground(kind);
 
