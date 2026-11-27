@@ -315,7 +315,8 @@ namespace OptimizerWpf.Services
             DetectBrowsers().Sum(BrowserCacheSize));
 
         internal static long BrowserCacheSize(BrowserCacheEntry browser) =>
-            BrowserCacheDirectories(browser).Sum(QuickCleanService.DirSize);
+            BrowserCacheDirectories(browser).Distinct(StringComparer.OrdinalIgnoreCase)
+                .Sum(path => MaintenancePaths.MeasureFiles(path, TimeSpan.FromDays(2)));
 
         internal static IEnumerable<string> BrowserCacheDirectories(BrowserCacheEntry browser)
         {
@@ -342,9 +343,12 @@ namespace OptimizerWpf.Services
             }
         }
 
-        public static Task<long> ClearBrowserCacheAsync(BrowserCacheEntry browser) => Task.Run(() =>
+        public static Task<long> ClearBrowserCacheAsync(BrowserCacheEntry browser) =>
+            QuickCleanService.RunExclusiveAsync(() => ClearBrowserCacheCore(browser));
+
+        internal static long ClearBrowserCacheCore(BrowserCacheEntry browser) =>
             BrowserCacheDirectories(browser).Distinct(StringComparer.OrdinalIgnoreCase)
-                .Sum(path => MaintenancePaths.CleanFiles(path, TimeSpan.FromDays(2))));
+                .Sum(path => MaintenancePaths.CleanFiles(path, TimeSpan.FromDays(2)));
 
         public static Task<WinREStatus> GetWinREStatusAsync() => Task.Run(() =>
         {
