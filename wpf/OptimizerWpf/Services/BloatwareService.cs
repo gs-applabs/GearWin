@@ -196,21 +196,45 @@ try {{
             new RecommendedApp("SystemLibs", "Visual C++ Redistributable x64", "Microsoft.VCRedist.2015+.x64"),
         };
 
+        internal static bool OutputContainsPackageId(string output, string packageId)
+        {
+            if (!System.Text.RegularExpressions.Regex.IsMatch(packageId, @"^[A-Za-z0-9._+-]{1,120}$")) return false;
+            return output.Split('\n').Any(line =>
+                System.Text.RegularExpressions.Regex.IsMatch(line.TrimEnd('\r'),
+                    @"(?<!\S)" + System.Text.RegularExpressions.Regex.Escape(packageId) + @"(?=\s|$)",
+                    System.Text.RegularExpressions.RegexOptions.IgnoreCase));
+        }
+
         public static async Task<bool> IsWingetAppInstalledAsync(string wingetId)
         {
-            // Αν το winget.exe δεν υπάρχει (παλιό Windows 10 / χωρίς App Installer) το Process.Start πετά Win32Exception —
-            // πριν δεν πιανόταν και τερμάτιζε τον async void handler με διάλογο σφάλματος αντί για "δεν είναι εγκατεστημένο".
+            if (!System.Text.RegularExpressions.Regex.IsMatch(wingetId, @"^[A-Za-z0-9._+-]{1,120}$")) return false;
             try
             {
-                using var process = Process.Start(new ProcessStartInfo("winget.exe", $"list --id {wingetId} --exact --accept-source-agreements")
-                { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true });
+                var psi = new ProcessStartInfo("winget.exe")
+                {
+                    RedirectStandardOutput = true, RedirectStandardError = true,
+                    UseShellExecute = false, CreateNoWindow = true
+                };
+                foreach (var arg in new[] { "list", "--id", wingetId, "--exact", "--accept-source-agreements", "--disable-interactivity" })
+                    psi.ArgumentList.Add(arg);
+                using var process = Process.Start(psi);
                 if (process == null) return false;
-                _ = process.StandardError.ReadToEndAsync(); // drain
-                var output = await process.StandardOutput.ReadToEndAsync();
-                await process.WaitForExitAsync();
-                return process.ExitCode == 0 && !output.Contains("No installed package found");
+                using var timeout = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(30));
+                var output = process.StandardOutput.ReadToEndAsync(timeout.Token);
+                var error = process.StandardError.ReadToEndAsync(timeout.Token);
+                try
+                {
+                    await process.WaitForExitAsync(timeout.Token);
+                    await Task.WhenAll(output, error).WaitAsync(timeout.Token);
+                    return process.ExitCode == 0 && OutputContainsPackageId(await output, wingetId);
+                }
+                catch (OperationCanceledException)
+                {
+                    try { if (!process.HasExited) process.Kill(entireProcessTree: true); } catch { }
+                    return false;
+                }
             }
-            catch (System.ComponentModel.Win32Exception) { return false; }
+            catch { return false; }
         }
 
         public static Task<bool> WingetInstallAsync(string wingetId) => RunProcessForSuccessAsync("winget.exe",
