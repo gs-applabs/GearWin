@@ -151,10 +151,49 @@ internal static class GearWinCore
 
     internal static long SoftwareEpoch => Coordinator.SoftwareEpoch;
     internal static void Stop() => Coordinator.StopAccepting();
-    internal static IDisposable? TryEnterBackground(CoreWork kind) => Coordinator.TryAcquireBackground(kind);
+    private sealed class CombinedLease : IDisposable
+    {
+        private IDisposable? _local;
+        private IDisposable? _process;
+        internal CombinedLease(IDisposable local, IDisposable process) { _local = local; _process = process; }
+        public void Dispose()
+        {
+            try { Interlocked.Exchange(ref _process, null)?.Dispose(); }
+            finally { Interlocked.Exchange(ref _local, null)?.Dispose(); }
+        }
+    }
 
-    internal static Task<IDisposable> EnterAsync(CoreWork kind, CorePriority priority = CorePriority.User, CancellationToken ct = default)
-        => Coordinator.AcquireAsync(kind, priority, ct);
+    // Synchronous optional callback only (auto Gaming Mode). Never await while holding it.
+    internal static IDisposable? TryEnterBackground(CoreWork kind)
+    {
+        var local = Coordinator.TryAcquireBackground(kind);
+        if (local == null || !OperationCoordinator.IsHeavyMutation(kind)) return local;
+        try
+        {
+            var process = CoreProcessLease.TryAcquire(CoreProcessLease.Name);
+            if (process != null) return new CombinedLease(local, process);
+        }
+        catch (Exception ex) { System.Diagnostics.Trace.TraceError(ex.Message); }
+        local.Dispose();
+        return null;
+    }
+
+    internal static async Task<IDisposable> EnterAsync(CoreWork kind, CorePriority priority = CorePriority.User, CancellationToken ct = default)
+    {
+        var local = await Coordinator.AcquireAsync(kind, priority, ct).ConfigureAwait(false);
+        if (!OperationCoordinator.IsHeavyMutation(kind)) return local;
+        try
+        {
+            var process = await CoreProcessLease.AcquireAsync(CoreProcessLease.Name, TimeSpan.FromSeconds(30), ct).ConfigureAwait(false);
+            if (ct.IsCancellationRequested)
+            {
+                process.Dispose();
+                ct.ThrowIfCancellationRequested();
+            }
+            return new CombinedLease(local, process);
+        }
+        catch { local.Dispose(); throw; }
+    }
 
     internal static async Task RunAsync(CoreWork kind, Func<Task> work, CorePriority priority = CorePriority.User, CancellationToken ct = default)
     {
