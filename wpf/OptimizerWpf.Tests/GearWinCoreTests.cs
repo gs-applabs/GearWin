@@ -39,25 +39,22 @@ public class GearWinCoreTests
     }
 
     [Fact]
-    public async Task GovernorCapacityChangeAllowsCompatibleWorkWithoutTimer()
+    public async Task GovernorCapacityChangeThrottlesOptionalWorkWithoutRevokingUserTools()
     {
         int capacity = 1;
         var core = new OperationCoordinator(() => capacity);
         using var first = await core.AcquireAsync(CoreWork.CleanupScan, CorePriority.User);
-        var queued = core.AcquireAsync(CoreWork.UpdateScan, CorePriority.User);
-        Assert.False(queued.IsCompleted);
-        capacity = 2;
+        using var second = await core.AcquireAsync(CoreWork.UpdateScan, CorePriority.User).WaitAsync(TimeSpan.FromSeconds(2));
+        var background = core.AcquireAsync(CoreWork.TransferScan, CorePriority.Background);
+        Assert.False(background.IsCompleted);
+        capacity = 3;
         core.PolicyChanged();
-        using var second = await queued.WaitAsync(TimeSpan.FromSeconds(2));
-        Assert.Equal(2, core.ActiveCount);
+        using var third = await background.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.Equal(3, core.ActiveCount);
         capacity = 1;
         core.PolicyChanged();
-        Assert.Equal(2, core.ActiveCount); // never abort in-flight user work
-        var third = core.AcquireAsync(CoreWork.HardwareScan, CorePriority.User);
-        first.Dispose();
-        Assert.False(third.IsCompleted);
-        second.Dispose();
-        using var next = await third.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.Equal(3, core.ActiveCount);
+        Assert.Null(core.TryAcquireBackground(CoreWork.Diagnostics));
     }
 
     [Fact]
@@ -288,5 +285,65 @@ public class GearWinCoreTests
         {
             if (!child.HasExited) { child.Kill(entireProcessTree: true); await child.WaitForExitAsync(); }
         }
+    }
+
+    [Theory]
+    [InlineData((int)CoreWork.Backup, (int)CoreWork.SystemSnapshot)]
+    [InlineData((int)CoreWork.Cleanup, (int)CoreWork.ProcessSnapshot)]
+    [InlineData((int)CoreWork.Repair, (int)CoreWork.HardwareScan)]
+    [InlineData((int)CoreWork.SoftwareChange, (int)CoreWork.ProcessSnapshot)]
+    [InlineData((int)CoreWork.UpdateScan, (int)CoreWork.TransferScan)]
+    [InlineData((int)CoreWork.Benchmark, (int)CoreWork.ProcessSnapshot)]
+    public async Task CompatibleUserToolsRunTogetherEvenInLowTier(int a, int b)
+    {
+        var core = new OperationCoordinator(() => 1);
+        Assert.False(OperationCoordinator.Conflicts((CoreWork)a, (CoreWork)b));
+        Assert.False(OperationCoordinator.Conflicts((CoreWork)b, (CoreWork)a));
+        using var first = await core.AcquireAsync((CoreWork)a, CorePriority.User);
+        using var second = await core.AcquireAsync((CoreWork)b, CorePriority.User).WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.Equal(2, core.ActiveCount);
+        Assert.Equal(0, core.PendingCount);
+    }
+
+    [Fact]
+    public async Task SnapshotLaneIsBoundedAndIndependentOfMutationLane()
+    {
+        var core = new OperationCoordinator(() => 1);
+        using var backup = await core.AcquireAsync(CoreWork.Backup, CorePriority.User);
+        using var process = await core.AcquireAsync(CoreWork.ProcessSnapshot, CorePriority.User).WaitAsync(TimeSpan.FromSeconds(2));
+        using var system = await core.AcquireAsync(CoreWork.SystemSnapshot, CorePriority.User).WaitAsync(TimeSpan.FromSeconds(2));
+        var hardware = core.AcquireAsync(CoreWork.HardwareScan, CorePriority.User);
+        Assert.False(hardware.IsCompleted);
+        Assert.Null(core.TryAcquireBackground(CoreWork.HardwareScan));
+        Assert.Equal(3, core.ActiveCount);
+        process.Dispose();
+        using var next = await hardware.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.Equal(3, core.ActiveCount);
+    }
+
+    [Fact]
+    public async Task WaitingMutationDoesNotBlockIndependentUserSnapshot()
+    {
+        var core = new OperationCoordinator(() => 1);
+        using var backup = await core.AcquireAsync(CoreWork.Backup, CorePriority.User);
+        var cleanup = core.AcquireAsync(CoreWork.Cleanup, CorePriority.User);
+        Assert.False(cleanup.IsCompleted);
+        using var process = await core.AcquireAsync(CoreWork.ProcessSnapshot, CorePriority.User).WaitAsync(TimeSpan.FromSeconds(2));
+        backup.Dispose();
+        using var activeCleanup = await cleanup.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.Equal(2, core.ActiveCount);
+    }
+
+    [Fact]
+    public async Task BenchmarkExcludesHardwareInventoryButAllowsProcessInspection()
+    {
+        var core = new OperationCoordinator(() => 3);
+        using var benchmark = await core.AcquireAsync(CoreWork.Benchmark, CorePriority.User);
+        var inventory = core.AcquireAsync(CoreWork.SystemSnapshot, CorePriority.User);
+        Assert.False(inventory.IsCompleted);
+        using var process = await core.AcquireAsync(CoreWork.ProcessSnapshot, CorePriority.User).WaitAsync(TimeSpan.FromSeconds(2));
+        benchmark.Dispose();
+        using var snapshot = await inventory.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.Equal(2, core.ActiveCount);
     }
 }
