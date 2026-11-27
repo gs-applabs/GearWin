@@ -24,7 +24,10 @@ namespace OptimizerWpf.Services
         // ===== Εφαρμογές Εκκίνησης - ΠΑΝΤΑ αναστρέψιμο (rename τιμής, ΠΟΤΕ διαγραφή δεδομένων) =====
 
         private const string RunKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
-        private const string DisabledPrefix = "OptimizerDisabled_";
+        // Disabled entries must be OUTSIDE the Windows Run key. A renamed Run value
+        // is still executable at logon. Legacy prefixed values are shown as active
+        // under their real name; no silent migration of user startup selections.
+        internal const string DisabledStartupKeyPath = @"Software\OptimizerWpf\DisabledStartup";
 
         public static Task<IReadOnlyList<StartupItem>> LoadStartupItemsAsync() => Task.Run(LoadStartupItems);
 
@@ -33,54 +36,50 @@ namespace OptimizerWpf.Services
             var items = new List<StartupItem>();
             foreach (var (hive, label) in new[] { (Registry.CurrentUser, "HKCU"), (Registry.LocalMachine, "HKLM") })
             {
-                using var key = hive.OpenSubKey(RunKeyPath);
-                if (key == null) continue;
-                foreach (var valueName in key.GetValueNames())
+                foreach (var (path, disabled) in new[] { (RunKeyPath, false), (DisabledStartupKeyPath, true) })
                 {
-                    var command = key.GetValue(valueName) as string ?? "";
-                    if (valueName.StartsWith(DisabledPrefix, StringComparison.Ordinal))
+                    using var key = hive.OpenSubKey(path);
+                    if (key == null) continue;
+                    foreach (var name in key.GetValueNames())
                     {
-                        var realName = valueName[DisabledPrefix.Length..];
-                        if (items.Any(i => i.Name == realName)) continue;
-                        items.Add(new StartupItem(realName, command, label, true));
-                    }
-                    else
-                    {
-                        items.Add(new StartupItem(valueName, command, label, false));
+                        if (string.IsNullOrEmpty(name) || key.GetValue(name) is not string command ||
+                            key.GetValueKind(name) is not (RegistryValueKind.String or RegistryValueKind.ExpandString)) continue;
+                        if (disabled && items.Any(i => i.Location == label && string.Equals(i.Name, name, StringComparison.OrdinalIgnoreCase))) continue;
+                        items.Add(new StartupItem(name, command, label, disabled));
                     }
                 }
             }
             return items;
         }
 
-        // ΔΙΟΡΘΩΣΗ (εξονυχιστικός έλεγχος εντόπισε): void, χωρίς try/catch - ένα κλειδωμένο/απαγορευμένο
-        // HKLM κλειδί (π.χ. χωρίς αρκετά δικαιώματα σε ασυνήθιστη διαμόρφωση) θα πετούσε αδιαχείριστη
-        // εξαίρεση. Επιστρέφει τώρα bool ώστε το UI να μπορεί να ενημερώσει/επαναφέρει τον διακόπτη.
         internal static Task<bool> SetStartupItemEnabledAsync(StartupItem item, bool enabled) =>
             GearWinCore.RunAsync(CoreWork.StartupChange, () => Task.Run(() => SetStartupItemEnabled(item, enabled)));
 
-        // Internal leaf also used inside the coordinated delayed-start transaction.
         public static bool SetStartupItemEnabled(StartupItem item, bool enabled)
         {
-            if (item.Location is not ("HKCU" or "HKLM") || string.IsNullOrEmpty(item.Name) ||
-                item.Name.StartsWith(DisabledPrefix, StringComparison.Ordinal)) return false;
+            if (item.Location is not ("HKCU" or "HKLM") || string.IsNullOrEmpty(item.Name)) return false;
             try
             {
                 var hive = item.Location == "HKCU" ? Registry.CurrentUser : Registry.LocalMachine;
-                using var key = hive.OpenSubKey(RunKeyPath, writable: true);
-                if (key == null) return false;
-                string from = enabled ? DisabledPrefix + item.Name : item.Name;
-                string to = enabled ? item.Name : DisabledPrefix + item.Name;
-                var raw = key.GetValue(from, null, RegistryValueOptions.DoNotExpandEnvironmentNames);
-                if (raw is not string command || !string.Equals(
-                    key.GetValue(from) as string, item.Command, StringComparison.Ordinal) ||
-                    key.GetValue(to, null, RegistryValueOptions.DoNotExpandEnvironmentNames) != null) return false;
-                var kind = key.GetValueKind(from);
+                using var source = hive.OpenSubKey(enabled ? DisabledStartupKeyPath : RunKeyPath, writable: true);
+                if (source == null) return false;
+                var raw = source.GetValue(item.Name, null, RegistryValueOptions.DoNotExpandEnvironmentNames);
+                if (raw is not string command || !string.Equals(source.GetValue(item.Name) as string, item.Command, StringComparison.Ordinal)) return false;
+                var kind = source.GetValueKind(item.Name);
                 if (kind is not (RegistryValueKind.String or RegistryValueKind.ExpandString)) return false;
-                key.SetValue(to, command, kind);
-                if (!Equals(key.GetValue(to, null, RegistryValueOptions.DoNotExpandEnvironmentNames), raw)) return false;
-                key.DeleteValue(from, throwOnMissingValue: true);
-                return true;
+                using var destination = hive.CreateSubKey(enabled ? RunKeyPath : DisabledStartupKeyPath);
+                if (destination == null || destination.GetValue(item.Name, null, RegistryValueOptions.DoNotExpandEnvironmentNames) != null) return false;
+                destination.SetValue(item.Name, command, kind);
+                destination.Flush();
+                if (!Equals(destination.GetValue(item.Name, null, RegistryValueOptions.DoNotExpandEnvironmentNames), raw) ||
+                    destination.GetValueKind(item.Name) != kind) return false;
+                // Do not remove a changed source. Retain the staged value on uncertain failure
+                // for manual recovery; never overwrite another startup registration.
+                if (!Equals(source.GetValue(item.Name, null, RegistryValueOptions.DoNotExpandEnvironmentNames), raw) ||
+                    source.GetValueKind(item.Name) != kind) return false;
+                source.DeleteValue(item.Name, throwOnMissingValue: true);
+                source.Flush();
+                return source.GetValue(item.Name, null, RegistryValueOptions.DoNotExpandEnvironmentNames) == null;
             }
             catch { return false; }
         }
