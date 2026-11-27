@@ -179,6 +179,12 @@ namespace OptimizerWpf.Services
             }
         }
 
+        // Read persisted ownership after a failed switch; UI must not claim the old mode survived.
+        public static string? ReadActiveProfile()
+        {
+            lock (Gate) return Load(SnapshotPath())?.Mode;
+        }
+
         public static void SetOfficeMode() => Enable("Office");
         public static void SetGamingMode() => Enable("Gaming");
         // Preserve the old call signature. Never terminate Explorer.
