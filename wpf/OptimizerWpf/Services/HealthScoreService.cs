@@ -75,8 +75,8 @@ namespace OptimizerWpf.Services
             return new HealthResult(score, issues);
         }
 
-        private static (int Delta, HealthIssue? Issue) Unknown(string check)
-            => (0, new HealthIssue((LanguageService.Current == "el" ? "Ανεπαρκή δεδομένα: " : "Insufficient data: ") + LanguageService.T(check), "Unknown"));
+        private static (int Delta, HealthIssue? Issue) Unknown(string english, string greek)
+            => (0, new HealthIssue(LanguageService.Current == "el" ? "Ανεπαρκή δεδομένα: " + greek : "Insufficient data: " + english, "Unknown"));
 
         private static (int Delta, HealthIssue? Issue) CheckSystemDriveSpace()
         {
@@ -84,7 +84,7 @@ namespace OptimizerWpf.Services
             {
                 var sysRoot = Path.GetPathRoot(Environment.SystemDirectory) ?? "C:\\";
                 var drive = new DriveInfo(sysRoot);
-                if (!drive.IsReady || drive.TotalSize <= 0) return Unknown("HealthScore_DiskLowSpace");
+                if (!drive.IsReady || drive.TotalSize <= 0) return Unknown("Disk space", "Χώρος δίσκου");
 
                 var freePct = Math.Round(100.0 * drive.TotalFreeSpace / drive.TotalSize);
                 if (freePct < 10)
@@ -92,7 +92,7 @@ namespace OptimizerWpf.Services
                 if (freePct < 20)
                     return (-10, new HealthIssue(LanguageService.T("HealthScore_DiskLowSpace"), "Storage"));
             }
-            catch { return Unknown("HealthScore_DiskLowSpace"); }
+            catch { return Unknown("Disk space", "Χώρος δίσκου"); }
             return (0, null);
         }
 
@@ -113,7 +113,7 @@ namespace OptimizerWpf.Services
                 if (cbsPending != null || wuPending != null)
                     return (-10, new HealthIssue(LanguageService.T("HealthScore_RebootPending"), "Restart"));
             }
-            catch { return Unknown("HealthScore_RebootPending"); }
+            catch { return Unknown("Pending reboot", "Εκκρεμής επανεκκίνηση"); }
             return (0, null);
         }
 
@@ -126,7 +126,7 @@ namespace OptimizerWpf.Services
                 using var searcher = new ManagementObjectSearcher(defenderScope, new ObjectQuery("SELECT RealTimeProtectionEnabled FROM MSFT_MpComputerStatus"));
                 using var results = searcher.Get();
                 using var status = results.Cast<ManagementBaseObject>().FirstOrDefault();
-                if (status == null || status["RealTimeProtectionEnabled"] is not bool realTimeOn) return Unknown("HealthScore_DefenderOff");
+                if (status == null || status["RealTimeProtectionEnabled"] is not bool realTimeOn) return Unknown("Antivirus protection", "Προστασία antivirus");
                 if (realTimeOn) return (0, null);
 
                 // Real-time protection is off - check whether another active AV explains it (Windows
@@ -162,7 +162,7 @@ namespace OptimizerWpf.Services
 
                 return (-20, new HealthIssue(LanguageService.T("HealthScore_DefenderOff"), "Defender"));
             }
-            catch { return Unknown("HealthScore_DefenderOff"); }
+            catch { return Unknown("Antivirus protection", "Προστασία antivirus"); }
         }
 
         private static (int Delta, HealthIssue? Issue) CheckStartupCount()
@@ -185,7 +185,7 @@ namespace OptimizerWpf.Services
                     return (-10, new HealthIssue($"{LanguageService.T("HealthScore_TooManyStartupPrefix")}{startupCount}{LanguageService.T("HealthScore_TooManyStartupSuffix")}", "Startup"));
                 }
             }
-            catch { return Unknown("HealthScore_TooManyStartupPrefix"); }
+            catch { return Unknown("Startup entries", "Εφαρμογές εκκίνησης"); }
             return (0, null);
         }
 
@@ -212,7 +212,7 @@ namespace OptimizerWpf.Services
                     return (-10, new HealthIssue(LanguageService.T("HealthScore_NoRestorePointFound"), "RestorePoint"));
                 }
             }
-            catch { return Unknown("HealthScore_NoRestorePointFound"); }
+            catch { return Unknown("Restore points", "Σημεία επαναφοράς"); }
             return (0, null);
         }
     }
