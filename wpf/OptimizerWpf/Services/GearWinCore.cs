@@ -165,7 +165,9 @@ internal sealed class OperationCoordinator
         while (true)
         {
             var next = _pending.FirstOrDefault(r => r.Priority == CorePriority.User &&
-                HasCapacity(r.Kind, r.Priority) && !_active.Any(a => Conflicts(a.Kind, r.Kind)));
+                HasCapacity(r.Kind, r.Priority) && !_active.Any(a => Conflicts(a.Kind, r.Kind)) &&
+                !_pending.TakeWhile(p => !ReferenceEquals(p, r)).Any(p =>
+                    p.Priority == CorePriority.User && Conflicts(p.Kind, r.Kind)));
             next ??= _pending.FirstOrDefault(r => r.Priority == CorePriority.Background &&
                 HasCapacity(r.Kind, r.Priority) && !_active.Any(a => Conflicts(a.Kind, r.Kind)) &&
                 !_pending.Any(p => p.Priority == CorePriority.User &&
