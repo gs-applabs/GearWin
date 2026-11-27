@@ -75,7 +75,19 @@ namespace OptimizerWpf.Services
             return list;
         }
 
-        public static Task<IReadOnlyList<SecurityItem>> GetAsync() => Task.Run(async () =>
+        private static readonly object ScanGate = new();
+        private static Task<IReadOnlyList<SecurityItem>>? _active;
+
+        public static Task<IReadOnlyList<SecurityItem>> GetAsync()
+        {
+            lock (ScanGate)
+            {
+                if (_active is { IsCompleted: false }) return _active;
+                return _active = GetCoreAsync();
+            }
+        }
+
+        private static Task<IReadOnlyList<SecurityItem>> GetCoreAsync() => Task.Run(async () =>
         {
             OsInfo? os = null; string? tpm = null;
             try
