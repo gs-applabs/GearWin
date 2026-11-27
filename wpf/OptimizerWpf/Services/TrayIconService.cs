@@ -35,6 +35,14 @@ namespace OptimizerWpf.Services
         // Πραγματική έξοδος (το X του παραθύρου απλώς κρύβει στο tray) - tray μενού ΚΑΙ κλασικό μενού.
         public static void ExitApplication()
         {
+            if (GearWinCore.HasHeavyWork)
+            {
+                var greek = LanguageService.Current == "el";
+                var message = greek ? "Εκτελείται ή αναμένει βαριά εργασία. Ολοκληρώστε την πριν από την έξοδο." : "A heavy operation is active or waiting. Finish it before exiting.";
+                StatusService.Report(message);
+                ShowNotificationBalloon("GearWin", message);
+                return;
+            }
             IsExiting = true;
             System.Windows.Application.Current.Shutdown();
         }
