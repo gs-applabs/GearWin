@@ -20,7 +20,6 @@ namespace OptimizerWpf.Services
         }
 
         private const int SystemMemoryListInformation = 80;
-        private static readonly System.Threading.SemaphoreSlim CleanGate = new(1, 1);
 
         [StructLayout(LayoutKind.Sequential)]
         private struct SystemMemoryList
@@ -80,7 +79,7 @@ namespace OptimizerWpf.Services
 
         public static async Task<MemoryCleanResult> CleanAsync()
         {
-            await CleanGate.WaitAsync().ConfigureAwait(false);
+            using var lease = await GearWinCore.EnterAsync(CoreWork.Memory).ConfigureAwait(false);
             try
             {
                 return await Task.Run(async () =>
@@ -93,7 +92,7 @@ namespace OptimizerWpf.Services
                     return new MemoryCleanResult(before, Snapshot(), trimmed, false);
                 }).ConfigureAwait(false);
             }
-            finally { CleanGate.Release(); }
+            finally { HealthScoreService.Invalidate(); }
         }
     }
 }
