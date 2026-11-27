@@ -9,7 +9,10 @@ using Microsoft.Win32;
 namespace OptimizerWpf.Services
 {
     public record RecommendedApp(string Group, string Title, string WingetId);
-    public record InstalledApp(string DisplayName, string? Publisher, string UninstallString);
+    public record InstalledApp(string DisplayName, string? Publisher, string UninstallString)
+    {
+        internal string? MachineProductCode { get; init; }
+    }
     public record UwpAppInfo(string Name, string PackageFullName)
     {
         // 6.9.1: PackageFullName = "Name_1.2.3.0_x64__publisherid" -> έκδοση/αρχιτεκτονική για καλύτερη οπτικοποίηση της λίστας
@@ -298,54 +301,49 @@ try {{
                     if (string.IsNullOrEmpty(displayName) || string.IsNullOrEmpty(uninstallString)) continue;
                     if (sub!.GetValue("SystemComponent") != null) continue;
                     if (apps.Any(a => a.DisplayName == displayName)) continue;
-                    apps.Add(new InstalledApp(displayName, sub.GetValue("Publisher") as string, uninstallString));
+                    var product = SafeUninstallService.MatchMachineMsi(name, uninstallString,
+                        ReferenceEquals(hive, Registry.LocalMachine), sub.GetValue("WindowsInstaller") is int flag && flag == 1);
+                    apps.Add(new InstalledApp(displayName, sub.GetValue("Publisher") as string, uninstallString)
+                        { MachineProductCode = product });
                 }
             }
             return (IReadOnlyList<InstalledApp>)apps.OrderBy(a => a.DisplayName).ToList();
         });
 
-        public static Task<int> UninstallAppAsync(string uninstallString) => Task.Run(() =>
-        {
-            using var process = Process.Start(new ProcessStartInfo("cmd.exe", $"/c \"{uninstallString}\"") { UseShellExecute = false });
-            process?.WaitForExit();
-            return process?.ExitCode ?? -1;
-        });
+        // Exact-name candidates are advisory only, never automatic deletion targets.
+        internal static bool IsResidualNameMatch(string appName, string folderName) =>
+            !string.IsNullOrWhiteSpace(appName) && appName.Trim().Length >= 4 &&
+            string.Equals(appName.Trim(), folderName, StringComparison.OrdinalIgnoreCase);
 
         public static IReadOnlyList<string> FindResidualFolders(string appName)
         {
-            var safeName = string.Concat(appName.Where(c => !Path.GetInvalidFileNameChars().Contains(c)));
-            // Πολύ σύντομο/γενικό όνομα (π.χ. "Java", "Go", "7") ταίριαζε με δεκάδες άσχετους φακέλους AppData/ProgramData
-            // που προτείνονταν για διαγραφή. Κάτω από 4 χαρακτήρες δεν προτείνουμε τίποτα.
-            if (safeName.Trim().Length < 4) return Array.Empty<string>();
+            if (string.IsNullOrWhiteSpace(appName)) return Array.Empty<string>();
             var roots = new[]
             {
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                Environment.GetEnvironmentVariable("ProgramData") ?? "",
             };
             var results = new List<string>();
             foreach (var root in roots.Where(Directory.Exists))
             {
                 try
                 {
-                    results.AddRange(Directory.EnumerateDirectories(root).Where(d => Path.GetFileName(d).Contains(safeName, StringComparison.OrdinalIgnoreCase)));
+                    if (!MaintenancePaths.IsOrdinaryLocalPath(root)) continue;
+                    foreach (var candidate in Directory.EnumerateDirectories(root))
+                    {
+                        if (IsResidualNameMatch(appName, Path.GetFileName(candidate)) &&
+                            MaintenancePaths.IsWithin(root, candidate) &&
+                            MaintenancePaths.IsOrdinaryLocalPath(candidate))
+                            results.Add(candidate);
+                    }
                 }
                 catch { }
             }
-            return results;
+            return results.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         }
 
-        public static bool DeleteResidualFolder(string path)
-        {
-            try
-            {
-                Microsoft.VisualBasic.FileIO.FileSystem.DeleteDirectory(path,
-                    Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs,
-                    Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin);
-                return true;
-            }
-            catch { return false; }
-        }
+        // Intentionally no elevated recursive folder deletion from ambiguous app metadata.
+        // Manual review in Explorer remains possible; exact ownership proof is a release gate.
 
         // ===== helpers =====
 
