@@ -7,13 +7,13 @@ Baseline: `0d36ba06ffd5b1f90676d546d8abdfafe1062fbf`; review branch `release/7.1
 | Pass | Distinct recorded findings | Source mitigations | Runtime-certified fixes | Status |
 |---|---:|---:|---:|---|
 | UMP01 source audit | 3 test/measurement coverage gaps | 1 infrastructure mitigation (measurement workflow added) | 0 | open |
-| UMP02 safety, batches 1–6 | 51 safety/correctness findings | 51 addressed at least in part in source | 0 operation-level certifications | open |
+| UMP02 safety, batches 1–7 | 59 safety/correctness findings | 59 addressed at least in part in source | 0 operation-level certifications | open |
 | UMP03 core/resources, batches 1–4 | 39 findings | 39 addressed at least in part in source | 0 | open |
 | UMP04 unified maintenance, batches 1–2 | 24 findings | 24 addressed at least in part in source | 0 | open |
-| UMP05 central operation core, batches 1–2 | 12 findings | 12 addressed at least in part in source | 0 | open |
+| UMP05 central operation core, batches 1–3 | 18 findings | 18 addressed at least in part in source | 0 | open |
 | UMP06 early status fix | 2 findings | 2 addressed at least in part in source | 0 | open |
 | UMP07 early artwork fix | 8 distinct icon/UI findings | 8 addressed at least in part in source | 0 visual certifications | open |
-| Total | 139 | 137 at least partly addressed | 0 operation-level certifications | open |
+| Total | 153 | 151 at least partly addressed | 0 operation-level certifications | open |
 
 The earlier manual review also identified deferred issues in profiles, resources, backups and navigation. These will be assigned stable IDs in their owning passes; do not inflate totals by counting them again. Full tracked-source lexical inventory completed; manual semantic review remains pending. The 7.0.0 baseline Windows build reported 391 desktop + 42 migration tests on 2026-11-27; the Linux job logs available are from 2026-11-23 (5 synthetic clone tests). Six CI jobs reported success in the run; an opt-in test can report pass without doing clicks. Baseline success is not a new branch test result.
 
@@ -302,3 +302,33 @@ Run 45996232379: 31 icon assets verified, 469/469 desktop and 42/42 migration te
 S47: WUA ResultCode 3 (completed with errors) previously returned full success; report failure/partial result. S48: driver WUA script treated ResultCode 3 as full success; only 2 succeeds. S49: nighttime update task disable returned true even if scheduler deletion failed; return real result. S50: headless nighttime job ran without checking persisted opt-in; honor NightlyUpdatesEnabled. S51: unattended Windows installs continued after failure/reboot required; stop batch, no automatic reboot.
 
 Eight additional fixture cases (five conflict domain pairs, nonqueued background, waiting-user preference, scan token isolation). 85 cumulative new cases authored, 77 included in the preceding successful test stages; current changes through 562903e9088cbc5907973fffebc9b3d639a48d09 not yet compiled. Direct leaf scans now use same update domain; notification orchestration must not acquire outer UpdateScan lease. The manual combined Winget scan calls WUA within its existing lease explicitly. No nested leases in these connected paths. Current core is process-local; existing cleanup mutex only, no global cross-process coordination for software changes, repair, backups or profile writes. Legacy direct detached driver install, catalog/vendor scans, other startup/tweak/network tools, deep uninstall command, rollback callbacks and explicit auto-profile stop/exit restoration still require integration. Driver export and install are individually coordinated, not a single atomic transaction. 29 recommendation checks are still separate calls; plan single inventory scan and distinct unknown status next. Recheck installed-state on success, provider partial results, cancellation of native COM work, shutdown and queue refusal at every UI boundary; no hard kill of servicing as a new policy. No runtime measurement or final operation-level certification of the new changes. No merge or release.
+
+## Intermediate verification
+
+Run 45997561301: 477 desktop and 42 migration tests passed (519 total), including eight new core fixtures from batch 2; 31/31 icon assets verified. Installer build canceled by subsequent commits. No new resource measurement.
+
+## UMP05 — third integration batch (6 new findings)
+
+| ID | Finding | Source mitigation |
+|---|---|---|
+| C13 | Initial recommendation inventory ran 29 separate winget processes and repeated registry enumeration | one bounded list command and one traversal of uninstall views |
+| C14 | Lifetime recommendation cache could become stale after software changes outside recommendation UI | two-minute session cache and software mutation epoch from coordinator |
+| C15 | Multiple views could duplicate initial recommendation scans | shared in-flight task, per-view operation guard |
+| C16 | Network reset, DNS and firewall command helpers bypassed core | NetworkChange domain |
+| C17 | Startup toggles, delayed startup and service start-mode mutation bypassed core | StartupChange domain; leaf operations avoid nested leases |
+| C18 | File diagnostics and disk benchmark bypassed core resource policy | Diagnostics and exclusive Benchmark domains for SystemService entry points |
+
+## UMP02 — seventh safety batch (8 new findings)
+
+| ID | Finding | Source mitigation |
+|---|---|---|
+| S52 | Failed or truncated inventory interpreted as absence | three-state inventory and explicit targeted verify action |
+| S53 | Recommendation UI toggled installed flag on exit code alone | re-probe targeted state, batch refresh, exclude unknowns from group install |
+| S54 | DNS values interpolated into elevated script without IP validation | parse and normalize addresses |
+| S55 | Restart Wi-Fi action restarted all adapters | restrict to physical wireless media; needs physical hardware verification |
+| S56 | Network process redirected stdout without draining | remove unused redirect; stop reset chain on failure |
+| S57 | Startup rename could overwrite another value or change ExpandString type | verify current command and absent destination; preserve type |
+| S58 | Service optimization accepted arbitrary services and guessed restore value | allowlist, current mode check and existing backup requirement |
+| S59 | Remove delay ignored task deletion failure | refuse restoration on failed deletion; full transactional rollback still pending |
+
+Eleven newly authored test cases (epoch, four conflict pairs, two inventory tests, four probe cases); cumulative 96, 85 included in prior verified stages. Latest source not yet compiled. English header parsing fails closed on localized or truncated winget output, so unknown rows may require explicit one-package verification; registry positive evidence uses exact title and existing icon path, not authoritative package identity. A two-minute cache can lag external changes; refresh remains available. No claim of measured 96.6% CPU reduction: 29→1 is the initial CLI invocation count only. Direct hosts edits, tweak changes, detached Defender scan, alternate file diagnostics, startup-delay rollback/task identity collision, cross-process software admission and full UI state synchronization remain open. No merge or release.
