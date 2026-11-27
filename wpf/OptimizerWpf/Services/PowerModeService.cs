@@ -34,7 +34,7 @@ namespace OptimizerWpf.Services
         [DllImport("powrprof.dll")] private static extern uint PowerSetActiveScheme(IntPtr root, ref Guid scheme);
         [DllImport("kernel32.dll")] private static extern IntPtr LocalFree(IntPtr memory);
 
-        private static Guid GetPlan()
+        internal static Guid GetPlan()
         {
             if (PowerGetActiveScheme(IntPtr.Zero, out var ptr) != 0 || ptr == IntPtr.Zero)
                 throw new IOException("Cannot read the active power plan.");
@@ -42,15 +42,15 @@ namespace OptimizerWpf.Services
             finally { LocalFree(ptr); }
         }
 
-        private static void SetPlan(Guid plan)
+        internal static void SetPlan(Guid plan)
         {
             if (GetPlan() == plan) return;
             if (PowerSetActiveScheme(IntPtr.Zero, ref plan) != 0 || GetPlan() != plan)
                 throw new IOException("Cannot apply the requested power plan.");
         }
 
-        public static bool SetBalancedPlan() { lock (Gate) { try { SetPlan(Balanced); return true; } catch { return false; } } }
-        public static bool SetHighPerformancePlan() { lock (Gate) { try { SetPlan(High); return true; } catch { return false; } } }
+        public static bool SetBalancedPlan() { lock (Gate) { try { using var lease = UltimatePlanJournal.PowerLease(); SetPlan(Balanced); return true; } catch { return false; } } }
+        public static bool SetHighPerformancePlan() { lock (Gate) { try { using var lease = UltimatePlanJournal.PowerLease(); SetPlan(High); return true; } catch { return false; } } }
 
         private static string SnapshotPath()
         {
@@ -163,6 +163,7 @@ namespace OptimizerWpf.Services
         {
             lock (Gate)
             {
+                using var powerLease = UltimatePlanJournal.PowerLease();
                 var path = SnapshotPath();
                 var existing = Load(path);
                 if (existing != null)
@@ -197,6 +198,7 @@ namespace OptimizerWpf.Services
         {
             lock (Gate)
             {
+                using var powerLease = UltimatePlanJournal.PowerLease();
                 var path = SnapshotPath();
                 var state = Load(path);
                 // Old releases have no trustworthy snapshot: never guess original values.
