@@ -6,27 +6,22 @@
 
 <p align="center"><strong>One Windows workspace for maintenance, security, diagnostics and recovery.</strong><br/>Ο υπολογιστής σου. Υπό τον έλεγχό σου.</p>
 
-<p align="center"><a href="https://github.com/gs-applabs/GearWin/releases/download/v7.0.0/GearWin-Setup-7.0.0.exe"><img alt="Download v7.0.0" src="https://img.shields.io/badge/DOWNLOAD-v7.0.0-087EA4?style=for-the-badge"/></a> <a href="https://github.com/gs-applabs/GearWin/releases/latest"><img alt="Release notes" src="https://img.shields.io/badge/RELEASE-NOTES-334155?style=for-the-badge"/></a></p>
+<p align="center"><a href="https://github.com/gs-applabs/GearWin/releases/latest"><img alt="Download latest published release" src="https://img.shields.io/badge/DOWNLOAD-LATEST%20RELEASE-087EA4?style=for-the-badge"/></a> <a href="docs/SHOWCASE.md"><img alt="Explore screenshots" src="https://img.shields.io/badge/EXPLORE-SCREENSHOTS-334155?style=for-the-badge"/></a></p>
 
 <p align="center"><a href="#at-a-glance--με-μια-ματιά">Overview / Επισκόπηση</a> · <a href="#full-documentation--αναλυτική-τεκμηρίωση">Full documentation / Τεκμηρίωση</a> · <a href="https://github.com/gs-applabs/GearWin/issues">Support / Υποστήριξη</a> · <a href="https://github.com/gs-applabs">GS App Labs</a></p>
 
-## Current screenshot gallery / Νέα στιγμιότυπα
+## Visual showcase / Οπτική παρουσίαση
 
 <table>
 <tr>
-<td width="50%" valign="top"><a href="docs/product-snapshots/0-Home-0.png"><img src="docs/product-snapshots/0-Home-0.png" width="100%" alt="System dashboard / Πίνακας συστήματος"/></a><br/><sub>System dashboard / Πίνακας συστήματος</sub></td>
-<td width="50%" valign="top"><a href="docs/product-snapshots/1-System-1.png"><img src="docs/product-snapshots/1-System-1.png" width="100%" alt="System tools / Εργαλεία συστήματος"/></a><br/><sub>System tools / Εργαλεία συστήματος</sub></td>
+<td width="50%" valign="top"><a href="docs/SHOWCASE.md"><img src="docs/product-snapshots/0-Home-0.png" alt="Dashboard / Πίνακας" width="100%"/></a><br/><sub>Dashboard / Πίνακας</sub></td>
+<td width="50%" valign="top"><a href="docs/SHOWCASE.md"><img src="docs/product-snapshots/1-System-1.png" alt="System workspace / Εργαλεία συστήματος" width="100%"/></a><br/><sub>System workspace / Εργαλεία συστήματος</sub></td>
 </tr>
 </table>
 
-**[Browse application screenshots / Προβολή στιγμιοτύπων](docs/product-snapshots/README.md)** · [Capture workflow / Μηχανισμός λήψης](../../actions/workflows/product-snapshots.yml)
+**[Explore 26 screenshots / Εξερεύνηση στιγμιοτύπων](docs/SHOWCASE.md)** · [Original capture index](docs/product-snapshots/README.md) · [Media kit](https://github.com/gs-applabs/gs-applabs/tree/main/assets/showcase)
 
-**[30-second video tour](https://github.com/gs-applabs/gs-applabs/blob/main/assets/showcase/gearwin.mp4) · [Animated screenshot preview](https://github.com/gs-applabs/gs-applabs/blob/main/assets/showcase/gearwin.gif) · [Social preview](https://github.com/gs-applabs/gs-applabs/blob/main/assets/showcase/gearwin-social.png)**
-
-<sub>Real screenshot slideshows, not live recordings. / Παρουσιάσεις πραγματικών στιγμιοτύπων, όχι ζωντανή καταγραφή.</sub>
-
-
-<sub>Actual application rendering on Windows CI. / Πραγματική απεικόνιση σε Windows CI.</sub>
+<sub>Actual UI previews from development commit `0cc58e5d34cf`; may differ from the latest published installer. / Πραγματικές εικόνες συγκεκριμένου build ανάπτυξης, ενδέχεται να διαφέρουν από τη δημοσιευμένη έκδοση.</sub>
 
 ## At a glance / Με μια ματιά
 
@@ -37,6 +32,8 @@
 | **Recover / Ανάκτηση** | System image, migration planner and offline cloning kit / Backup, μεταφορά και κλωνοποίηση |
 
 ### Get started / Ξεκίνημα
+
+For the newest installer always use [latest published release](https://github.com/gs-applabs/GearWin/releases/latest). Version-specific links below are retained as reference. / Για τη νεότερη έκδοση χρησιμοποίησε τον σύνδεσμο τελευταίας δημοσιευμένης έκδοσης.
 
 - **Installer:** [GearWin-Setup-7.0.0.exe](https://github.com/gs-applabs/GearWin/releases/download/v7.0.0/GearWin-Setup-7.0.0.exe) · [SHA-256](https://github.com/gs-applabs/GearWin/releases/download/v7.0.0/GearWin-Setup-7.0.0.exe.sha256)
 - **Requirements / Απαιτήσεις:** Windows 11 x64 · self-contained .NET 11 installer.
