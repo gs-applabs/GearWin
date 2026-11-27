@@ -56,9 +56,30 @@ namespace OptimizerWpf.Services
             catch { return null; }
         }
 
-        // Γενική αναζήτηση εγκατεστημένου exe/icon βάσει τίτλου - ψάχνει τα Uninstall κλειδιά μητρώου
-        // (ΟΧΙ σκληροκωδικοποιημένες διαδρομές ανά εφαρμογή, που θα έσπαγαν εύκολα σε διαφορετικές
-        // εκδόσεις/τοποθεσίες εγκατάστασης) για DisplayName που περιέχει τον τίτλο, διαβάζει DisplayIcon.
+        // Exact product identity first; only known version/architecture suffixes are accepted.
+        // In particular Chrome Remote Desktop, Opera GX and Firefox ESR are different products.
+        internal static bool MatchesInstalledTitle(string displayName, string title)
+        {
+            var names = title switch
+            {
+                "VLC" => new[] { "VLC", "VLC media player" },
+                "PowerToys" => new[] { "PowerToys", "Microsoft PowerToys" },
+                "Zoom" => new[] { "Zoom", "Zoom Workplace" },
+                "LibreOffice" => new[] { "LibreOffice" },
+                _ => new[] { title }
+            };
+            foreach (var name in names)
+            {
+                if (displayName.Equals(name, StringComparison.OrdinalIgnoreCase)) return true;
+                if (!displayName.StartsWith(name + " ", StringComparison.OrdinalIgnoreCase)) continue;
+                var suffix = displayName[(name.Length + 1)..];
+                if (System.Text.RegularExpressions.Regex.IsMatch(suffix,
+                    @"^(?:v?\d+(?:\.\d+)*(?:\s*\((?:x64|x86|64-bit|32-bit)[^)]*\))?|\((?:x64|x86|64-bit|32-bit)[^)]*\))$",
+                    System.Text.RegularExpressions.RegexOptions.IgnoreCase)) return true;
+            }
+            return false;
+        }
+
         public static string? FindInstalledIconPath(string appTitle)
         {
             foreach (var (hive, subPath) in new[]
@@ -68,18 +89,27 @@ namespace OptimizerWpf.Services
                          (Registry.CurrentUser, @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
                      })
             {
-                using var key = hive.OpenSubKey(subPath);
-                if (key == null) continue;
-                foreach (var name in key.GetSubKeyNames())
+                try
                 {
-                    using var sub = key.OpenSubKey(name);
-                    var displayName = sub?.GetValue("DisplayName") as string;
-                    if (displayName == null || !displayName.Contains(appTitle, StringComparison.OrdinalIgnoreCase)) continue;
-                    var icon = sub?.GetValue("DisplayIcon") as string;
-                    if (string.IsNullOrWhiteSpace(icon)) continue;
-                    var path = icon.Split(',')[0].Trim('"');
-                    if (File.Exists(path)) return path;
+                    using var key = hive.OpenSubKey(subPath);
+                    if (key == null) continue;
+                    foreach (var name in key.GetSubKeyNames())
+                    {
+                        try
+                        {
+                            using var sub = key.OpenSubKey(name);
+                            var displayName = sub?.GetValue("DisplayName") as string;
+                            if (displayName == null || !MatchesInstalledTitle(displayName, appTitle)) continue;
+                            var icon = sub?.GetValue("DisplayIcon") as string;
+                            if (string.IsNullOrWhiteSpace(icon)) continue;
+                            var path = System.Text.RegularExpressions.Regex.Replace(icon.Trim(), @",\s*-?\d+$", "").Trim('"');
+                            path = Environment.ExpandEnvironmentVariables(path);
+                            if (Path.IsPathFullyQualified(path) && File.Exists(path)) return path;
+                        }
+                        catch { /* inaccessible entry is not evidence of an installed app */ }
+                    }
                 }
+                catch { /* inaccessible hive: continue with the other views */ }
             }
             return null;
         }
