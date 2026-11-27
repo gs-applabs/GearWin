@@ -103,7 +103,8 @@ namespace OptimizerWpf.Services
             !name.Contains("threshold", StringComparison.OrdinalIgnoreCase) &&
             !name.Contains("resolution", StringComparison.OrdinalIgnoreCase) &&
             !name.Contains("maximum", StringComparison.OrdinalIgnoreCase) &&
-            !name.Contains("critical", StringComparison.OrdinalIgnoreCase);
+            !name.Contains("critical", StringComparison.OrdinalIgnoreCase) &&
+            !name.Contains("warning", StringComparison.OrdinalIgnoreCase);
 
         private static readonly string[] CpuPackageNames = { "CPU Package", "Package", "Tctl", "Tdie", "CPU Die", "Core Average", "Core Max", "Core #" };
         private static readonly string[] GpuCoreNames = { "GPU Core", "Core", "Hot Spot", "Junction" };
@@ -360,6 +361,27 @@ namespace OptimizerWpf.Services
                 {
                     return null;
                 }
+            }
+        }
+
+        // LibreHardwareMonitor 0.9.6 StorageDevice identifiers end with the actual
+        // DiskInfoToolkit DriveNumber (verified upstream at tag v0.9.6).
+        internal static int? GetDiskTemperatureByNumber(uint number)
+        {
+            lock (SensorGate)
+            {
+                var computer = GetComputer();
+                if (computer == null) return null;
+                try
+                {
+                    RefreshAll(computer);
+                    var suffix = "/" + number.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                    var matches = computer.Hardware.SelectMany(HardwareTree)
+                        .Where(h => h.HardwareType == HardwareType.Storage &&
+                            h.Identifier.ToString().EndsWith(suffix, StringComparison.Ordinal)).ToArray();
+                    return matches.Length == 1 ? PickTemperature(matches[0], new[] { "Composite Temperature", "Temperature" }) : null;
+                }
+                catch { return null; }
             }
         }
 
