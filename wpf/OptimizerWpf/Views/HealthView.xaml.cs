@@ -101,31 +101,45 @@ namespace OptimizerWpf.Views
 
         private async void RunHealthToolAsync(string busyLabel, System.Func<System.Threading.CancellationToken, System.Threading.Tasks.Task<(bool Success, string Output)>> action)
         {
-            if (_toolRunning) return; // SFC/DISM/chkdsk δεν πρέπει να τρέξουν ταυτόχρονα
+            if (_toolRunning) return;
             _toolRunning = true;
             TxtHealthToolsStatus.Text = $"{busyLabel}...";
             _toolCts = new System.Threading.CancellationTokenSource();
             BtnCancelHealthTool.Visibility = Visibility.Visible;
+            BtnCancelHealthTool.IsEnabled = true;
+            BtnCancelHealthTool.Content = LanguageService.Current == "el" ? "Ακύρωση αναμονής" : "Cancel pending";
+            BtnCancelHealthTool.ToolTip = LanguageService.Current == "el"
+                ? "Ακυρώνει εργασία που δεν ξεκίνησε. Η ενεργή επισκευή ολοκληρώνεται με ασφάλεια."
+                : "Cancels work that has not started. An active repair is allowed to finish safely.";
             using var busy = BusyScope.Begin(busyLabel);
             bool success; string output;
             try { (success, output) = await action(_toolCts.Token); }
+            catch (OperationCanceledException) when (_toolCts.IsCancellationRequested)
+            {
+                TxtHealthToolsStatus.Text = $"{busyLabel}: {LanguageService.T("Health_ToolCancelled")}";
+                return;
+            }
             catch (Exception ex) { success = false; output = ex.Message; }
             finally
             {
                 _toolRunning = false;
                 BtnCancelHealthTool.Visibility = Visibility.Collapsed;
-                busy.Dispose();
+                _toolCts.Dispose(); _toolCts = null;
             }
-            var cancelled = _toolCts.IsCancellationRequested;
-            _toolCts.Dispose(); _toolCts = null;
-            if (cancelled) { TxtHealthToolsStatus.Text = $"{busyLabel}: {LanguageService.T("Health_ToolCancelled")}"; return; }
             TxtHealthToolsStatus.Text = success ? $"{busyLabel}{LanguageService.T("Health_ToolCompletedSuffix")}" : $"{busyLabel}{LanguageService.T("Health_ToolFailedSuffix")}";
             var shown = output.Length > 3000 ? output[..3000] + LanguageService.T("Health_OutputTruncatedSuffix") : output;
             ThemedMessageBox.Show(string.IsNullOrWhiteSpace(shown) ? LanguageService.T("Health_NoOutput") : shown, busyLabel, MessageBoxButton.OK,
                 success ? MessageBoxImage.Information : MessageBoxImage.Warning);
         }
 
-        private void BtnCancelHealthTool_Click(object sender, RoutedEventArgs e) => _toolCts?.Cancel();
+        private void BtnCancelHealthTool_Click(object sender, RoutedEventArgs e)
+        {
+            _toolCts?.Cancel();
+            BtnCancelHealthTool.IsEnabled = false;
+            TxtHealthToolsStatus.Text = LanguageService.Current == "el"
+                ? "Ζητήθηκε ακύρωση αναμονής. Εάν η επισκευή έχει ξεκινήσει, αναμένεται η ολοκλήρωσή της."
+                : "Pending cancellation requested. If repair has started, waiting for completion.";
+        }
 
         private void BtnSfc_Click(object sender, RoutedEventArgs e) => RunHealthToolAsync(LanguageService.T("Health_SfcBtn"), ct => HealthCleanupService.RunSfcScanAsync(ct));
         private void BtnDismCheckHealth_Click(object sender, RoutedEventArgs e) => RunHealthToolAsync("DISM CheckHealth", ct => HealthCleanupService.RunDismCheckHealthAsync(ct));
