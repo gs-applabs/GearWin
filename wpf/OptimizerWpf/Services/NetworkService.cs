@@ -19,7 +19,24 @@ namespace OptimizerWpf.Services
         // Wi-Fi συνδεδεμένο), όχι αν υπάρχει πραγματικά Internet (π.χ. router συνδεδεμένο αλλά χωρίς
         // WAN) - ping σε γνωστό, σταθερό host (1.1.1.1 - Cloudflare DNS, καμία εξάρτηση από DNS
         // resolution του ίδιου του ping) με ΣΥΝΤΟΜΟ timeout (1.5s) είναι ο μόνος αξιόπιστος τρόπος.
-        public static async Task<(bool Connected, int? LatencyMs)> CheckInternetAsync()
+        private static readonly object ConnectivityGate = new();
+        private static Task<(bool Connected, int? LatencyMs)>? _connectivityTask;
+        private static long _connectivityStarted;
+
+        public static Task<(bool Connected, int? LatencyMs)> CheckInternetAsync()
+        {
+            lock (ConnectivityGate)
+            {
+                if (_connectivityTask is { IsCompleted: false }) return _connectivityTask;
+                var now = Environment.TickCount64;
+                if (_connectivityTask != null && SharedTelemetryService.IsFresh(now, _connectivityStarted, 10000))
+                    return _connectivityTask;
+                _connectivityStarted = now;
+                return _connectivityTask = CheckInternetCoreAsync();
+            }
+        }
+
+        private static async Task<(bool Connected, int? LatencyMs)> CheckInternetCoreAsync()
         {
             try
             {
