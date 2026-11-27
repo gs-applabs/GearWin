@@ -55,7 +55,7 @@ namespace OptimizerWpf.Services
 
         public static void Start()
         {
-            if (_timer != null) return;
+            if (_timer != null || !FeatureDemand.From(AppSettingsService.Current).UpdateTimer) return;
             _stopped = false;
             _generation++;
             // Ο ίδιος ο timer τρέχει συχνά (κάθε 2 λεπτά) αλλά το RunCheckIfDueAsync παρακάτω κάνει
@@ -72,8 +72,7 @@ namespace OptimizerWpf.Services
         // τώρα περιμένουμε σύνδεση (έως ~3 λεπτά) και ο έλεγχος γίνεται μία φορά με announce.
         public static async Task StartupCheckAsync()
         {
-            if (_checkInFlight) { Log("StartupCheckAsync: skipped, already in flight"); return; }
-            if (!AppSettingsService.Current.UpdateNotificationsEnabled) { Log("StartupCheckAsync: skipped, UpdateNotificationsEnabled=false"); return; }
+            if (_stopped || _checkInFlight || !AppSettingsService.Current.UpdateNotificationsEnabled) return;
             Log("StartupCheckAsync: starting, waiting 8s then for network (up to 3 min)");
             _checkInFlight = true;
             var generation = _generation;
@@ -109,7 +108,9 @@ namespace OptimizerWpf.Services
 
         private static async Task RunCheckIfDueAsync()
         {
-            if (_stopped || _checkInFlight || !AppSettingsService.Current.UpdateNotificationsEnabled) return;
+            if (_stopped) return;
+            RequestLowDiskCheck();
+            if (_checkInFlight || !AppSettingsService.Current.UpdateNotificationsEnabled) return;
             var last = AppSettingsService.Current.LastUpdateCheckAt;
             var intervalHours = Math.Max(1, AppSettingsService.Current.UpdateCheckIntervalHours);
             if (last.HasValue && DateTime.Now - last.Value < TimeSpan.FromHours(intervalHours)) return;
@@ -217,7 +218,7 @@ namespace OptimizerWpf.Services
             // ΝΕΟ - roadmap ιδέα #4 (ρητό αίτημα χρήστη: "κάνε τα 4-7") - "Ειδοποίηση χαμηλού χώρου
             // δίσκου" - ίδιο περιοδικό tick, ξεχωριστό (χρονικό, όχι αριθμητικό) dedup - βλ. σχόλιο στο
             // AppSettingsService.LastLowDiskNotifyAt.
-            try { CheckLowDiskSpace(); } catch (Exception ex) { Log($"RunCheckAsync: low disk check threw - {ex}"); }
+            RequestLowDiskCheck();
             Log("RunCheckAsync: finished");
         }
 
@@ -241,6 +242,16 @@ namespace OptimizerWpf.Services
         // είναι χαμηλοί ταυτόχρονα, οι υπόλοιποι θα ειδοποιήσουν στον ΕΠΟΜΕΝΟ κύκλο (24ωρο cooldown
         // εφαρμόζεται καθολικά, όχι ανά δίσκο - αποδεκτός συμβιβασμός για ένα "μέτριο" χαρακτηριστικό,
         // αποφεύγει σκάγιασμα πολλαπλών toast στην ίδια στιγμή).
+        internal static void RequestLowDiskCheck()
+        {
+            if (_stopped || !AppSettingsService.Current.LowDiskNotificationsEnabled) return;
+            // Low disk alerts do not require a winget, driver, or WUA scan.
+            if (Environment.TickCount64 - _lastLowDiskCheck < 300000 && _lastLowDiskCheck != 0) return;
+            _lastLowDiskCheck = Environment.TickCount64;
+            try { CheckLowDiskSpace(); } catch (Exception ex) { System.Diagnostics.Trace.TraceError(ex.Message); }
+        }
+
+        private static long _lastLowDiskCheck;
         private static void CheckLowDiskSpace()
         {
             if (!AppSettingsService.Current.LowDiskNotificationsEnabled) return;
