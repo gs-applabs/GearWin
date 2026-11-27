@@ -8,12 +8,12 @@ Baseline: `0d36ba06ffd5b1f90676d546d8abdfafe1062fbf`; review branch `release/7.1
 |---|---:|---:|---:|---|
 | UMP01 source audit | 3 test/measurement coverage gaps | 1 infrastructure mitigation (measurement workflow added) | 0 | open |
 | UMP02 safety, batches 1–10 | 85 safety/correctness findings | 85 addressed at least in part in source | 0 operation-level certifications | open |
-| UMP03 core/resources, batches 1–9 | 78 findings | 78 addressed at least in part in source | 0 | open |
+| UMP03 core/resources, batches 1–10 | 81 findings | 81 addressed at least in part in source | 0 | open |
 | UMP04 unified maintenance, batches 1–2 | 24 findings | 24 addressed at least in part in source | 0 | open |
-| UMP05 central operation core, batches 1–5 | 25 findings | 25 addressed at least in part in source | 0 | open |
+| UMP05 central operation core, batches 1–6 | 34 findings | 34 addressed at least in part in source | 0 | open |
 | UMP06 status and navigation, batch 1 | 9 findings | 9 addressed at least in part in source | 0 | open |
 | UMP07 early artwork fix | 8 distinct icon/UI findings | 8 addressed at least in part in source | 0 visual certifications | open |
-| Total | 232 | 230 at least partly addressed | 0 operation-level certifications | open |
+| Total | 244 | 242 at least partly addressed | 0 operation-level certifications | open |
 
 The earlier manual review also identified deferred issues in profiles, resources, backups and navigation. These will be assigned stable IDs in their owning passes; do not inflate totals by counting them again. Full tracked-source lexical inventory completed; manual semantic review remains pending. The 7.0.0 baseline Windows build reported 391 desktop + 42 migration tests on 2026-11-27; the Linux job logs available are from 2026-11-23 (5 synthetic clone tests). Six CI jobs reported success in the run; an opt-in test can report pass without doing clicks. Baseline success is not a new branch test result.
 
@@ -492,3 +492,25 @@ Independent endurance workflow .github/workflows/gearwin-endurance.yml, introduc
 Ten new deterministic fixture cases in DriveMetadataSlotTests: eight key normalization cases, one 1000-iteration same/different drive contention with canceled consumer, one 26-key cache/1000 invalid identities/expiry case. 161 cumulative newly authored cases; 129 included in previously confirmed CI (563 tests). The preceding sensor/anti-pile-up run 46003291557 canceled during build/test, so no additional verified count yet. New source through b5b8c8cc05499091e268e99291f4774dc2a063a8 is not yet compiled. CI audit concurrency changed to cancel-in-progress false to preserve active Windows validation when new commits arrive; no verification of new endurance run yet (available connector returns PR-triggered workflow runs only). No installer release.
 
 Remaining: SystemView still constructs fonts and may initialize both process/device groups even if a composite removes sections; further section-demand mapping needed. Metadata TTL can temporarily retain a stale name after drive hotplug; physical temperature identity uses separate path. A refresh requested while an existing shared device summary is in flight can join that existing read; invalidated results do not repopulate cache. A native WMI/driver call may still hang; cancellation detaches the UI consumer, does not kill the native call. Timers, external process supervision, UI churn, all skins and long endurance remain unverified. New 120/60-second metadata TTLs and drive-letter bound are design choices; no forced memory trims. No new user-visible feature, no merge or release.
+
+## UMP05 — sixth core batch: activation by explicit feature demand
+
+| ID | Finding | Source mitigation |
+|---|---|---|
+| C26 | Optional services initialized from scattered application/UI entry points | CoreFeatureLifecycle + pure FeatureDemand from persisted options; common startup and preference reconciliation |
+| C27 | Disabled update notifications still started periodic timer and startup sequence | guard activation; no disabled startup log or scan; stop shared timer when both consumers disabled |
+| C28 | Low disk alerts implicitly depended on enabled software update scans | independent low-space check on existing shared timer, 5-minute monotonic check throttle, 24-hour existing alert cooldown |
+| C29 | Disabled release checks still woke a timer; late result could announce after disable | start only on preference, stop/invalidate generation and suppress old results |
+| C30 | Both hardware alerts disabled still left timer running | activate timer only if temperature or SMART selected; suppress late disabled alert |
+| C31 | Clipboard monitoring and Win+Shift+V were always active, including unused installations | explicit ClipboardHistoryEnabled flag, existing history popup checkbox, no listener/hotkey until opt-in, stored history remains accessible |
+| C32 | Stale scheduled maintenance task could run after saved opt-out | check saved opt-in before headless work and before cleanup decision |
+| C33 | Widget and automatic gaming toggles bypassed central activation policy | settings and tray use common reconcile, auto gaming rechecks opt-in at service boundary |
+| C34 | Import of preferences did not reconcile optional runtime services | reconcile on successful import; other imported UI settings may still require restart |
+
+## UMP03 — tenth resource batch (3 findings)
+
+R79: MainWindow constructor unconditionally requested health attention even for a hidden tray launch; defer until visible, loaded and not minimized.
+R80: Clipboard history remained in RAM when background capture stopped; release in-memory entries on successful flush and after closing on-demand inactive history popup, without deleting persisted history.
+R81: Optional service startup occurred on critical shell startup path; defer central activation to dispatcher ApplicationIdle; stop only requested services; bound auto-gaming consecutive tick counters.
+
+Eleven newly authored FeatureDemandTests cases (all disabled, four low-disk/update combinations, four alert combinations, legacy clipboard opt-in, widget isolation). 172 cumulative newly authored cases; 129 included in previously confirmed CI (563 tests). The run for 934a027fb76389f0679c3ff91b66c582d500d4e4 was pending when inspected; subsequent runs were pending/canceled; no new verified count. Current source through e11410798ad8dd0f16863d582132cf80af863f30 not yet compiled. No confirmed endurance run. Existing notification defaults and previously saved preferences preserved: "enabled" is persisted configuration, not evidence that user manually toggled it. Clipboard defaults off for legacy/new settings because no prior explicit flag existed; Win+Shift+V is inactive until enabled in the existing history popup, which still opens through tray/main menu. Greek/English checkbox labels pending full localization and skin UI checks. Existing base governor/tray shell and diagnostics for the currently visible view remain intentional infrastructure. Running native scan may finish after disable, generation checks stop later stages and publication; no forced kill of Windows servicing. In-flight release/alert shutdown, direct widget close behavior, failed start retry, optional service UI integration and actual CPU/RAM measurements require verification. Settings cache remains process-local; a running headless task cannot observe a separate process's subsequent change without rereading persisted settings. No new standalone feature, no merge or release.
