@@ -284,6 +284,7 @@ public partial class App : Application
         Services.AlertService.Start();
         Exit += (_, _) => Services.AlertService.Stop();
         Exit += (_, _) => Services.SensorService.Close();
+        Exit += (_, _) => Services.SharedTelemetryService.Stop();
 
         // ΝΕΟ - REQ-570-02 - όταν ξεκινά αυτόματα στο tray, άμεσος έλεγχος ενημερώσεων (ΟΧΙ αναμονή
         // για το πρώτο tick του περιοδικού timer, βλ. UpdateNotificationService.Start) ώστε το
