@@ -10,6 +10,9 @@ namespace OptimizerWpf.Services
 
     public static class TransferPreflight
     {
+        internal static System.Threading.Tasks.Task<TransferCheck> InspectAsync(string sourcePath, string targetPath) =>
+            GearWinCore.RunAsync(CoreWork.TransferScan, () => System.Threading.Tasks.Task.Run(() => Inspect(sourcePath, targetPath)));
+
         public static TransferCheck Inspect(string sourcePath, string targetPath, int maxEntries = 100000)
         {
             static TransferCheck Fail(string reason) => new(false, 0, 0, 0, reason);
