@@ -8,10 +8,10 @@ Baseline: `0d36ba06ffd5b1f90676d546d8abdfafe1062fbf`; review branch `release/7.1
 |---|---:|---:|---:|---|
 | UMP01 source audit | 3 test/measurement coverage gaps | 1 infrastructure mitigation (measurement workflow added) | 0 | open |
 | UMP02 safety, batches 1–5 | 46 safety/correctness findings | 46 addressed at least in part in source | 0 operation-level certifications | open |
-| UMP03 core/resources, batch 1 | 12 findings | 12 addressed at least in part in source | 0 | open |
+| UMP03 core/resources, batches 1–2 | 29 findings | 29 addressed at least in part in source | 0 | open |
 | UMP06 early status fix | 1 finding | 1 addressed in source | 0 | open |
 | UMP07 early artwork fix | 8 distinct icon/UI findings | 8 addressed at least in part in source | 0 visual certifications | open |
-| Total | 70 | 68 at least partly addressed | 0 operation-level certifications | open |
+| Total | 87 | 85 at least partly addressed | 0 operation-level certifications | open |
 
 The earlier manual review also identified deferred issues in profiles, resources, backups and navigation. These will be assigned stable IDs in their owning passes; do not inflate totals by counting them again. Full tracked-source lexical inventory completed; manual semantic review remains pending. The 7.0.0 baseline Windows build reported 391 desktop + 42 migration tests on 2026-11-27; the Linux job logs available are from 2026-11-23 (5 synthetic clone tests). Six CI jobs reported success in the run; an opt-in test can report pass without doing clicks. Baseline success is not a new branch test result.
 
@@ -170,3 +170,31 @@ S08 existing stale-findings mitigation strengthened: recheck actual value and mi
 N01: failed hotkey registration incorrectly called SetIdle and removed another active operation. New informational Report method retains active operations. Full identity-based migration of legacy calls remains open.
 
 Ten additional test cases: 5 registry allowlist, 1 settings no-op write, 4 RAM-pressure fixtures. Cumulative 50 newly authored cases; 40 covered by prior successful test stages, last 10 pending. New safety and resource commits not yet compiled on the final revision. Clipboard write errors are traced, not yet user-visible; coalesced history can lose recent entries on abrupt process termination. The RAM pressure threshold is provisional (max of 512 MiB or 10% physical memory) and separate SystemView direct trim still needs integration. Current working-set trim is not yet a performance improvement certification. Existing 6 skins and 14 languages need review, with English fallback for new strings. No merge or release.
+
+## Prior batch CI confirmation
+
+Run 45992282312: 31/31 icon assets prepared and verified against all pinned SHA-256 values; 442 desktop and 42 migration tests passed. Installer build canceled by subsequent commits; no new installed-app measurement or release certification. Previous ten fixture cases are included in these counts.
+
+## UMP03 — second core/resources batch (17 additional distinct findings)
+
+| ID | Finding | Source mitigation |
+|---|---|---|
+| R13 | Sensor singleton initialization and hardware updates accessed concurrently | serialize access through SensorGate |
+| R14 | CPU/GPU/RAM/disk getters refreshed the same hardware repeatedly | reuse sensor snapshot for 3 seconds |
+| R15 | Hardware monitor session lacked explicit shutdown | close shared Computer at exit and after failed open |
+| R16 | Disk sensor fell back to first physical disk even if several exist | unknown when no match and multiple disks; model ambiguity still needs serial identity |
+| R17 | Home attached activation handlers in constructor before parent was available | attach/detach on Loaded/Unloaded |
+| R18 | Home fast and disk timers remained active while hidden/minimized | suspend both; visible active minimum 2s, visible inactive minimum 8s |
+| R19 | Progress bars animated unchanged values and ignored low tier | skip unchanged values and respect animation flag |
+| R20 | Home worker could publish counters after unload disposed prior state | publish on dispatcher, dispose late results |
+| R21 | Home internet-status polling could overlap | single-flight guard and discard unloaded results |
+| R22 | Desktop widget left GPU counters undisposed on close and late initialization | dispose both on close and on late completion |
+| R23 | Desktop widget pinged at each 1.5s refresh | throttle network to 20s; voltage to 3s; skip hidden refresh |
+| R24 | Alert timer and manual checks could overlap | atomic single-flight guard |
+| R25 | Late background hardware alert could show after service shutdown | generation check |
+| R26 | Manual update check could duplicate existing startup/periodic scan | shared in-flight task; duplicate caller awaits real result |
+| R27 | Update log truncated its own lazily enumerated input | synchronized rotation to previous file |
+| R28 | Chrome status spinner restarted on each update and attention pulse ignored hidden/low-tier state | motion lifecycle and only toggle storyboard when state changes |
+| R29 | Failed GPU counter priming leaked initialized counter | dispose on exception |
+
+Seven additional fixture cases (4 Home polling floor and 3 sensor refresh coalescing), 57 cumulative new cases authored, 50 included in completed prior test stages. Actual runtime visibility, all six skin identities, long soak, hardware driver compatibility, concurrent sensor closure, repeated unload/reload behavior, GPU usage accuracy, scheduler and scan cancellation still need integration tests. A single shared sensor refresh lock reduces concurrent work but cannot guarantee a stuck vendor driver returns; shutdown timeout remains open. Manual scan joining does not re-run the announcement option. No guarantee of CPU/RAM reduction until comparable VM samples. Prior operation-level safety restrictions remain interim; no merge or release. 
