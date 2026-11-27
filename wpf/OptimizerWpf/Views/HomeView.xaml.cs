@@ -450,11 +450,7 @@ namespace OptimizerWpf.Views
             _temperatureReading = true;
             try
             {
-                var sample = await Task.Run(() => (
-                    Cpu: SensorService.GetCpuTemperatureCelsius(),
-                    Gpu: SensorService.GetGpuTemperatureCelsius(),
-                    Ram: SensorService.GetRamTemperatureCelsius(),
-                    Pawn: SensorService.GetPawnIoVersion()));
+                var sample = await SensorService.ReadHomeTemperaturesAsync();
                 if (_unloaded || !IsVisible) return;
                 SetTempText(TxtCpuTemp, sample.Cpu, "CPU", sample.Pawn);
                 SetTempText(TxtGpuTemp, sample.Gpu, "GPU", sample.Pawn);
@@ -472,7 +468,7 @@ namespace OptimizerWpf.Views
             var generation = _diskSelectionGeneration;
             try
             {
-                var temperature = await Task.Run(() => StorageTemperatureService.Read(drive));
+                var temperature = await SensorService.ReadHomeDiskAsync(drive);
                 if (!_unloaded && IsVisible && generation == _diskSelectionGeneration)
                     SetTempText(TxtDiskTemp, temperature, "Disk", null);
             }
