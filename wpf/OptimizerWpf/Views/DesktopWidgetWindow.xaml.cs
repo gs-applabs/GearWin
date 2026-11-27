@@ -14,6 +14,9 @@ namespace OptimizerWpf.Views
         private readonly DispatcherTimer _timer;
         private int _currentGamePid = -1;
         private bool _voltageQueryInFlight;
+        private bool _closed;
+        private long _lastNetworkCheck;
+        private long _lastVoltageCheck;
 
         public DesktopWidgetWindow()
         {
@@ -33,16 +36,28 @@ namespace OptimizerWpf.Views
 
             try { _cpuCounter = new PerformanceCounter("Processor", "% Processor Time", "_Total"); _cpuCounter.NextValue(); }
             catch { _cpuCounter = null; }
-            _ = System.Threading.Tasks.Task.Run(() => { _gpuCounters = GpuInfoService.CreateUsageCounters(); });
+            _ = InitializeGpuAsync();
 
             Refresh();
             _timer.Start();
+        }
+
+        private async System.Threading.Tasks.Task InitializeGpuAsync()
+        {
+            try
+            {
+                var counters = await System.Threading.Tasks.Task.Run(GpuInfoService.CreateUsageCounters);
+                if (_closed) { if (counters != null) foreach (var counter in counters) counter.Dispose(); }
+                else _gpuCounters = counters;
+            }
+            catch { }
         }
 
         private bool _networkCheckInFlight;
 
         private async void Refresh()
         {
+            if (_closed || !IsVisible) return;
             try { if (_cpuCounter != null) TxtCpu.Text = $"{_cpuCounter.NextValue():0}%"; }
             catch { }
 
@@ -50,12 +65,14 @@ namespace OptimizerWpf.Views
                 TxtRam.Text = $"{mem.dwMemoryLoad}%";
 
             // 6.9.1: ποτέ επικαλυπτόμενα pings (αργό δίκτυο) και καμία εξαίρεση από async void (θα έφτανε στον global handler κάθε tick)
-            if (!_networkCheckInFlight)
+            if (!_networkCheckInFlight && (_lastNetworkCheck == 0 || Environment.TickCount64 - _lastNetworkCheck >= 20000))
             {
+                _lastNetworkCheck = Environment.TickCount64;
                 _networkCheckInFlight = true;
                 try
                 {
                     var (connected, latency) = await NetworkService.CheckInternetAsync();
+                    if (_closed) return;
                     TxtNetwork.Text = connected
                         ? $"{LanguageService.T("Tray_Connected")}{(latency.HasValue ? $" ({latency} ms)" : "")}"
                         : LanguageService.T("Tray_Disconnected");
@@ -64,7 +81,7 @@ namespace OptimizerWpf.Views
                 finally { _networkCheckInFlight = false; }
             }
 
-            RefreshGameOverlay();
+            if (!_closed && IsVisible) RefreshGameOverlay();
         }
 
         // ΝΕΟ - ρητό αίτημα χρήστη: "κάνε πάλι ως widget το FPS/in-game overlay που θα επεκτείνει το
@@ -110,11 +127,13 @@ namespace OptimizerWpf.Views
         // την επιστροφή του προηγούμενου query.
         private async void RefreshGpuVoltageAsync()
         {
-            if (_voltageQueryInFlight) return;
+            if (_closed || _voltageQueryInFlight || (_lastVoltageCheck != 0 && Environment.TickCount64 - _lastVoltageCheck < 3000)) return;
+            _lastVoltageCheck = Environment.TickCount64;
             _voltageQueryInFlight = true;
             try
             {
                 var volts = await System.Threading.Tasks.Task.Run(SensorService.GetGpuVoltageVolts);
+                if (_closed) return;
                 TxtGpuVoltage.Text = volts.HasValue ? $"{volts.Value:0.000} V" : "--";
             }
             finally
@@ -137,8 +156,12 @@ namespace OptimizerWpf.Views
             AppSettingsService.Current.DesktopWidgetX = Left;
             AppSettingsService.Current.DesktopWidgetY = Top;
             AppSettingsService.Save();
+            _closed = true;
             _timer.Stop();
             _cpuCounter?.Dispose();
+            _cpuCounter = null;
+            if (_gpuCounters != null) foreach (var counter in _gpuCounters) try { counter.Dispose(); } catch { }
+            _gpuCounters = null;
             if (_currentGamePid != -1) GameOverlayService.Stop();
         }
     }
