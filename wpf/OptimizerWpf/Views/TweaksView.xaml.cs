@@ -23,10 +23,10 @@ namespace OptimizerWpf.Views
         public TweaksView()
         {
             InitializeComponent();
-            ListMainTweaks.ItemsSource = TweakRowVm.CreateDeferred(TweakService.AllMainTweaks(), "Main");
-            ListAiTweaks.ItemsSource = TweakRowVm.CreateDeferred(TweakService.AiCopilotTweaksSimple(), "Ai");
-            ListPerfTweaks.ItemsSource = TweakRowVm.CreateDeferred(TweakService.PerfTweaksSimple(), "Perf");
-            ListLighterWindows.ItemsSource = TweakRowVm.CreateDeferred(TweakService.LighterWindowsTweaksSimple(), "Lighter");
+            ListMainTweaks.ItemsSource = TweakRowVm.CreateDeferred(TweakService.AllMainTweaks(), "Main", startDetection: false);
+            ListAiTweaks.ItemsSource = TweakRowVm.CreateDeferred(TweakService.AiCopilotTweaksSimple(), "Ai", startDetection: false);
+            ListPerfTweaks.ItemsSource = TweakRowVm.CreateDeferred(TweakService.PerfTweaksSimple(), "Perf", startDetection: false);
+            ListLighterWindows.ItemsSource = TweakRowVm.CreateDeferred(TweakService.LighterWindowsTweaksSimple(), "Lighter", startDetection: false);
             ListCustomMenu.ItemsSource = _customMenuItems;
             foreach (var item in CustomContextMenuService.Load()) _customMenuItems.Add(item);
 
@@ -36,7 +36,21 @@ namespace OptimizerWpf.Views
             TogglePSHere.IsChecked = TweakService.IsOpenPowerShellHereInstalled();
 
             LoadNamedProfilesList();
+            Loaded += (_, _) =>
+            {
+                if (_detectionLifetime != null) return;
+                _detectionLifetime = new System.Threading.CancellationTokenSource();
+                _ = TweakRowVm.DetectAllAsync(AllTweakRows().ToList(), _detectionLifetime.Token);
+            };
+            Unloaded += (_, _) =>
+            {
+                var lifetime = _detectionLifetime;
+                _detectionLifetime = null;
+                if (lifetime != null) { lifetime.Cancel(); lifetime.Dispose(); }
+            };
         }
+
+        private System.Threading.CancellationTokenSource? _detectionLifetime;
 
         // ΝΕΟ - roadmap "Αναζήτηση μέσα στη λίστα" - φιλτράρει και τις 4 λίστες tweaks ταυτόχρονα μέσω
         // CollectionView.Filter πάνω στο ήδη υπάρχον ItemsSource (χωρίς αλλαγή του underlying δεδομένου).
@@ -361,14 +375,27 @@ namespace OptimizerWpf.Views
             return rows;
         }
 
-        public static async System.Threading.Tasks.Task DetectAllAsync(IReadOnlyList<TweakRowVm> rows)
+        public static async System.Threading.Tasks.Task DetectAllAsync(IReadOnlyList<TweakRowVm> rows, System.Threading.CancellationToken token = default)
         {
+            if (rows.Count == 0 || token.IsCancellationRequested) return;
+            var models = rows.Select(r => r.Tweak).ToArray();
             List<bool?> states;
-            try { states = await GearWinCore.RunAsync(CoreWork.Diagnostics, () => System.Threading.Tasks.Task.Run(() => rows.Select(r =>
+            try
             {
-                try { return r.Tweak.DetectState?.Invoke(); } catch { return (bool?)null; }
-            }).ToList())); }
+                states = await GearWinCore.RunAsync(CoreWork.Diagnostics,
+                    () => System.Threading.Tasks.Task.Run(() =>
+                    {
+                        var result = new List<bool?>(models.Length);
+                        foreach (var model in models)
+                        {
+                            token.ThrowIfCancellationRequested();
+                            try { result.Add(model.DetectState?.Invoke()); } catch { result.Add(null); }
+                        }
+                        return result;
+                    }, token), ct: token).WaitAsync(token);
+            }
             catch (Exception) { return; }
+            if (token.IsCancellationRequested) return;
             for (var i = 0; i < rows.Count; i++)
                 if (states[i] is bool b) rows[i].ApplyDetected(b);
         }
