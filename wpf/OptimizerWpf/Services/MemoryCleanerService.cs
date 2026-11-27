@@ -4,11 +4,7 @@ using System.Threading.Tasks;
 
 namespace OptimizerWpf.Services
 {
-    // Απελευθέρωση RAM με τους ίδιους μηχανισμούς των Windows που χρησιμοποιεί το RAMMap της Microsoft (Sysinternals):
-    // "Empty Working Sets" (μόνο διεργασίες παρασκηνίου) + "Empty Modified Page List" + "Empty Standby List".
-    // Καλούνται απευθείας από το ίδιο το λειτουργικό (NtSetSystemInformation / SystemMemoryListInformation) - ΔΕΝ κατεβάζεται
-    // ούτε εκτελείται εξωτερικό αρχείο. Απαιτεί δικαιώματα διαχειριστή (SeProfileSingleProcessPrivilege)· χωρίς αυτά γίνεται
-    // μόνο το κλάδεμα των working sets. Τα Windows ξαναγεμίζουν την cache κατά τη χρήση - δεν χάνεται κανένα δεδομένο.
+    // Conservative memory maintenance: pressure-gated, no global modified/standby-list purge.
     public static class MemoryCleanerService
     {
         public readonly record struct MemoryStats(long TotalBytes, long AvailableBytes, long FreeBytes, long StandbyBytes, long ModifiedBytes)
@@ -20,12 +16,11 @@ namespace OptimizerWpf.Services
         public sealed record MemoryCleanResult(MemoryStats Before, MemoryStats After, int TrimmedProcesses, bool ListsPurged)
         {
             // "Ελεύθερη" = μνήμη που δεν χρησιμοποιείται ούτε για cache (Zero+Free list) - αυτή είναι που αυξάνει πραγματικά.
-            public double FreedGb => Math.Max(0, (After.FreeBytes - Before.FreeBytes) / 1073741824.0);
+            public double FreedGb => Math.Max(0, (After.AvailableBytes - Before.AvailableBytes) / 1073741824.0);
         }
 
         private const int SystemMemoryListInformation = 80;
-        private const int MemoryFlushModifiedList = 3;
-        private const int MemoryPurgeStandbyList = 4;
+        private static readonly System.Threading.SemaphoreSlim CleanGate = new(1, 1);
 
         [StructLayout(LayoutKind.Sequential)]
         private struct SystemMemoryList
@@ -43,19 +38,10 @@ namespace OptimizerWpf.Services
             public ulong TotalPhys, AvailPhys, TotalPageFile, AvailPageFile, TotalVirtual, AvailVirtual, AvailExtendedVirtual;
         }
 
-        [StructLayout(LayoutKind.Sequential, Pack = 1)]
-        private struct TokenPrivileges { public int Count; public long Luid; public int Attributes; }
-
         [DllImport("kernel32.dll", SetLastError = true)] private static extern bool GlobalMemoryStatusEx(ref MemoryStatusEx s);
         [DllImport("ntdll.dll")] private static extern int NtQuerySystemInformation(int cls, ref SystemMemoryList info, int length, out int returned);
-        [DllImport("ntdll.dll")] private static extern int NtSetSystemInformation(int cls, ref int info, int length);
-        [DllImport("advapi32.dll", SetLastError = true)] private static extern bool OpenProcessToken(IntPtr process, uint access, out IntPtr token);
-        [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)] private static extern bool LookupPrivilegeValue(string? system, string name, out long luid);
-        [DllImport("advapi32.dll", SetLastError = true)] private static extern bool AdjustTokenPrivileges(IntPtr token, bool disableAll, ref TokenPrivileges p, int len, IntPtr prev, IntPtr ret);
-        [DllImport("kernel32.dll")] private static extern IntPtr GetCurrentProcess();
-        [DllImport("kernel32.dll")] private static extern bool CloseHandle(IntPtr h);
 
-        private const int PageSize = 4096;
+        private static int PageSize => Environment.SystemPageSize;
 
         public static MemoryStats Snapshot()
         {
@@ -76,39 +62,38 @@ namespace OptimizerWpf.Services
             return new MemoryStats((long)ms.TotalPhys, (long)ms.AvailPhys, free, standby, modified);
         }
 
-        private static bool EnableProfilePrivilege()
-        {
-            if (!OpenProcessToken(GetCurrentProcess(), 0x20 | 0x8, out var token)) return false; // ADJUST_PRIVILEGES | QUERY
-            try
-            {
-                if (!LookupPrivilegeValue(null, "SeProfileSingleProcessPrivilege", out var luid)) return false;
-                var tp = new TokenPrivileges { Count = 1, Luid = luid, Attributes = 2 };
-                return AdjustTokenPrivileges(token, false, ref tp, 0, IntPtr.Zero, IntPtr.Zero) && Marshal.GetLastWin32Error() == 0;
-            }
-            finally { CloseHandle(token); }
-        }
+        internal static bool NeedsMaintenance(MemoryStats stats) =>
+            stats.TotalBytes > 0 && stats.AvailableBytes >= 0 &&
+            stats.AvailableBytes < Math.Max(512L * 1024 * 1024, stats.TotalBytes / 10);
 
-        // Κείμενο αποτελέσματος με την ΠΡΑΓΜΑΤΙΚΗ μέτρηση ελεύθερης μνήμης πριν/μετά (κοινό για Gaming Mode, Boost, Ρυθμίσεις).
         public static string Describe(MemoryCleanResult r)
         {
-            var text = string.Format(LanguageService.T("Opt_FreeRamResult"), r.Before.FreeGb.ToString("0.0"), r.After.FreeGb.ToString("0.0"));
-            return r.ListsPurged ? text : text + LanguageService.T("Opt_FreeRamTrimOnly");
+            var greek = LanguageService.Current == "el";
+            var prefix = greek ? "Διαθέσιμη RAM" : "Available RAM";
+            if (r.Before.TotalBytes <= 0 || r.After.TotalBytes <= 0)
+                return greek ? "Η μέτρηση RAM δεν είναι διαθέσιμη." : "RAM measurement unavailable.";
+            var message = $"{prefix}: {r.Before.AvailableGb:0.0} → {r.After.AvailableGb:0.0} GB";
+            if (!NeedsMaintenance(r.Before))
+                return message + (greek ? " · Δεν απαιτείται επέμβαση." : " · No intervention needed.");
+            return message + (greek ? $" · Διεργασίες: {r.TrimmedProcesses}" : $" · Processes: {r.TrimmedProcesses}");
         }
 
-        public static Task<MemoryCleanResult> CleanAsync() => Task.Run(async () =>
+        public static async Task<MemoryCleanResult> CleanAsync()
         {
-            var before = Snapshot();
-            var (trimmed, _) = await SystemService.FreeBackgroundMemoryAsync();
-            var purged = false;
-            if (AdminService.IsElevated && EnableProfilePrivilege())
+            await CleanGate.WaitAsync().ConfigureAwait(false);
+            try
             {
-                var flush = MemoryFlushModifiedList;
-                var purge = MemoryPurgeStandbyList;
-                var ok1 = NtSetSystemInformation(SystemMemoryListInformation, ref flush, sizeof(int)) == 0;
-                var ok2 = NtSetSystemInformation(SystemMemoryListInformation, ref purge, sizeof(int)) == 0;
-                purged = ok1 || ok2;
+                return await Task.Run(async () =>
+                {
+                    var before = Snapshot();
+                    if (!NeedsMaintenance(before)) return new MemoryCleanResult(before, before, 0, false);
+                    // Do not flush modified pages or empty the standby cache: this can trigger
+                    // needless disk writes and costly page faults without increasing useful memory.
+                    var (trimmed, _) = await SystemService.FreeBackgroundMemoryAsync();
+                    return new MemoryCleanResult(before, Snapshot(), trimmed, false);
+                }).ConfigureAwait(false);
             }
-            return new MemoryCleanResult(before, Snapshot(), trimmed, purged);
-        });
+            finally { CleanGate.Release(); }
+        }
     }
 }
