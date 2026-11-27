@@ -138,7 +138,7 @@
                         <views:HeaderGlyphIcon Grid.Column="0" Kind="Lock" Width="16" Height="16" Margin="0,0,8,0" VerticalAlignment="Center"/>
                         <TextBlock Grid.Column="1" Text="{tr:Tr FolderLock_Title}" Style="{StaticResource CardTitleStyle}"/>
                     </Grid>
-                    <TextBlock Text="{tr:Tr FolderLock_Desc}" Style="{StaticResource SubTextStyle}" TextWrapping="Wrap" Margin="0,0,0,12"/>
+                    <TextBlock x:Name="TxtVaultSafetyDescription" Text="{tr:Tr FolderLock_Desc}" Style="{StaticResource SubTextStyle}" TextWrapping="Wrap" Margin="0,0,0,12"/>
 
                     <TextBlock Text="{tr:Tr FolderLock_LockSection}" FontWeight="SemiBold" Margin="0,0,0,6" Foreground="{DynamicResource TextBrush}"/>
                     <Grid Margin="0,0,0,6">
