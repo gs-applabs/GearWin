@@ -472,13 +472,13 @@ namespace OptimizerWpf.Views
             target.Text = temp.HasValue ? $"{temp}°C" : "—";
             if (temp.HasValue)
             {
-                target.ToolTip = device == "Disk" ? "Windows Storage API" : "Hardware sensor / vendor API";
+                target.ToolTip = device == "Disk" ? "Windows Storage / SMART / WMI" : "Hardware sensor / vendor API";
                 return;
             }
             target.ToolTip = device == "Disk"
-                ? (greek ? "Ο επιλεγμένος δίσκος δεν επέστρεψε θερμοκρασία μέσω των Windows." : "Selected disk did not report a temperature through Windows.")
+                ? (greek ? "Ο επιλεγμένος δίσκος δεν επέστρεψε θερμοκρασία από τις διαθέσιμες πηγές." : "Selected disk did not report a temperature through the available sources.")
                 : (greek ? "Μη διαθέσιμη πραγματική μέτρηση. " : "No available sensor reading. ") +
-                    (pawn == null ? (greek ? "Ελέγξτε την επίσημη εγκατάσταση PawnIO (pawnio.eu)." : "Check the official PawnIO installation (pawnio.eu).")
+                    (pawn == null ? (greek ? "Ελέγξτε την επίσημη εγκατάσταση PawnIO (pawnio.eu) και επανεκκινήστε το GearWin." : "Check the official PawnIO installation (pawnio.eu), then restart GearWin.")
                     : "PawnIO " + pawn + (greek ? " εντοπίστηκε· ο αισθητήρας ή η πρόσβαση μπορεί να μην υποστηρίζεται." : " detected; sensor/access may be unsupported."));
         }
 
