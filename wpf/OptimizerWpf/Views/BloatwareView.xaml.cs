@@ -99,8 +99,8 @@ namespace OptimizerWpf.Views
         // αν ΤΟ ΕΝΑ ΑΠΟ ΤΑ ΔΥΟ το επιβεβαιώνει, πιο ανθεκτικό από το να βασίζεται μόνο στο winget.
         private async System.Threading.Tasks.Task CheckRecommendedInstalledAsync()
         {
-            // Λήψη logos ΠΑΝΤΑ (φθηνό, ήδη cached τοπικά μέσω LogoCacheService - βλ. σχόλιο εκεί).
-            _ = System.Threading.Tasks.Task.WhenAll(_recommended.Select(async row => row.Icon = await LogoCacheService.GetLogoAsync(row.App.WingetId)));
+            // One authoritative embedded icon per package ID, shared in memory across views.
+            await System.Threading.Tasks.Task.WhenAll(_recommended.Select(async row => row.Icon = await LogoCacheService.GetLogoAsync(row.App.WingetId)));
 
             if (s_recommendedScanned)
             {
@@ -117,7 +117,7 @@ namespace OptimizerWpf.Views
                 var installedViaWinget = await BloatwareService.IsWingetAppInstalledAsync(row.App.WingetId);
                 row.IsInstalled = installedViaWinget || iconPath != null;
                 s_recommendedInstalledCache[row.App.WingetId] = row.IsInstalled;
-                if (row.Icon == null && iconPath != null) row.Icon = AppIconService.GetIconForFile(iconPath);
+                // Installation detection must not assign or replace package artwork.
             }
             s_recommendedScanned = true;
             TxtRecommendedStatus.Text = LanguageService.T("Bloatware_ReadyDot");
@@ -387,6 +387,7 @@ namespace OptimizerWpf.Views
             set { _isInstalled = value; PropertyChanged?.Invoke(this, new(nameof(IsInstalled))); PropertyChanged?.Invoke(this, new(nameof(ButtonLabel))); }
         }
         public string ButtonLabel => IsInstalled ? LanguageService.T("Bloatware_Uninstall") : LanguageService.T("Bloatware_Install");
+        public Visibility IconFallbackVisibility => _icon == null ? Visibility.Visible : Visibility.Collapsed;
 
         // Ρητό αίτημα χρήστη: "βάλε τα logos των εφαρμογών" - πραγματικό εικονίδιο ΜΟΝΟ αν η εφαρμογή
         // είναι ήδη εγκατεστημένη (βλ. AppIconService.FindInstalledIconPath) - καμία τοπική πηγή
@@ -395,7 +396,7 @@ namespace OptimizerWpf.Views
         public System.Windows.Media.ImageSource? Icon
         {
             get => _icon;
-            set { _icon = value; PropertyChanged?.Invoke(this, new(nameof(Icon))); }
+            set { _icon = value; PropertyChanged?.Invoke(this, new(nameof(Icon))); PropertyChanged?.Invoke(this, new(nameof(IconFallbackVisibility))); }
         }
 
         public RecommendedAppRow(RecommendedApp app) => App = app;
