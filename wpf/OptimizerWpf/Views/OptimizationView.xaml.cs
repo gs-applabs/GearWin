@@ -178,9 +178,9 @@ namespace OptimizerWpf.Views
         private void ToggleAutoGamingMode_Click(object sender, RoutedEventArgs e)
         {
             var enabled = ToggleAutoGamingMode.IsChecked == true;
-            if (enabled) AutoGamingModeService.Start(); else AutoGamingModeService.Stop();
             AppSettingsService.Current.AutoGamingModeEnabled = enabled;
             AppSettingsService.Save();
+            CoreFeatureLifecycle.Apply();
         }
 
         // ΝΕΟ - roadmap "Προγραμματισμένη συντήρηση".
