@@ -126,7 +126,7 @@ namespace OptimizerWpf.Views
             // Services/HealthScoreDailyHistoryService.cs (ΞΕΧΩΡΙΣΤΟ από το ήδη υπάρχον, in-memory
             // HealthScoreHistoryService που τροφοδοτεί το sparkline της Αρχικής), ίδιο μοτίβο με το
             // Disk Trend (Health tab).
-            if (_scoreResult != null) HealthScoreDailyHistoryService.RecordIfNeeded(_scoreResult.Score, _scoreResult.Issues?.Count ?? 0);
+            if (_scoreResult?.IsComplete == true) HealthScoreDailyHistoryService.RecordIfNeeded(_scoreResult.Score, _scoreResult.Issues?.Count ?? 0);
             _memory = await Task.Run(MemoryCleanerService.Snapshot);
             if (_cancelled) return;
             _results.Clear();
@@ -180,13 +180,13 @@ namespace OptimizerWpf.Views
             TxtResultHeadline.Text = LanguageService.T(anyIssue ? "HealthCheck_HeadlineIssues" : "HealthCheck_HeadlineGood");
 
             var score = _scoreResult?.Score ?? 0;
-            TxtScoreBadge.Text = _scoreResult == null ? "—" : score.ToString();
+            TxtScoreBadge.Text = _scoreResult?.DisplayScore ?? "—";
             ScoreBadge.Background = new SolidColorBrush(score >= 80 ? Color.FromRgb(0x4C, 0xAF, 0x50) : score >= 50 ? Color.FromRgb(0xFF, 0x98, 0x00) : Color.FromRgb(0xE5, 0x39, 0x35));
-            TxtScoreLine.Text = _scoreResult == null ? (greek ? "Βαθμολογία μη διαθέσιμη" : "Score unavailable") : $"{LanguageService.T("HealthCheck_ScorePrefix")}{score}/100";
-            if (_scoreResult == null) TxtResultHeadline.Text = greek ? "Ο έλεγχος δεν ολοκληρώθηκε πλήρως" : "Check incomplete";
+            TxtScoreLine.Text = _scoreResult?.IsComplete != true ? (greek ? "Βαθμολογία μη διαθέσιμη" : "Score unavailable") : $"{LanguageService.T("HealthCheck_ScorePrefix")}{score}/100";
+            if (_scoreResult?.IsComplete != true) TxtResultHeadline.Text = greek ? "Ο έλεγχος δεν ολοκληρώθηκε πλήρως" : "Check incomplete";
 
             _results.Add(new ResultCardVm("Space", LanguageService.T("HealthCheck_CardSpaceTitlePrefix") + QuickCleanService.FormatSize(_spaceFreeableBytes),
-                LanguageService.T("HealthCheck_CardSpaceDesc"), _spaceFreeableBytes > 1024 * 1024, canSelect: true, isSelected: _spaceFreeableBytes > 1024 * 1024,
+                LanguageService.T("HealthCheck_CardSpaceDesc"), _spaceFreeableBytes > 1024 * 1024, canSelect: _spaceFreeableBytes > 0, isSelected: _spaceFreeableBytes > 1024 * 1024,
                 actionLabel: null));
 
             _results.Add(new ResultCardVm("Browser", (greek ? "Cache περιηγητών: " : "Browser cache: ") + QuickCleanService.FormatSize(_browserCacheBytes),
@@ -239,7 +239,7 @@ namespace OptimizerWpf.Views
             try
             {
                 var sb = new System.Text.StringBuilder();
-                sb.AppendLine($"{LanguageService.T("HealthCheck_ScorePrefix")}{(_scoreResult == null ? "—" : _scoreResult.Score + "/100")}");
+                sb.AppendLine($"{LanguageService.T("HealthCheck_ScorePrefix")}{(_scoreResult?.IsComplete != true ? "—" : _scoreResult.Score + "/100")}");
                 sb.AppendLine();
                 foreach (var card in _results)
                 {
