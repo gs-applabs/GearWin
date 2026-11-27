@@ -29,6 +29,18 @@ namespace OptimizerWpf.Services
             return $@"{TaskFolder}\{safe}";
         }
 
+        internal static string BuildScopedTaskName(string startupItemName, string userSid)
+        {
+            var bytes = System.Text.Encoding.UTF8.GetBytes(userSid + "\n" + startupItemName.ToUpperInvariant());
+            return TaskFolder + "\\User-" + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes));
+        }
+
+        private static string CurrentTaskName(string name)
+        {
+            using var identity = System.Security.Principal.WindowsIdentity.GetCurrent();
+            return BuildScopedTaskName(name, identity.User?.Value ?? throw new InvalidOperationException("Missing user identity."));
+        }
+
         public static IReadOnlyDictionary<string, int> Delays => AppSettingsService.Current.DelayedStartupSeconds;
 
         public static async Task<bool> ApplyDelayAsync(StartupItem item, int seconds)
@@ -37,7 +49,7 @@ namespace OptimizerWpf.Services
             // HKLM Run executes for all users; a single-user delayed task is not equivalent.
             if (item.Location != "HKCU" || item.IsDisabled || Delays.ContainsKey(item.Name)) return false;
             if (seconds < 5 || seconds > 3600) return false;
-            var task = BuildTaskName(item.Name);
+            var task = CurrentTaskName(item.Name);
             if (await TaskSchedulerService.ExistsAsync(task)) return false;
             var (exe, args) = TaskSchedulerService.SplitCommand(item.Command);
             if (!System.IO.Path.IsPathFullyQualified(exe) || !System.IO.File.Exists(exe) ||
@@ -45,7 +57,7 @@ namespace OptimizerWpf.Services
                 !MaintenancePaths.IsOrdinaryLocalPath(exe)) return false;
             var xml = TaskSchedulerService.BuildLogonTaskXml(exe, args, Math.Clamp(seconds, 5, 3600), TaskSchedulerService.CurrentUserId(),
                 "GearWin - delayed startup: " + item.Name, elevated: false);
-            if (!await TaskSchedulerService.CreateAsync(task, xml)) return false;
+            if (!await TaskSchedulerService.CreateAsync(task, xml, replace: false)) return false;
             // Απενεργοποίηση της αρχικής καταχώρησης ΜΟΝΟ αφού η εργασία δημιουργήθηκε (αλλιώς το πρόγραμμα χάνεται).
             if (!item.IsDisabled && !SystemService.SetStartupItemEnabled(item, false))
             {
@@ -61,9 +73,12 @@ namespace OptimizerWpf.Services
         {
             using var lease = await GearWinCore.EnterAsync(CoreWork.StartupChange);
             if (item.Location != "HKCU" || !item.IsDisabled || !Delays.ContainsKey(item.Name)) return false;
+            var task = CurrentTaskName(item.Name);
+            // Old task names are ambiguous and may represent elevated tasks; never guess ownership.
+            if (!await TaskSchedulerService.ExistsAsync(task)) return false;
             // Restore the original first, so a failed restoration cannot lose the only startup path.
             if (!SystemService.SetStartupItemEnabled(item, true)) return false;
-            var ok = await TaskSchedulerService.DeleteAsync(BuildTaskName(item.Name));
+            var ok = await TaskSchedulerService.DeleteAsync(task);
             if (!ok) { SystemService.SetStartupItemEnabled(item, false); return false; }
             if (ok)
             {
