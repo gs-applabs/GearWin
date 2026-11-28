@@ -56,6 +56,7 @@ namespace OptimizerWpf.Views
                     row.ImpactColor = new SolidColorBrush(seconds < 2 ? Color.FromRgb(0x4C, 0xAF, 0x50)
                         : seconds < 5 ? Color.FromRgb(0xFF, 0x98, 0x00)
                         : Color.FromRgb(0xE5, 0x39, 0x35));
+                    row.ImpactColor.Freeze(); // immutable across dispatcher boundaries
                 }
                 _startup.Add(row);
             }

@@ -641,3 +641,12 @@ S154: drive letter alone could change while confirmation/queue waits; capture vo
 ## P0.01 — confirmed intermediate Windows CI
 
 Run 46070758350 job 140746928527, head e7ebec8e7bf4addc90af1e229bea88b72f37d240: 674 desktop + 42 migration = 716 passed; installer and measurements successful. 282 cumulative authored .NET fixtures included. Normal CPU 5.066%, max WS 259.61 MiB, max private 147.31 MiB, write transfer 2476 bytes, handles 946→1283; tray CPU 0.052%, WS 132.02 MiB, private 47.29 MiB, write transfer 0 bytes, handles 713→852. Short process samples, no physical SSD or leak-free assertion. Later changes not verified by this run.
+
+### P0.R — integration batch A (2026-11-28)
+
+- RQ02: restored uniquely keyed opt-in Opsis.UI 6 Midnight resources, registration, adoption doc and compile workflow. Checked 19 distinct keys all prefixed Opsis; no existing style replaced. Actual screen-by-screen visual adoption still P3, compile pending.
+- RQ06: rechecked candidate MaintenancePaths.IsWithin: root separator fix already present, so retained candidate implementation (absolute paths, ancestor reparse checks, core lease) and ported missing root overlap regression test. Source covered, CI pending.
+- RQ08: ported immutable Startup Impact brush fix only, preserving candidate async startup changes; Help/history and export reconciliation remain pending.
+- RQ09: restored Inno Setup dynamic dark mode setting; upgrade/changed-file and dark-mode visual checks pending.
+- CI: confirmed run 46071174933 (head cc80720c) job 140749655057, 706 desktop + 42 migration = 748 passed; installer and short measurements success. 314 authored .NET fixtures covered by that SHA; latest cumulative recovery/backup changes not covered. Normal CPU 4.284%, WS 314.54 MiB, private 203.57 MiB, writes 635 bytes, handles 985→1093; tray CPU .077%, WS 129.97 MiB, private 46.38 MiB, writes 0, handles 532→667. Normal private RAM worsened in this short run; no controlled performance or physical SSD conclusion.
+- Remaining RQ01/RQ03–05/RQ07/RQ10–24 tracked below/above; no bulk reset or master merge. SDK stays 10 until coordinated RQ01 migration. 2 newly authored .NET cases (transfer root and resource packaged), 330 cumulative authored. No merge or release.

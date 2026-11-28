@@ -17,7 +17,7 @@ Audit snapshot: candidate `ebc2ec2e8788eddcb0f94af2a08e60217a1cb8c1` vs master `
 | RQ03 | Partclone adapter, partition-aware copy/verify, fixture and disposable loop-device tests, GUI export/instructions; absent candidate adapter. Preserve latest exclusive raw-device safety; never claim full boot recovery. | P0.R / P2.05 |
 | RQ04 | Restore recovery-vm and linux-distros workflows, adapt branch triggers/SDK; Debian 12/13, Fedora, Arch, openSUSE, Alpine containers and Windows 2022/2025 coverage. Containers test userland, not full distro boot. | P0.R / P4 |
 | RQ05 | Catalog driver Microsoft signer check and DriverSignatureTests absent candidate (master 60d4843); reconcile with candidate download/privilege safeguards, verify actual trust chain and identity. | P0.R BLOCKING |
-| RQ06 | TransferPreflight drive-root overlap fix (master 5ff529b) absent candidate; verify ancestor/descendant, junction, device identity cases. | P0.R BLOCKING |
+| RQ06 | TransferPreflight drive-root overlap fix (master 5ff529b) absent candidate; verify ancestor/descendant, junction, device identity cases. | P0.R SOURCE COVERED / regression pending |
 | RQ07 | Backup before/after catalog new-version check and BackupCatalogTests present master, absent candidate. Combine with candidate volume GUID safeguards, localized/empty/error catalog tests; real restore separately. | P0.R BLOCKING |
 | RQ08 | Startup-impact brush Freeze() fix (master 10315a7), TabLayout/recovery export and Help/history language diffs need reconciliation. | P0.R / P3 |
 | RQ09 | Inno Setup dynamic dark mode (master c8dea01; candidate WizardStyle=modern), updater upgrade/self-update/uninstall, changed-files-only behavior and preservation of settings. | P0.R / P5 |
@@ -38,6 +38,16 @@ Audit snapshot: candidate `ebc2ec2e8788eddcb0f94af2a08e60217a1cb8c1` vs master `
 | RQ24 | Historical build script missing scripts/ai_build_agent.py / automation frequency from October cross-project audit: verify whether still present and applicable before changing; not confirmed on current candidate. | P1 verify |
 
 Latest confirmed Windows CI at audit: run 46070758350, 716 passed (674 desktop + 42 migration), installer and short measurements success. 328 authored .NET fixtures and 9 additional Python fixtures in subsequent cumulative record; no certification of newer candidate by that run. Use the cumulative pass log for exact test evidence, not the older numbers below. Audit based on accessible prior project context and repository history, not a guarantee of access to every past conversation. This audit changes documentation only; implementation/sync/verification are pending. P0.R is now first; new feature proposals deferred until existing release scope is integrated and G0 stable.
+
+
+### P0.R — integration batch A (2026-11-28)
+
+- RQ02: restored uniquely keyed opt-in Opsis.UI 6 Midnight resources, registration, adoption doc and compile workflow. Checked 19 distinct keys all prefixed Opsis; no existing style replaced. Actual screen-by-screen visual adoption still P3, compile pending.
+- RQ06: rechecked candidate MaintenancePaths.IsWithin: root separator fix already present, so retained candidate implementation (absolute paths, ancestor reparse checks, core lease) and ported missing root overlap regression test. Source covered, CI pending.
+- RQ08: ported immutable Startup Impact brush fix only, preserving candidate async startup changes; Help/history and export reconciliation remain pending.
+- RQ09: restored Inno Setup dynamic dark mode setting; upgrade/changed-file and dark-mode visual checks pending.
+- CI: confirmed run 46071174933 (head cc80720c) job 140749655057, 706 desktop + 42 migration = 748 passed; installer and short measurements success. 314 authored .NET fixtures covered by that SHA; latest cumulative recovery/backup changes not covered. Normal CPU 4.284%, WS 314.54 MiB, private 203.57 MiB, writes 635 bytes, handles 985→1093; tray CPU .077%, WS 129.97 MiB, private 46.38 MiB, writes 0, handles 532→667. Normal private RAM worsened in this short run; no controlled performance or physical SSD conclusion.
+- Remaining RQ01/RQ03–05/RQ07/RQ10–24 tracked below/above; no bulk reset or master merge. SDK stays 10 until coordinated RQ01 migration. 2 newly authored .NET cases (transfer root and resource packaged), 330 cumulative authored. No merge or release.
 
 ### Αποδεδειγμένη κατάσταση
 
