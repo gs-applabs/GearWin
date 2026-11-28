@@ -61,7 +61,7 @@ Latest confirmed Windows CI at audit: run 46070758350, 716 passed (674 desktop +
 |---|---|
 | RQ01 | PORTED — .NET 11 source/SDK/CI/launchers aligned; build and tests pending |
 | RQ02 | PORTED — opt-in resources, compile/visual gates pending |
-| RQ03–04 | OPEN — Partclone and loop/distro workflows reconciliation |
+| RQ03–04 | PORTED — guarded Partclone source, kit and recovery/distro CI; native engine tests pending |
 | RQ05 | PORTED — signer guard; real package trust/install test pending |
 | RQ06 | SOURCE COVERED — root logic already fixed; regression test restored |
 | RQ07 | PORTED — catalog ID check with volume identity; native backup/restore pending |
@@ -82,6 +82,11 @@ RQ01: coordinated target-framework port from master 744c2e6/0e5853c, source comm
 CI evidence correction: list all GitHub Actions events, not just pull_request results. Push run 46073432667 at d813e9391e2303b7575850a16204624f066a67ac: 719 desktop + 42 migration = 761 passed; 14 Python fixtures passed (source-inventory); installer and short measurements success. Normal CPU 1.263%, WS 276.90 MiB, private 160.68 MiB, I/O write transfer 2476 B, handles 947→1155; tray 0.039%, WS 132.14 MiB, private 47.32 MiB, write transfer 0 B, handles 713→862. Short measurements not a controlled regression comparison or physical SSD result. Also Opsis UI compile run 46100694066 at ec0beed8 passed (.NET 10). Push run 46071167202 at cc80720c had an intermittent GracefulExitRefusesHeavyWorkThenClosesAdmission timeout (line 99, 2 s); other builds passed. Investigate scheduler/queue timing, do not erase or merely label it resolved. Parent 08806a95 run 46100747389 was pending and 46100694073 was in progress at inspection; query again before adding new work. 348 authored .NET cases recorded (20 beyond 328 from A–B), 9 new Python cases within 14 total. New SDK commit adds no test fixtures. Counts of authored fixtures and test-run totals are separate; newer changes not validated by older results.
 
 RQ03/RQ04 deliberately not blindly ported: master Partclone adapter imports sysfs_safety and real loop harness calls get_geometry/clone(exclusive=True), interfaces not present in the candidate raw cloner. Next integrate explicit partition identity/geometry checks, secure destination and descriptor semantics, then adapt loop tests and matrix. Never add unsupported backup/restore success claims. See START_HERE.md for exact next actions, user constraints and evidence.
+
+
+## P0.R — recovery CI integration (2026-11-28)
+
+RQ04: authored Linux loop-device harness with four tests (actual geometry/copy and trailing bytes, mismatched sectors/capacity, mounted target refusal, Partclone held-source fd create/check/CI-only restore/tamper). Guards require root + GITHUB_ACTIONS, verify each freshly allocated loop backing file before any mutation; production rejects loops. Two Ubuntu runner versions plus Windows 2022/2025 tests; six distro containers (Debian 12/13, Fedora, Arch, openSUSE, Alpine) and migration CLI, shared kernel not independent VM provider. Required Partclone missing is a failure, not skip. Fixed post-image plan to omit initial conservative space check before publish (all identity checks remain); lsblk fixed system dirs for usrmerge variants. 32 regular/mock Python cases plus four loop methods authored; not yet certified. Container and real loop checks not executed locally. No UEFI boot or physical SSD evidence. RQ03 is source implemented (experimental), RQ04 CI configured, not validated.
 
 ### Αποδεδειγμένη κατάσταση
 

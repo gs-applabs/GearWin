@@ -1,0 +1,21 @@
+name: linux-distros
+on:
+  workflow_dispatch:
+  push:
+    branches: [release/7.1.0-ultra]
+    paths: ['tools/recovery/**', 'tools/ci/**', 'migration/**', '.github/workflows/linux-distros.yml']
+permissions:
+  contents: read
+jobs:
+  distro:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ['debian:12', 'debian:13', 'fedora:42', 'archlinux:latest', 'opensuse/tumbleweed:latest', 'alpine:3.21']
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test distro userland (shared disposable runner kernel)
+        run: |
+          docker run --rm --privileged -e GITHUB_ACTIONS=true -v /dev:/dev -v "$PWD":/w ${{ matrix.image }} sh /w/tools/ci/distro-test.sh

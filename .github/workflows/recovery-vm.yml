@@ -1,0 +1,40 @@
+name: recovery-vm
+on:
+  workflow_dispatch:
+  push:
+    branches: [release/7.1.0-ultra]
+    paths: ['tools/recovery/**', 'migration/**', '.github/workflows/recovery-vm.yml']
+permissions:
+  contents: read
+jobs:
+  linux:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y partclone e2fsprogs util-linux
+      - run: python3 -m unittest discover -s tools/recovery/tests -v
+      - name: Disposable loop devices only
+        run: sudo env GITHUB_ACTIONS=true python3 tools/recovery/ci_loop_device_test.py
+  windows:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 11.0.x
+      - shell: pwsh
+        run: |
+          dotnet test wpf/OptimizerWpf.Tests -c Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet test migration/GearWin.Migration.Tests -c Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

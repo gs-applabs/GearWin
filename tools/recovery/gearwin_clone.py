@@ -52,8 +52,11 @@ def parse_disks(data):
     return result
 
 def list_disks():
+    tool = next((p for p in ("/usr/bin/lsblk", "/bin/lsblk", "/usr/sbin/lsblk", "/sbin/lsblk") if os.path.isfile(p)), None)
+    if not tool:
+        raise ValueError("lsblk unavailable in system directories.")
     result = subprocess.run(
-        ["/usr/bin/lsblk", "-J", "-b", "-o", "NAME,PATH,TYPE,SIZE,SERIAL,MODEL,RO,MOUNTPOINTS,FSTYPE,MAJ:MIN,WWN,LOG-SEC"],
+        [tool, "-J", "-b", "-o", "NAME,PATH,TYPE,SIZE,SERIAL,MODEL,RO,MOUNTPOINTS,FSTYPE,MAJ:MIN,WWN,LOG-SEC"],
         check=True, capture_output=True, text=True, timeout=30)
     return parse_disks(json.loads(result.stdout))
 

@@ -158,7 +158,7 @@ def destination(data, source_disk, directory):
     return target, disk
 
 
-def plan(device, output):
+def plan(device, output, require_capacity=True):
     if not sys.platform.startswith("linux"):
         raise ValueError("Linux only.")
     image = output_parent(output)
@@ -168,7 +168,7 @@ def plan(device, output):
     free = os.statvfs(image.parent)
     # Conservative admission: do not fill an existing backup volume based on
     # an unverified estimate of filesystem used blocks.
-    if free.f_bavail * free.f_frsize < int(part["size"]) + 64 * 1024 * 1024:
+    if require_capacity and free.f_bavail * free.f_frsize < int(part["size"]) + 64 * 1024 * 1024:
         raise ValueError("Insufficient conservative free-space budget (partition capacity plus 64 MiB).")
     return part, source_disk, target, target_disk, tool
 
@@ -299,7 +299,7 @@ def backup(device, output):
                     json.dump(manifest, out, indent=2)
                     out.flush()
                     os.fsync(out.fileno())
-                if plan_identity(plan(device, output)) != plan_identity(original) or not os.path.samestat(os.fstat(dir_fd), image.parent.stat()):
+                if plan_identity(plan(device, output, require_capacity=False)) != plan_identity(original) or not os.path.samestat(os.fstat(dir_fd), image.parent.stat()):
                     raise ValueError("Source or output identity changed before publication.")
                 # No replace: image first, manifest last. If manifest publication
                 # fails, keep incomplete image for explicit review, never unlink
