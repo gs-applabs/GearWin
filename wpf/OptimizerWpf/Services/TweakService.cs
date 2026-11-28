@@ -92,11 +92,11 @@ namespace OptimizerWpf.Services
             list.Add(ToSimple(m[0])); // Storage Sense
             list.Add(ToSimple(m[1])); // Fast Startup
             list.Add(new SimpleTweak(LanguageService.T("Tweak_ClassicMenuLabel"), LanguageService.T("Tweak_ClassicMenuDesc"), EnableClassicContextMenu, DisableClassicContextMenu,
-                Id: "ClassicMenu", DetectState: () => { using var k = Registry.CurrentUser.OpenSubKey(@"Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}"); return k != null; }));
+                Id: "ClassicMenu", DetectState: () => GroupedRegistryTweaks.IsOn(GroupedRegistryTweaks.ClassicMenu)));
             list.Add(ToSimple(m[2])); // File extensions
             list.Add(ToSimple(m[3])); // Delivery Optimization
             list.Add(new SimpleTweak(LanguageService.T("Tweak_MouseAccelLabel"), LanguageService.T("Tweak_MouseAccelDesc"), MouseAccelOff, MouseAccelOn,
-                Id: "MouseAccel", DetectState: () => { using var k = Registry.CurrentUser.OpenSubKey(@"Control Panel\Mouse"); return k?.GetValue("MouseSpeed")?.ToString() == "0"; }));
+                Id: "MouseAccel", DetectState: () => GroupedRegistryTweaks.IsOn(GroupedRegistryTweaks.Mouse)));
             list.Add(new SimpleTweak(LanguageService.T("Tweak_HibernateLabel"), "", HibernateOn, HibernateOff,
                 Id: "Hibernate", RequiresAdmin: true, DetectState: () => { using var k = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Control\Power"); return Convert.ToInt32(k?.GetValue("HibernateEnabled") ?? 0) == 1; }));
             list.Add(ToSimple(m[4])); // Remove Recommended
@@ -104,7 +104,7 @@ namespace OptimizerWpf.Services
             list.Add(ToSimple(m[6])); // Network throttling
             list.Add(ToSimple(m[7])); // System responsiveness
             list.Add(new SimpleTweak(LanguageService.T("Tweak_GameBarLabel"), LanguageService.T("Tweak_GameBarDesc"), DisableGameBar, EnableGameBar,
-                Id: "GameBar", DetectState: () => { using var k = Registry.CurrentUser.OpenSubKey(@"System\GameConfigStore"); return Convert.ToInt32(k?.GetValue("GameDVR_Enabled") ?? 1) == 0; }));
+                Id: "GameBar", RequiresAdmin: true, DetectState: () => GroupedRegistryTweaks.IsOn(GroupedRegistryTweaks.GameBar)));
             list.Add(ToSimple(m[8])); // Telemetry
             return list;
         }
@@ -145,19 +145,9 @@ namespace OptimizerWpf.Services
         public static IReadOnlyList<SimpleTweak> PerfTweaksSimple() =>
             PerfRegTweaks.Where(t => t.BackupKey != HagsBackupKey).Select(ToSimple).Concat(PerfPowercfgTweaks).ToList();
 
-        private static void MouseAccelOff()
-        {
-            RegSet(Registry.CurrentUser, @"Control Panel\Mouse", "MouseSpeed", "0", RegistryValueKind.String);
-            RegSet(Registry.CurrentUser, @"Control Panel\Mouse", "MouseThreshold1", "0", RegistryValueKind.String);
-            RegSet(Registry.CurrentUser, @"Control Panel\Mouse", "MouseThreshold2", "0", RegistryValueKind.String);
-        }
+        private static void MouseAccelOff() => GroupedRegistryTweaks.Change(GroupedRegistryTweaks.Mouse, "MouseAccel", false);
 
-        private static void MouseAccelOn()
-        {
-            RegSet(Registry.CurrentUser, @"Control Panel\Mouse", "MouseSpeed", "1", RegistryValueKind.String);
-            RegSet(Registry.CurrentUser, @"Control Panel\Mouse", "MouseThreshold1", "6", RegistryValueKind.String);
-            RegSet(Registry.CurrentUser, @"Control Panel\Mouse", "MouseThreshold2", "10", RegistryValueKind.String);
-        }
+        private static void MouseAccelOn() => GroupedRegistryTweaks.Change(GroupedRegistryTweaks.Mouse, "MouseAccel", true);
 
         public static void ApplyOn(RegTweak tweak) => TweakRegistryJournal.Apply(tweak);
 
@@ -165,20 +155,14 @@ namespace OptimizerWpf.Services
 
         private static RegistryKey OpenHive(RegistryHive hive) => hive == RegistryHive.LocalMachine ? Registry.LocalMachine : Registry.CurrentUser;
 
-        // ===== Κλασικό (Win10) Δεξί-Κλικ Μενού - key create/delete, ΟΧΙ value backup =====
+        // Classic context menu: restore only the original default value.
+        // Leave registry containers intact; do not kill Explorer across sessions.
+        // Sign out/in may be required for Windows to apply the change.
+        public static void EnableClassicContextMenu() =>
+            GroupedRegistryTweaks.Change(GroupedRegistryTweaks.ClassicMenu, "ClassicMenu", false);
 
-        public static void EnableClassicContextMenu()
-        {
-            using var key = Registry.CurrentUser.CreateSubKey(@"Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\InprocServer32", writable: true);
-            key?.SetValue("", "", RegistryValueKind.String);
-            RestartExplorer();
-        }
-
-        public static void DisableClassicContextMenu()
-        {
-            try { Registry.CurrentUser.DeleteSubKeyTree(@"Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}", throwOnMissingSubKey: false); } catch { }
-            RestartExplorer();
-        }
+        public static void DisableClassicContextMenu() =>
+            GroupedRegistryTweaks.Change(GroupedRegistryTweaks.ClassicMenu, "ClassicMenu", true);
 
         // ===== Αρχείο Αδρανοποίησης / Ultimate Performance =====
 
@@ -200,17 +184,11 @@ namespace OptimizerWpf.Services
 
         // ===== Απενεργοποίηση Game Bar / Game DVR (ξεχωριστό από Gaming Mode) =====
 
-        public static void DisableGameBar()
-        {
-            RegSet(Registry.CurrentUser, @"System\GameConfigStore", "GameDVR_Enabled", 0);
-            RegSet(Registry.LocalMachine, @"SOFTWARE\Policies\Microsoft\Windows\GameDVR", "AllowGameDVR", 0);
-        }
+        public static void DisableGameBar() =>
+            GroupedRegistryTweaks.Change(GroupedRegistryTweaks.GameBar, "GameBar", false);
 
-        public static void EnableGameBar()
-        {
-            RegSet(Registry.CurrentUser, @"System\GameConfigStore", "GameDVR_Enabled", 1);
-            try { Registry.LocalMachine.DeleteSubKeyTree(@"SOFTWARE\Policies\Microsoft\Windows\GameDVR", throwOnMissingSubKey: false); } catch { }
-        }
+        public static void EnableGameBar() =>
+            GroupedRegistryTweaks.Change(GroupedRegistryTweaks.GameBar, "GameBar", true);
 
         // ===== Οπτικά Εφέ - ΠΟΤΕ το undocumented UserPreferencesMask =====
 
@@ -285,98 +263,30 @@ namespace OptimizerWpf.Services
 
         // ===== Πλήρης επαναφορά (uninstall) =====
 
-        // ΝΕΟ - καλείται ΑΠΟΚΛΕΙΣΤΙΚΑ από τον installer κατά την απεγκατάσταση, μέσω
-        // "GearWin.exe --reset-tweaks" (βλ. App.xaml.cs, installer/OptimizerWpf.iss) -
-        // ρητό αίτημα χρήστη: "έλεγξε
-        // αν υπάρχει πρόβλεψη για... επαναφορά όλων των ρυθμίσεων των windows στα προεπιλεγμένα αν το
-        // θέλει ο χρήστης". ΕΠΑΝΑΦΕΡΕΙ ΜΟΝΟ ό,τι η εφαρμογή έχει ΑΠΟΔΕΔΕΙΓΜΕΝΑ αλλάξει:
-        //  - Τα RegTweak με πραγματική καταγεγραμμένη προηγούμενη τιμή στο TweakBackupService (μη-null
-        //    GetBackup σημαίνει "η εφαρμογή το άλλαξε τουλάχιστον μία φορά, να η αληθινή προηγούμενη τιμή").
-        //  - Τα 3 δικά της namespaced δεξιά-κλικ κλειδιά (Optimizer*) - ασφαλές να αφαιρεθούν αν
-        //    υπάρχουν, αφού ΚΑΝΕΝΑ άλλο πρόγραμμα δεν τα δημιουργεί.
-        //  - Το telemetry hosts-block (state-checkable μέσω IsTelemetryBlocked, όχι εικασία).
-        // ΣΚΟΠΙΜΑ ΔΕΝ αγγίζει mouse acceleration / hibernate / ultimate performance / game bar / visual
-        // effects - καμία από αυτές τις SimpleTweak δεν έχει καταγεγραμμένη "πριν" τιμή πουθενά (ούτε
-        // καν το ίδιο το TweaksView τις παρακολουθεί - κάθε toggle ξεκινάει πάντα ΑΝΕΝΕΡΓΟ σε κάθε
-        // άνοιγμα, βλ. TweaksView.xaml.cs's TweakRowVm), οπότε ένα blind "off" εδώ θα ήταν ΜΙΑ ΑΚΟΜΑ
-        // εικασία (π.χ. θα ζόριζε mouse acceleration ΟΝ ακόμα κι αν ο χρήστης ποτέ δεν άγγιξε αυτό το
-        // tweak μέσω της εφαρμογής) - προτιμότερο να παραλειφθεί παρά να ρισκάρει λάθος επαναφορά.
+        // Bulk reset/uninstall restores only verified originals. Presence of an
+        // old CLSID, shell verb, hosts block or policy is NOT ownership evidence.
+        // Legacy unjournaled settings remain for manual review.
         public static int RestoreAllTrackedTweaks()
         {
-            var reverted = 0;
+            int reverted = 0;
             foreach (var t in MainTweaks.Concat(AiCopilotTweaks).Concat(PerfRegTweaks))
             {
                 if (!TweakRegistryJournal.CanRestore(t)) continue;
                 try { ApplyOff(t); reverted++; }
-                catch { }
+                catch (Exception ex) { Trace.TraceError("Tweak restore: " + ex.Message); }
             }
-
-            try
+            foreach (var group in GroupedRegistryTweaks.Groups())
             {
-                using var classicMenuKey = Registry.CurrentUser.OpenSubKey(@"Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}");
-                if (classicMenuKey != null) { DisableClassicContextMenu(); reverted++; }
+                if (!GroupedRegistryTweaks.CanRestore(group.Values)) continue;
+                try { GroupedRegistryTweaks.Change(group.Values, group.Id, true); reverted++; }
+                catch (Exception ex) { Trace.TraceError("Grouped tweak restore: " + ex.Message); }
             }
-            catch { }
-
-            try
-            {
-                if (new[] { @"*\shell\OptimizerTakeOwnership", @"Directory\shell\OptimizerTakeOwnership", @"Drive\shell\OptimizerTakeOwnership" }
-                    .Any(root => { using var k = Registry.ClassesRoot.OpenSubKey(root); return k != null; }))
-                { RemoveTakeOwnership(); reverted++; }
-            }
-            catch { }
-
-            try
-            {
-                if (new[] { @"Directory\shell\OptimizerOpenPS", @"Directory\Background\shell\OptimizerOpenPS" }
-                    .Any(root => { using var k = Registry.ClassesRoot.OpenSubKey(root); return k != null; }))
-                { RemoveOpenPowerShellHere(); reverted++; }
-            }
-            catch { }
-
-            try { if (NetworkService.IsTelemetryBlocked()) { NetworkService.UnblockTelemetry(); reverted++; } }
-            catch { }
-
             return reverted;
         }
 
-        // ΝΕΟ - roadmap "Health Check" (ρητό αίτημα χρήστη, βλ. PC Manager's "X default settings can
-        // be restored") - ΙΔΙΑ ακριβώς λογική ανίχνευσης με το RestoreAllTrackedTweaks, αλλά ΧΩΡΙΣ να
-        // εφαρμόζει τίποτα (μόνο μέτρηση, για την κάρτα σύνοψης).
-        public static int CountRestorableTweaks()
-        {
-            var count = 0;
-            foreach (var t in MainTweaks.Concat(AiCopilotTweaks).Concat(PerfRegTweaks))
-                if (TweakRegistryJournal.CanRestore(t)) count++;
-
-            try
-            {
-                using var classicMenuKey = Registry.CurrentUser.OpenSubKey(@"Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}");
-                if (classicMenuKey != null) count++;
-            }
-            catch { }
-
-            try
-            {
-                if (new[] { @"*\shell\OptimizerTakeOwnership", @"Directory\shell\OptimizerTakeOwnership", @"Drive\shell\OptimizerTakeOwnership" }
-                    .Any(root => { using var k = Registry.ClassesRoot.OpenSubKey(root); return k != null; }))
-                    count++;
-            }
-            catch { }
-
-            try
-            {
-                if (new[] { @"Directory\shell\OptimizerOpenPS", @"Directory\Background\shell\OptimizerOpenPS" }
-                    .Any(root => { using var k = Registry.ClassesRoot.OpenSubKey(root); return k != null; }))
-                    count++;
-            }
-            catch { }
-
-            try { if (NetworkService.IsTelemetryBlocked()) count++; }
-            catch { }
-
-            return count;
-        }
+        public static int CountRestorableTweaks() =>
+            MainTweaks.Concat(AiCopilotTweaks).Concat(PerfRegTweaks).Count(TweakRegistryJournal.CanRestore)
+            + GroupedRegistryTweaks.Groups().Count(g => GroupedRegistryTweaks.CanRestore(g.Values));
 
         // ===== Ελαφρύτερα Windows (roadmap) =====
 

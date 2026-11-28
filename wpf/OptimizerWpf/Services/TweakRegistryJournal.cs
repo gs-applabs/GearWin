@@ -185,6 +185,27 @@ internal static class TweakRegistryJournal
         => CoreProcessLease.TryAcquire(@"Global\GearWin.RegistryTweak.v1." + identity)
             ?? throw new IOException("Another GearWin process is changing this registry value.");
 
+    internal static bool IsApplied(RegTweak tweak) =>
+        Current(tweak) == TweakValue.Capture(tweak.OnValue, tweak.Kind);
+
+    // Preflight every member before starting a group. Individual operations
+    // still recheck under their own mutex; this is not a registry transaction.
+    internal static bool Preflight(RegTweak tweak, bool restore)
+    {
+        var current = Current(tweak);
+        var target = TweakValue.Capture(tweak.OnValue, tweak.Kind);
+        var snapshot = Read(JournalPath(Identity(tweak)));
+        if (snapshot != null)
+        {
+            if (snapshot.Applied != target || !snapshot.CanRestore(current))
+                throw new InvalidOperationException("A grouped registry value changed externally; original journal retained.");
+            return true;
+        }
+        if (!restore && current != target && TweakBackupService.GetBackup(tweak.BackupKey) != null)
+            throw new InvalidOperationException("Legacy registry backup requires manual review.");
+        return false;
+    }
+
     internal static void Apply(RegTweak tweak)
     {
         var identity = Identity(tweak);
