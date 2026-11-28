@@ -132,7 +132,7 @@ namespace OptimizerWpf.Services
         public static IReadOnlyList<SimpleTweak> LighterWindowsTweaksSimple() => new[]
         {
             new SimpleTweak(LanguageService.T("Tweak_BgAppsLabel"), LanguageService.T("Tweak_BgAppsDesc"),
-                DisableBackgroundApps, EnableBackgroundApps, Id: "BackgroundApps", DetectState: DetectBackgroundAppsOff),
+                DisableBackgroundApps, EnableBackgroundApps, Id: "BackgroundApps", DetectState: DetectBackgroundAppsOff, RequiresAdmin: true),
             new SimpleTweak(LanguageService.T("Tweak_SysMainLabel"), LanguageService.T("Tweak_SysMainDesc"),
                 DisableSysMain, EnableSysMain, Id: "SysMain", DetectState: DetectSysMainOff, RequiresAdmin: true),
         };
@@ -281,83 +281,44 @@ namespace OptimizerWpf.Services
                 try { GroupedRegistryTweaks.Change(group.Values, group.Id, true); reverted++; }
                 catch (Exception ex) { Trace.TraceError("Grouped tweak restore: " + ex.Message); }
             }
+            if (BackgroundAppJournal.CanRestore())
+            {
+                try { BackgroundAppJournal.Change(true); reverted++; }
+                catch (Exception ex) { Trace.TraceError("Background app restore: " + ex.Message); }
+            }
+            if (ServiceStartJournal.CanRestoreSysMain())
+            {
+                try { if (ServiceStartJournal.ChangeSysMain(true)) reverted++; }
+                catch (Exception ex) { Trace.TraceError("SysMain restore: " + ex.Message); }
+            }
             return reverted;
         }
 
         public static int CountRestorableTweaks() =>
             MainTweaks.Concat(AiCopilotTweaks).Concat(PerfRegTweaks).Count(TweakRegistryJournal.CanRestore)
-            + GroupedRegistryTweaks.Groups().Count(g => GroupedRegistryTweaks.CanRestore(g.Values));
+            + GroupedRegistryTweaks.Groups().Count(g => GroupedRegistryTweaks.CanRestore(g.Values))
+            + (BackgroundAppJournal.CanRestore() ? 1 : 0) + (ServiceStartJournal.CanRestoreSysMain() ? 1 : 0);
 
         // ===== Ελαφρύτερα Windows (roadmap) =====
 
-        // ΝΕΟ - μαζική απενεργοποίηση της άδειας "εκτέλεση στο παρασκήνιο" για ΟΛΕΣ τις εγκατεστημένες
-        // εφαρμογές Store/UWP - ο ίδιος μηχανισμός με Ρυθμίσεις > Απόρρητο & Ασφάλεια > Εφαρμογές
-        // Παρασκηνίου, απλά μαζικά αντί για μία-μία. Το registry key
-        // HKCU\...\BackgroundAccessApplications\<PackageFamilyName> με Disabled/DisabledByUser=1 είναι
-        // ο επίσημος, τεκμηριωμένος μηχανισμός (ο ίδιος που χρησιμοποιεί το ίδιο το Windows Settings).
-        private const string BackgroundAppsKeyPath = @"Software\Microsoft\Windows\CurrentVersion\BackgroundAccessApplications";
+        // Only the explicitly selected, removable non-system package plan is
+        // changed. Restore does not enumerate installed apps or delete trees.
+        public static void DisableBackgroundApps() => BackgroundAppJournal.Change(false);
+        public static void EnableBackgroundApps() => BackgroundAppJournal.Change(true);
+        private static bool? DetectBackgroundAppsOff() => BackgroundAppJournal.IsOn();
 
-        public static void DisableBackgroundApps()
-        {
-            foreach (var pfn in GetInstalledPackageFamilyNames())
-            {
-                using var key = Registry.CurrentUser.CreateSubKey($@"{BackgroundAppsKeyPath}\{pfn}", writable: true);
-                key?.SetValue("Disabled", 1, RegistryValueKind.DWord);
-                key?.SetValue("DisabledByUser", 1, RegistryValueKind.DWord);
-            }
-        }
-
-        public static void EnableBackgroundApps()
-        {
-            using var root = Registry.CurrentUser.OpenSubKey(BackgroundAppsKeyPath, writable: true);
-            if (root == null) return;
-            foreach (var pfn in root.GetSubKeyNames())
-            {
-                try { root.DeleteSubKeyTree(pfn); } catch { }
-            }
-        }
-
-        // Φθηνός, ΤΟΠΙΚΟΣ έλεγχος μητρώου (καμία διεργασία PowerShell) - ώστε το άνοιγμα της καρτέλας
-        // να μην επιβαρύνεται· "ενεργό" tweak σημαίνει ότι ΟΙ ΠΕΡΙΣΣΟΤΕΡΕΣ ήδη-καταγεγραμμένες εφαρμογές
-        // είναι απενεργοποιημένες (η πλήρης απαρίθμηση εγκατεστημένων εφαρμογών μέσω PowerShell γίνεται
-        // ΜΟΝΟ όταν ο χρήστης πραγματικά πατήσει τον διακόπτη, βλ. DisableBackgroundApps).
-        private static bool? DetectBackgroundAppsOff()
-        {
-            using var root = Registry.CurrentUser.OpenSubKey(BackgroundAppsKeyPath);
-            var names = root?.GetSubKeyNames();
-            if (names == null || names.Length == 0) return false;
-            var disabledCount = names.Count(n =>
-            {
-                using var sub = root!.OpenSubKey(n);
-                return Convert.ToInt32(sub?.GetValue("Disabled") ?? 0) == 1;
-            });
-            return disabledCount > names.Length / 2;
-        }
-
-        private static IReadOnlyList<string> GetInstalledPackageFamilyNames()
-        {
-            const string script = "Get-AppxPackage | Where-Object { -not $_.IsFramework -and -not $_.IsResourcePackage } | " +
-                                   "Select-Object -ExpandProperty PackageFamilyName";
-            var output = RunProcessCapture("powershell.exe", $"-NoProfile -NonInteractive -Command \"{script}\"");
-            return output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        }
-
-        // ΝΕΟ - SysMain (πρώην Superfetch) - η ίδια η Microsoft συστήνει απενεργοποίηση σε συστήματα με
-        // SSD/NVMe (ο prefetch μηχανισμός στοχεύει σε αργούς περιστρεφόμενους δίσκους - σε γρήγορο
-        // δίσκο δεν προσφέρει όφελος, μόνο συνεχή χρήση πόρων στο παρασκήνιο). sc.exe αντί για
-        // ServiceController (καμία νέα εξάρτηση NuGet) - ίδιο πνεύμα με τα υπόλοιπα RunProcess.
         private const string SysMainServiceKey = @"SYSTEM\CurrentControlSet\Services\SysMain";
 
         public static void DisableSysMain()
         {
-            RunProcess("sc.exe", "stop SysMain");
-            RunProcess("sc.exe", "config SysMain start= disabled");
+            if (!ServiceStartJournal.ChangeSysMain(false))
+                throw new InvalidOperationException("SysMain startup cannot be safely changed; original setting retained.");
         }
 
         public static void EnableSysMain()
         {
-            RunProcess("sc.exe", "config SysMain start= auto");
-            RunProcess("sc.exe", "start SysMain");
+            if (!ServiceStartJournal.ChangeSysMain(true))
+                throw new InvalidOperationException("No verified SysMain original startup setting, or external change detected.");
         }
 
         private static bool? DetectSysMainOff()

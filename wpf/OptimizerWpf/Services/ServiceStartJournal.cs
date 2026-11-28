@@ -10,11 +10,15 @@ internal sealed record ServiceStartSnapshot(string Service, uint Original, uint 
 {
     internal bool IsValid(string name) =>
         string.Equals(Service, name, StringComparison.OrdinalIgnoreCase) && Original == 2 && Applied == 3;
+
+    internal bool IsValidDisable() =>
+        string.Equals(Service, "SysMain", StringComparison.OrdinalIgnoreCase) && Original is 2 or 3 && Applied == 4;
 }
 
 internal static class ServiceStartJournal
 {
-    internal const uint Automatic = 2, Manual = 3;
+    internal const uint Automatic = 2, Manual = 3, Disabled = 4;
+    internal static bool CanDisable(uint mode, bool delayed) => !delayed && mode is Automatic or Manual;
     internal static bool CanChange(uint mode, bool delayed) => mode == Automatic && !delayed;
     internal static bool CanRestore(uint mode, bool delayed) => !delayed && (mode == Automatic || mode == Manual);
 
@@ -105,4 +109,56 @@ internal static class ServiceStartJournal
         if (current.Mode != Manual) Set(service, Manual);
         return Read(service) == (Manual, false);
     }
+
+    // Same service lock as the existing manual-start optimizer. A journal
+    // created by either tool cannot be silently reinterpreted by the other.
+    internal static bool ChangeSysMain(bool restore)
+    {
+        const string name = "SysMain";
+        using var lease = CoreProcessLease.TryAcquire(@"Global\GearWin.ServiceStartup.v1.SYSMAIN")
+            ?? throw new IOException("SysMain configuration is busy.");
+        string path = ProtectedOperationJournal.PathFor("service-SYSMAIN");
+        var snapshot = ProtectedOperationJournal.Read<ServiceStartSnapshot>(path, s => s.IsValidDisable());
+        using var manager = OpenSCManager(null, null, 1);
+        if (manager.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
+        using var service = OpenService(manager, name, 1 | 2);
+        if (service.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
+        var current = Read(service);
+
+        if (snapshot == null)
+        {
+            if (restore || TweakBackupService.GetBackup("SVC_" + name) != null || !CanDisable(current.Mode, current.Delayed))
+                return false;
+            snapshot = new ServiceStartSnapshot(name, current.Mode, Disabled);
+            ProtectedOperationJournal.Save(path, snapshot, s => s.IsValidDisable());
+        }
+
+        if (current.Delayed || (current.Mode != snapshot.Original && current.Mode != Disabled) || Read(service) != current)
+            return false;
+        uint target = restore ? snapshot.Original : Disabled;
+        if (current.Mode != target) Set(service, target);
+        if (Read(service) != (target, false)) return false;
+        if (restore) File.Delete(path);
+        // Never stop or start a running service. Startup change takes effect
+        // normally on next boot; no claim that RAM is immediately released.
+        return true;
+    }
+
+    internal static bool CanRestoreSysMain()
+    {
+        try
+        {
+            var snapshot = ProtectedOperationJournal.Read<ServiceStartSnapshot>(
+                ProtectedOperationJournal.PathFor("service-SYSMAIN"), s => s.IsValidDisable());
+            if (snapshot == null) return false;
+            using var manager = OpenSCManager(null, null, 1);
+            if (manager.IsInvalid) return false;
+            using var service = OpenService(manager, "SysMain", 1);
+            if (service.IsInvalid) return false;
+            var current = Read(service);
+            return !current.Delayed && (current.Mode == snapshot.Original || current.Mode == Disabled);
+        }
+        catch { return false; }
+    }
+
 }

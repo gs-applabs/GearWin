@@ -123,12 +123,25 @@ namespace OptimizerWpf.Views
 
         private void BtnOpenIndexing_Click(object sender, RoutedEventArgs e) => TweakService.OpenIndexingOptions();
 
-        private void BtnLowResourceProfile_Click(object sender, RoutedEventArgs e)
+        private async void BtnLowResourceProfile_Click(object sender, RoutedEventArgs e)
         {
             if (ThemedMessageBox.Show(LanguageService.T("Tweaks_LowResourceConfirm"),
                     LanguageService.T("Tweaks_ConfirmTitle"), MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
-            TweakService.ApplyLowResourceProfile();
-            ListLighterWindows.ItemsSource = TweakRowVm.CreateDeferred(TweakService.LighterWindowsTweaksSimple(), "Lighter");
+            if (sender is not Button button) return;
+            button.IsEnabled = false;
+            try
+            {
+                await GearWinCore.RunAsync(CoreWork.TweakChange, () => System.Threading.Tasks.Task.Run(TweakService.ApplyLowResourceProfile));
+            }
+            catch (Exception ex)
+            {
+                ThemedMessageBox.Show(ex.Message, LanguageService.T("Tweaks_ConfirmTitle"), MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+            finally
+            {
+                ListLighterWindows.ItemsSource = TweakRowVm.CreateDeferred(TweakService.LighterWindowsTweaksSimple(), "Lighter");
+                button.IsEnabled = true;
+            }
         }
 
         private void ToggleTakeOwnership_Click(object sender, RoutedEventArgs e)
