@@ -29,6 +29,7 @@ Updated 2026-11-28. This is the single current entry point for a new ChatGPT/Cla
 - New SDK source targets .NET 11, global.json 11.0.100; dependency alignment and build workflows updated. Validate exact head including all preceding changes. AppVeyor config only, no verified execution. Existing base branch and master remain untouched.
 
 ## Next execution order
+- P2 RQ14: temporary selected GameMode/Windowed/VRR settings now journaled, no forced high power plan or HAGS. Legacy profiles require re-save; explicit GPU/FSO manual; actual game/registry behavior pending. 26 new fixtures this pass. Verify latest CI; next driver/update safety and cleanup.
 - P2 RQ14: protected exact-identity game profile v2, bounded schema, legacy preserved/re-save, preserve unrelated DirectX options and report partial manual apply. 16 fixtures pending. Next safe temporary per-game selected settings, no automatic HAGS/reboot changes.
 - P1: actual-running feature reconciliation, one-in-flight low-disk background check and generation guards, 14 pure cases. Current pass 24 new fixtures; latest confirmed 843 .NET/32 Python. Let current CI finish before more commits. Check actual native hardware/Tray 24h/second provider and P2 work.
 - P1: Tray icon/menu/bitmap ownership and popup lifetime hardened; optional release HTTP/startup delay cancellation, six tooltip cases authored. Native sensor lifetime and lifecycle retry still open. Check latest CI, do not claim tray leak fixed.

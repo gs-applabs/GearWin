@@ -149,8 +149,16 @@ namespace OptimizerWpf.Services
 
         private static void WriteDword(RegistryKey hive, string path, string name, int value)
         {
+            using var lease = UltimatePlanJournal.PowerLease();
+            if (name == "AutoGameModeEnabled") AutoGameProfileJournal.RestoreUnderPowerLease();
             using var k = hive.CreateSubKey(path) ?? throw new InvalidOperationException(path);
+            var current = k.GetValue(name, null, RegistryValueOptions.DoNotExpandEnvironmentNames);
+            if (current != null && (current is not int || k.GetValueKind(name) != RegistryValueKind.DWord))
+                throw new InvalidOperationException("Unsupported gaming registry value type.");
+            if (current is int n && n == value) return;
             k.SetValue(name, value, RegistryValueKind.DWord);
+            if (k.GetValue(name) is not int actual || actual != value)
+                throw new InvalidOperationException("Gaming setting readback failed.");
         }
 
         public static IReadOnlyList<SimpleTweak> GlobalTweaks() => new[]
@@ -205,6 +213,8 @@ namespace OptimizerWpf.Services
 
         private static void SetGlobalDx(string setting, bool on)
         {
+            using var lease = UltimatePlanJournal.PowerLease();
+            AutoGameProfileJournal.RestoreUnderPowerLease();
             using var k = Registry.CurrentUser.CreateSubKey(GpuKey) ?? throw new InvalidOperationException(GpuKey);
             WriteString(k, DxGlobalName, ReplaceOption(ReadString(k, DxGlobalName), setting, on ? "1" : "0"));
         }

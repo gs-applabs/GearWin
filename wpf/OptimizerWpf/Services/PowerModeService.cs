@@ -159,11 +159,19 @@ namespace OptimizerWpf.Services
         internal static bool IsConfirmedActive(bool? committed, bool matchesApplied) =>
             committed != false && matchesApplied;
 
+        internal static bool HasSavedProfileUnderPowerLease() => Load(SnapshotPath()) != null;
+
+        internal static bool HasSavedProfile()
+        {
+            lock (Gate) { using var lease = UltimatePlanJournal.PowerLease(); return HasSavedProfileUnderPowerLease(); }
+        }
+
         private static void Enable(string mode)
         {
             lock (Gate)
             {
                 using var powerLease = UltimatePlanJournal.PowerLease();
+                AutoGameProfileJournal.RestoreUnderPowerLease();
                 var path = SnapshotPath();
                 var existing = Load(path);
                 if (existing != null)

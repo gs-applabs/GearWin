@@ -3,137 +3,120 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Windows.Threading;
 
-namespace OptimizerWpf.Services
+namespace OptimizerWpf.Services;
+
+// Opt-in, existing five-second timer. No generic high-performance plan or
+// reboot-required changes are made on behalf of a per-game saved profile.
+public static class AutoGamingModeService
 {
-    // ΝΕΟ - roadmap "Αυτόματο Gaming Mode" - ανίχνευση παιχνιδιού σε εξέλιξη (heuristic: το ενεργό
-    // παράθυρο καλύπτει ΑΚΡΙΒΩΣ όλη την οθόνη - exclusive fullscreen, ο πιο αξιόπιστος δείκτης χωρίς να
-    // χρειάζεται λίστα γνωστών παιχνιδιών/launchers), προσωρινή εφαρμογή Gaming Mode, αυτόματη
-    // επαναφορά μόλις το fullscreen παράθυρο δεν είναι πια το ενεργό. Ζει ως static service (ΟΧΙ μέσα
-    // στο OptimizationView) ώστε να συνεχίζει να δουλεύει ανεξάρτητα από το ποια καρτέλα είναι ανοιχτή -
-    // ίδιο σκεπτικό με το γιατί το ThemedBackgroundControl ζει στο MainWindow, όχι σε κάθε tab view.
-    // ΣΗΜΕΙΩΣΗ ΕΙΛΙΚΡΙΝΕΙΑΣ: ο χειροκίνητος διακόπτης Gaming Mode στη Βελτιστοποίηση ΔΕΝ συγχρονίζεται
-    // οπτικά με αυτή την αυτόματη ενεργοποίηση (θα απαιτούσε το static service να κρατά αναφορά στο
-    // εκάστοτε ζωντανό OptimizationView instance) - αν χρειαστεί αργότερα, προστίθεται εύκολα.
-    public static class AutoGamingModeService
+    private static DispatcherTimer? _timer;
+    internal static bool IsRunning => _timer != null;
+    private static string? _candidate, _active;
+    private static int _stableTicks, _misses;
+    private static bool _recoveryChecked;
+    private static bool _reportedFailure;
+
+    [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
+    [DllImport("user32.dll")] private static extern int GetWindowThreadProcessId(IntPtr hWnd, out int processId);
+    [DllImport("user32.dll")] private static extern int GetSystemMetrics(int index);
+    private struct RECT { public int Left, Top, Right, Bottom; }
+
+    public static void Start()
     {
-        private static DispatcherTimer? _timer;
-        internal static bool IsRunning => _timer != null;
-        private static bool _isActive;
-        private static IntPtr _lastFullscreenHwnd;
-        private static int _consecutiveFullscreenTicks;
-        private static int _consecutiveNonFullscreenTicks;
+        if (_timer != null || !AppSettingsService.Current.AutoGamingModeEnabled) return;
+        _candidate = _active = null;
+        _stableTicks = _misses = 0;
+        _recoveryChecked = _reportedFailure = false;
+        _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
+        _timer.Tick += OnTick;
+        _timer.Start();
+    }
 
-        [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
-        [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
-        [DllImport("user32.dll")] private static extern int GetWindowThreadProcessId(IntPtr hWnd, out int processId);
-        [DllImport("user32.dll")] private static extern int GetSystemMetrics(int index);
-        private struct RECT { public int Left, Top, Right, Bottom; }
-        private const int SM_CXSCREEN = 0, SM_CYSCREEN = 1;
-
-        public static void Start()
+    public static void Stop()
+    {
+        if (_timer != null) { _timer.Stop(); _timer.Tick -= OnTick; _timer = null; }
+        // An interrupted session remains recoverable even after disable/exit.
+        // Never start a retry timer for a disabled feature.
+        if (_active != null || _recoveryChecked)
         {
-            if (_timer != null || !AppSettingsService.Current.AutoGamingModeEnabled) return;
-            _lastFullscreenHwnd = IntPtr.Zero;
-            _consecutiveFullscreenTicks = _consecutiveNonFullscreenTicks = 0;
-            _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
-            _timer.Tick += (_, _) => Tick();
-            _timer.Start();
+            try { AutoGameProfileJournal.Restore(); _active = null; }
+            catch (Exception ex) { Report(ex); }
         }
+        _candidate = null;
+        _stableTicks = _misses = 0;
+        _recoveryChecked = false;
+    }
 
-        public static void Stop()
+    private static void Report(Exception ex)
+    {
+        if (_reportedFailure) return;
+        _reportedFailure = true;
+        Trace.TraceWarning("Automatic gaming: " + ex.Message);
+        StatusService.Report(ex.Message);
+    }
+
+    internal static int NextStableTicks(string? previous, string? current, int ticks) =>
+        current == null ? 0 : string.Equals(previous, current, StringComparison.Ordinal) ? Math.Min(2, ticks + 1) : 1;
+
+    private static void OnTick(object? sender, EventArgs e)
+    {
+        if (!AppSettingsService.Current.AutoGamingModeEnabled) return;
+        try
         {
-            _timer?.Stop();
-            _timer = null;
-            if (_isActive && !AppSettingsService.Current.GamingModeActive && !AppSettingsService.Current.OfficeModeActive)
+            // Recover an interrupted automatic session before any new one.
+            if (!_recoveryChecked)
             {
-                try { PowerModeService.DisableGamingMode(restartExplorer: false); _isActive = false; }
-                catch (Exception ex) { System.Diagnostics.Trace.TraceError(ex.Message); }
+                using var lease = GearWinCore.TryEnterBackground(CoreWork.ProfileChange);
+                if (lease == null) return;
+                AutoGameProfileJournal.Restore();
+                _recoveryChecked = true;
+                _reportedFailure = false;
             }
-            else _isActive = false;
-        }
-
-        private static void Tick()
-        {
-            try
+            var settings = AppSettingsService.Current;
+            var current = settings.GamingModeActive || settings.OfficeModeActive ? null : ForegroundGame();
+            string? identity = current?.Identity;
+            _stableTicks = NextStableTicks(_candidate, identity, _stableTicks);
+            _candidate = identity;
+            if (_active != null)
             {
-                if (!AppSettingsService.Current.AutoGamingModeEnabled) return;
-                // Αν ο χρήστης έχει ενεργοποιήσει χειροκίνητα το Gaming Mode (Βελτιστοποίηση), το αυτόματο δεν το αγγίζει - ούτε το ενεργοποιεί ξανά ούτε το απενεργοποιεί στο τέλος του παιχνιδιού.
-                if (AppSettingsService.Current.GamingModeActive || AppSettingsService.Current.OfficeModeActive)
-                {
-                    _isActive = false; // ownership transferred to the manual profile; do not restore it later
-                    _consecutiveFullscreenTicks = _consecutiveNonFullscreenTicks = 0;
-                    return;
-                }
-                var hwnd = GetForegroundWindow();
-                if (hwnd == IntPtr.Zero || !IsFullscreen(hwnd) || IsSelfOrShell(hwnd) || !IsConfiguredGame(hwnd))
-                {
-                    _consecutiveFullscreenTicks = 0;
-                    _consecutiveNonFullscreenTicks = Math.Min(2, _consecutiveNonFullscreenTicks + 1);
-                    // 2 συνεχόμενοι έλεγχοι (10s) χωρίς fullscreen πριν την επαναφορά - αποφεύγει
-                    // τρεμόπαιγμα σε σύντομη εναλλαγή παραθύρου (π.χ. Alt+Tab στιγμιαία).
-                    if (_isActive && _consecutiveNonFullscreenTicks >= 2)
-                    {
-                        // Χωρίς επανεκκίνηση του Explorer: το αυτόματο mode δεν πρέπει να κλείνει τα ανοιχτά παράθυρα του χρήστη κάθε φορά που τελειώνει ένα παιχνίδι.
-                        using var lease = GearWinCore.TryEnterBackground(CoreWork.ProfileChange);
-                        if (lease == null) return;
-                        if (!AppSettingsService.Current.GamingModeActive && !AppSettingsService.Current.OfficeModeActive)
-                            PowerModeService.DisableGamingMode(restartExplorer: false);
-                        _isActive = false;
-                    }
-                    return;
-                }
-
-                _consecutiveNonFullscreenTicks = 0;
-                _consecutiveFullscreenTicks = hwnd == _lastFullscreenHwnd ? Math.Min(2, _consecutiveFullscreenTicks + 1) : 1;
-                _lastFullscreenHwnd = hwnd;
-
-                // 2 συνεχόμενοι έλεγχοι (10s) στο ΙΔΙΟ fullscreen παράθυρο πριν την ενεργοποίηση -
-                // αποφεύγει ψευδές θετικό από σύντομη fullscreen προβολή (π.χ. video player splash).
-                if (!_isActive && _consecutiveFullscreenTicks >= 2)
-                {
-                    using var lease = GearWinCore.TryEnterBackground(CoreWork.ProfileChange);
-                    if (lease == null || AppSettingsService.Current.GamingModeActive || AppSettingsService.Current.OfficeModeActive) return;
-                    PowerModeService.SetGamingMode();
-                    _isActive = true;
-                }
+                _misses = _active == identity ? 0 : Math.Min(2, _misses + 1);
+                if (_misses < 2) return;
+                using var restoreLease = GearWinCore.TryEnterBackground(CoreWork.ProfileChange);
+                if (restoreLease == null) return;
+                AutoGameProfileJournal.Restore();
+                _active = null;
+                _reportedFailure = false;
+                _misses = 0;
             }
-            catch { }
+            if (current == null || _stableTicks < 2) return;
+            using var applyLease = GearWinCore.TryEnterBackground(CoreWork.ProfileChange);
+            if (applyLease == null || !settings.AutoGamingModeEnabled || settings.GamingModeActive || settings.OfficeModeActive) return;
+            var profile = GameProfileService.Load(current.Value.Path);
+            if (profile == null) return;
+            AutoGameProfileJournal.Apply(current.Value.Path, profile);
+            _active = identity; // even a no-op remains stable until a different game
+            _reportedFailure = false;
         }
+        catch (Exception ex) { Report(ex); }
+    }
 
-        private static bool IsFullscreen(IntPtr hwnd)
+    private static (string Path, string Identity)? ForegroundGame()
+    {
+        try
         {
-            if (!GetWindowRect(hwnd, out var r)) return false;
-            var w = r.Right - r.Left; var h = r.Bottom - r.Top;
-            return w == GetSystemMetrics(SM_CXSCREEN) && h == GetSystemMetrics(SM_CYSCREEN);
+            var hwnd = GetForegroundWindow();
+            if (hwnd == IntPtr.Zero || !GetWindowRect(hwnd, out var r) ||
+                r.Right - r.Left != GetSystemMetrics(0) || r.Bottom - r.Top != GetSystemMetrics(1)) return null;
+            GetWindowThreadProcessId(hwnd, out int pid);
+            using var process = Process.GetProcessById(pid);
+            if (pid == Environment.ProcessId || process.ProcessName is "explorer" or "dwm" or "dotnet") return null;
+            string? path = process.MainModule?.FileName;
+            if (path == null || !GameProfileService.HasProfile(path)) return null;
+            // PID + start time prevents PID reuse; exact profile path prevents
+            // another executable with a coincidentally similar file name.
+            return (path, pid + ":" + process.StartTime.ToUniversalTime().Ticks + ":" + GameProfileService.Identity(path));
         }
-
-        // Fullscreen alone also matches browsers, presentation software and video players.
-        // Until launcher detection is unified, only an explicitly configured game is eligible.
-        private static bool IsConfiguredGame(IntPtr hwnd)
-        {
-            try
-            {
-                GetWindowThreadProcessId(hwnd, out var pid);
-                using var process = Process.GetProcessById(pid);
-                return process.MainModule?.FileName is string path && GameProfileService.HasProfile(path);
-            }
-            catch { return false; }
-        }
-
-        private static bool IsSelfOrShell(IntPtr hwnd)
-        {
-            try
-            {
-                GetWindowThreadProcessId(hwnd, out var pid);
-                using var proc = Process.GetProcessById(pid); // Process implements IDisposable — πριν διέρρεε ένα αντικείμενο/handle ανά 5s
-                var name = proc.ProcessName;
-                // ΔΙΟΡΘΩΣΗ - ρητό αίτημα χρήστη: "το όνομα του exe να προσαρμοστεί στο όνομα της
-                // εφαρμογής" - το AssemblyName άλλαξε (βλ. OptimizerWpf.csproj), οπότε το πραγματικό
-                // Process.ProcessName της εγκατεστημένης εφαρμογής είναι πλέον διαφορετικό -
-                // "OptimizerWpf" εδώ θα ΠΑΨΕΙ να ταιριάζει με το πραγματικό όνομα διεργασίας.
-                return name is "explorer" or "dwm" or "GearWin" or "dotnet";
-            }
-            catch { return true; }
-        }
+        catch { return null; }
     }
 }

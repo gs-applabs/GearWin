@@ -202,7 +202,13 @@ namespace OptimizerWpf.Views
             };
             var ok = GameProfileService.Save(exe, data);
             TxtGameSettingsStatus.Text = LanguageService.T(ok ? "Games_ProfileSaved" : "Autostart_Failed");
-            if (ok) BtnLoadGameProfile.IsEnabled = true;
+            if (ok)
+            {
+                BtnLoadGameProfile.IsEnabled = true;
+                TxtGameSettingsStatus.Text += LanguageService.Current == "el"
+                    ? " · Αυτόματο προφίλ: Game Mode, Windowed, VRR μόνο. HAGS/GPU/FSO χειροκίνητα."
+                    : " · Auto profile: Game Mode, Windowed, VRR only. HAGS/GPU/FSO manual.";
+            }
         }
 
         private async void BtnLoadGameProfile_Click(object sender, RoutedEventArgs e)
@@ -311,15 +317,18 @@ namespace OptimizerWpf.Views
 
         // ── Παιχνίδια: Καθολικά tweaks / shader cache ───────────────────────────────────
 
-        private void ToggleGameTweak_Click(object sender, RoutedEventArgs e)
+        private async void ToggleGameTweak_Click(object sender, RoutedEventArgs e)
         {
-            if (sender is not ToggleButton { Tag: TweakRowVm row }) return;
-            try { if (row.IsOn) row.Tweak.OnAction(); else row.Tweak.OffAction(); row.RecordChange(row.IsOn); }
-            catch
+            if (sender is not ToggleButton { Tag: TweakRowVm row } button) return;
+            button.IsEnabled = false;
+            try { await row.ApplyRequestedAsync(row.IsOn); }
+            catch (Exception ex)
             {
-                row.IsOn = !row.IsOn;
-                ThemedMessageBox.Show(LanguageService.T("Net_ChangeFailed"), LanguageService.T("Net_ErrorTitle"), MessageBoxButton.OK, MessageBoxImage.Warning);
+                try { row.IsOn = await System.Threading.Tasks.Task.Run(() => row.Tweak.DetectState?.Invoke()) ?? !row.IsOn; }
+                catch { row.IsOn = !row.IsOn; }
+                ThemedMessageBox.Show(LanguageService.T("Net_ChangeFailed") + "\n" + ex.Message, LanguageService.T("Net_ErrorTitle"), MessageBoxButton.OK, MessageBoxImage.Warning);
             }
+            finally { button.IsEnabled = true; }
         }
 
         private async void BtnCleanShader_Click(object sender, RoutedEventArgs e)
