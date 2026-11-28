@@ -29,6 +29,8 @@ namespace OptimizerWpf.Views
             ListLighterWindows.ItemsSource = TweakRowVm.CreateDeferred(TweakService.LighterWindowsTweaksSimple(), "Lighter", startDetection: false);
             ListCustomMenu.ItemsSource = _customMenuItems;
             foreach (var item in CustomContextMenuService.Load()) _customMenuItems.Add(item);
+            ListCustomMenu.ToolTip = CustomContextMenuService.HasLegacyEntries
+                ? "Legacy custom menus are preserved, not automatically removed. Review existing entries manually." : null;
 
             // ΔΙΟΡΘΩΣΗ (γνωστό κενό #01 του roadmap) - τα 2 hardcoded ToggleButton δεν περνούν από
             // TweakRowVm, οπότε διαβάζουν την πραγματική κατάσταση απευθείας εδώ.
@@ -192,19 +194,43 @@ namespace OptimizerWpf.Views
             }
         }
 
-        private void BtnAddCustomMenuItem_Click(object sender, RoutedEventArgs e)
+        private async void BtnAddCustomMenuItem_Click(object sender, RoutedEventArgs e)
         {
             var dialog = new AddContextMenuDialog { Owner = Window.GetWindow(this) };
-            if (dialog.ShowDialog() != true) return;
-            var item = CustomContextMenuService.Add(dialog.MenuTextValue, dialog.CommandValue, dialog.ScopeValue);
-            _customMenuItems.Add(item);
+            if (dialog.ShowDialog() != true || sender is not Button button) return;
+            button.IsEnabled = false;
+            try
+            {
+                await GearWinCore.RunAsync(CoreWork.TweakChange, () => System.Threading.Tasks.Task.Run(() =>
+                    CustomContextMenuService.Add(dialog.MenuTextValue, dialog.CommandValue, dialog.ScopeValue)));
+            }
+            catch (Exception ex)
+            {
+                ThemedMessageBox.Show(ex.Message, LanguageService.T("Net_ErrorTitle"), MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+            finally
+            {
+                _customMenuItems.Clear();
+                foreach (var item in CustomContextMenuService.Load()) _customMenuItems.Add(item);
+                button.IsEnabled = true;
+            }
         }
 
-        private void BtnRemoveCustomMenuItem_Click(object sender, RoutedEventArgs e)
+        private async void BtnRemoveCustomMenuItem_Click(object sender, RoutedEventArgs e)
         {
-            if (sender is not Button { Tag: CustomContextMenuItem item }) return;
-            CustomContextMenuService.Remove(item);
-            _customMenuItems.Remove(item);
+            if (sender is not Button { Tag: CustomContextMenuItem item } button) return;
+            button.IsEnabled = false;
+            try
+            {
+                await GearWinCore.RunAsync(CoreWork.TweakChange, () => System.Threading.Tasks.Task.Run(() =>
+                    CustomContextMenuService.Remove(item)));
+                _customMenuItems.Remove(item);
+            }
+            catch (Exception ex)
+            {
+                ThemedMessageBox.Show(ex.Message, LanguageService.T("Net_ErrorTitle"), MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+            finally { button.IsEnabled = true; }
         }
 
         // ΝΕΟ - roadmap "Προφίλ tweaks" - αποθήκευση/φόρτωση ενός συνόλου επιλογών ως αρχείο, χρήσιμο
