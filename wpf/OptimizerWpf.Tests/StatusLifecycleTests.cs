@@ -96,11 +96,62 @@ public class StatusLifecycleTests
         var pending = core.AcquireAsync(CoreWork.Cleanup, CorePriority.User);
         Assert.False(core.TryStopWhenSafe());
         active.Dispose();
-        using var cleanup = await pending.WaitAsync(TimeSpan.FromSeconds(2));
+        // Admission is synchronous under the coordinator gate; do not time the thread pool.
+        Assert.True(pending.IsCompletedSuccessfully);
+        Assert.Equal(1, core.ActiveCount);
+        Assert.Equal(0, core.PendingCount);
+        using var cleanup = await pending;
         Assert.False(core.TryStopWhenSafe());
         cleanup.Dispose();
         Assert.True(core.TryStopWhenSafe());
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => core.AcquireAsync(CoreWork.Repair, CorePriority.User));
+    }
+
+    [Fact]
+    public async Task RepeatedNoncancellableHandoffsDoNotAccumulatePendingWork()
+    {
+        var core = new OperationCoordinator(() => 2);
+        for (int i = 0; i < 250; i++)
+        {
+            using var first = await core.AcquireAsync(CoreWork.Backup, CorePriority.User);
+            var pending = core.AcquireAsync(CoreWork.Cleanup, CorePriority.User);
+            Assert.False(pending.IsCompleted);
+            Assert.Equal(1, core.PendingCount);
+            first.Dispose();
+            Assert.True(pending.IsCompletedSuccessfully);
+            using var next = await pending;
+            Assert.Equal(1, core.ActiveCount);
+            Assert.Equal(0, core.PendingCount);
+        }
+        Assert.Equal(0, core.ActiveCount);
+        Assert.True(core.TryStopWhenSafe());
+    }
+
+    [Fact]
+    public async Task CompatibleUserReadsStillRunTogether()
+    {
+        var core = new OperationCoordinator(() => 1);
+        using var first = await core.AcquireAsync(CoreWork.CleanupScan, CorePriority.User);
+        var secondTask = core.AcquireAsync(CoreWork.UpdateScan, CorePriority.User);
+        Assert.True(secondTask.IsCompletedSuccessfully);
+        using var second = await secondTask;
+        Assert.Equal(2, core.ActiveCount);
+        Assert.Equal(0, core.PendingCount);
+    }
+
+    [Fact]
+    public async Task CancelledQueuedRequestReleasesItsQueueSlot()
+    {
+        var core = new OperationCoordinator(() => 2);
+        using var first = await core.AcquireAsync(CoreWork.Backup, CorePriority.User);
+        using var cancel = new System.Threading.CancellationTokenSource();
+        var pending = core.AcquireAsync(CoreWork.Cleanup, CorePriority.User, cancel.Token);
+        Assert.Equal(1, core.PendingCount);
+        cancel.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending);
+        Assert.Equal(0, core.PendingCount);
+        first.Dispose();
+        Assert.Equal(0, core.ActiveCount);
     }
 
     [Theory]

@@ -79,17 +79,26 @@ internal sealed class OperationCoordinator
     internal int ActiveCount { get { lock (_gate) return _active.Count; } }
     internal int PendingCount { get { lock (_gate) return _pending.Count; } }
 
-    internal async Task<IDisposable> AcquireAsync(CoreWork kind, CorePriority priority, CancellationToken ct = default)
+    internal Task<IDisposable> AcquireAsync(CoreWork kind, CorePriority priority, CancellationToken ct = default)
     {
-        ct.ThrowIfCancellationRequested();
+        if (ct.IsCancellationRequested) return Task.FromCanceled<IDisposable>(ct);
         var request = new Request(kind, priority);
         lock (_gate)
         {
-            if (_stopping) throw new OperationCanceledException("GearWin is shutting down.");
-            if (_pending.Count >= MaxPending) throw new InvalidOperationException("Maintenance queue is full.");
+            if (_stopping) return Task.FromCanceled<IDisposable>(new CancellationToken(true));
+            if (_pending.Count >= MaxPending)
+                return Task.FromException<IDisposable>(new InvalidOperationException("Maintenance queue is full."));
             _pending.Add(request);
             Dispatch();
         }
+        // No cancellation registration or extra async continuation when there
+        // is no cancellable token. The task itself represents admission, not
+        // a thread-pool continuation scheduled after admission.
+        return ct.CanBeCanceled ? AwaitCancellable(request, ct) : request.Completion.Task;
+    }
+
+    private async Task<IDisposable> AwaitCancellable(Request request, CancellationToken ct)
+    {
         using var registration = ct.Register(() =>
         {
             lock (_gate)

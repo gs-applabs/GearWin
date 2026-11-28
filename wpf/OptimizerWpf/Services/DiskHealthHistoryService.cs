@@ -50,6 +50,7 @@ namespace OptimizerWpf.Services
                     var pending = requested.Where(r => !RecordedToday.Contains(r.Drive))
                         .DistinctBy(r => r.Drive, StringComparer.OrdinalIgnoreCase).ToList();
                     if (pending.Count == 0) return;
+                    if (RecordedToday.Count + pending.Count > DailyHistoryStorage.MaxDrives) return;
                     using var lease = DailyHistoryStorage.TryLease("Disk");
                     if (lease == null) return;
                     var all = Load();

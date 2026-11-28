@@ -19,7 +19,7 @@ internal static class DailyHistoryStorage
     internal static bool ValidDate(string? date) => DateOnly.TryParseExact(date, "yyyy-MM-dd",
         CultureInfo.InvariantCulture, DateTimeStyles.None, out _);
 
-    internal static T Read<T>(string path, Func<T> empty)
+    internal static T Read<T>(string path, Func<T> empty) where T : class
     {
         ValidatePath(path);
         try

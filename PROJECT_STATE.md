@@ -1,6 +1,6 @@
 # CURRENT CHECKPOINT — 2026-11-28
 
-**Read [START_HERE.md](START_HERE.md) first.** Active development branch is `release/7.1.0-ultra`, draft PR #6; target 7.1.0, version fields remain 7.0.0 until release gate. The current source targets .NET 11; older state below is retained as historical evidence, not current instructions. Latest confirmed full build: 781 .NET and 32 Python at 7960011c, four recovery VM jobs, six distro jobs and installer E2E passed. New history/product reconciliation pending CI. Physical restore and independent provider unverified. Canonical requirement IDs and gates: [ROADMAP.md](ROADMAP.md), [cumulative evidence](docs/GEARWIN-7.1.0-ULTRA-MEGA-PASSES.md). Do not use the historical branch/version/test counts below for current development.
+**Read [START_HERE.md](START_HERE.md) first.** Active development branch is `release/7.1.0-ultra`, draft PR #6; target 7.1.0, version fields remain 7.0.0 until release gate. The current source targets .NET 11; older state below is retained as historical evidence, not current instructions. Latest confirmed full build: 783 .NET and 32 Python at aeb173e7; prior four recovery VM jobs, six distro jobs and installer E2E passed at 7960011c. New grouped registry, history and coordinator source pending CI. Physical restore and independent provider unverified. Canonical requirement IDs and gates: [ROADMAP.md](ROADMAP.md), [cumulative evidence](docs/GEARWIN-7.1.0-ULTRA-MEGA-PASSES.md). Do not use the historical branch/version/test counts below for current development.
 
 ---
 
