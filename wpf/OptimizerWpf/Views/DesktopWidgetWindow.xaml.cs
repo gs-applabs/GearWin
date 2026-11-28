@@ -10,6 +10,8 @@ namespace OptimizerWpf.Views
     public partial class DesktopWidgetWindow : Window
     {
         private IDisposable? _gpuSubscription;
+        private IDisposable? _sensorSubscription;
+        private readonly System.Threading.CancellationTokenSource _lifetime = new();
         private bool _gpuReading;
         private long _lastOverlayAttempt;
         private readonly DispatcherTimer _timer;
@@ -24,8 +26,10 @@ namespace OptimizerWpf.Views
             InitializeComponent();
             ThemeManager.AttachWindow(this);
             _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1.5) };
-            _timer.Tick += (_, _) => Refresh();
+            _timer.Tick += OnTick;
         }
+
+        private void OnTick(object? sender, EventArgs e) => Refresh();
 
         private void Window_Loaded(object sender, RoutedEventArgs e)
         {
@@ -35,16 +39,25 @@ namespace OptimizerWpf.Views
             if (settings.DesktopWidgetX is { } wx && settings.DesktopWidgetY is { } wy) { Left = wx; Top = wy; }
             else PopupPlacement.PlaceBottomRightOnCursorMonitor(this);
 
-            IsVisibleChanged += (_, _) => { if (!IsVisible) ReleaseOverlay(); };
+            IsVisibleChanged += OnVisibilityChanged;
 
             Refresh();
             _timer.Start();
+        }
+
+        private void OnVisibilityChanged(object sender, DependencyPropertyChangedEventArgs e)
+        {
+            if (_closed) return;
+            if (!IsVisible) { _timer.Stop(); ReleaseOverlay(); }
+            else { _timer.Start(); Refresh(); }
         }
 
         private void ReleaseOverlay()
         {
             _gpuSubscription?.Dispose();
             _gpuSubscription = null;
+            _sensorSubscription?.Dispose();
+            _sensorSubscription = null;
             if (_currentGamePid != -1) GameOverlayService.Stop();
             _currentGamePid = -1;
         }
@@ -55,7 +68,7 @@ namespace OptimizerWpf.Views
             _gpuReading = true;
             try
             {
-                var value = await SharedTelemetryService.ReadGpuAsync();
+                var value = await SharedTelemetryService.ReadGpuAsync().WaitAsync(_lifetime.Token);
                 if (!_closed && _gpuSubscription != null) TxtGpu.Text = value.HasValue ? $"{value}%" : "--";
             }
             catch { }
@@ -80,12 +93,13 @@ namespace OptimizerWpf.Views
                 _networkCheckInFlight = true;
                 try
                 {
-                    var (connected, latency) = await NetworkService.CheckInternetAsync();
+                    var (connected, latency) = await NetworkService.CheckInternetAsync().WaitAsync(_lifetime.Token);
                     if (_closed) return;
                     TxtNetwork.Text = connected
                         ? $"{LanguageService.T("Tray_Connected")}{(latency.HasValue ? $" ({latency} ms)" : "")}"
                         : LanguageService.T("Tray_Disconnected");
                 }
+                catch (OperationCanceledException) when (_closed) { }
                 catch (Exception ex) { CrashLogService.Write("Widget network check", ex); }
                 finally { _networkCheckInFlight = false; }
             }
@@ -118,6 +132,7 @@ namespace OptimizerWpf.Views
             TxtGameName.Text = $"{LanguageService.T("Widget_MonitoringPrefix")}{game.Value.Name}";
 
             _gpuSubscription ??= SharedTelemetryService.SubscribeGpu();
+            _sensorSubscription ??= SensorService.Subscribe();
             _ = RefreshGpuAsync();
             RefreshGpuVoltageAsync();
 
@@ -143,10 +158,12 @@ namespace OptimizerWpf.Views
             _voltageQueryInFlight = true;
             try
             {
-                var volts = await System.Threading.Tasks.Task.Run(SensorService.GetGpuVoltageVolts);
-                if (_closed) return;
+                var volts = await System.Threading.Tasks.Task.Run(SensorService.GetGpuVoltageVolts).WaitAsync(_lifetime.Token);
+                if (_closed || _sensorSubscription == null || !IsVisible) return;
                 TxtGpuVoltage.Text = volts.HasValue ? $"{volts.Value:0.000} V" : "--";
             }
+            catch (OperationCanceledException) when (_closed) { }
+            catch (Exception ex) { System.Diagnostics.Trace.TraceWarning("Widget voltage query: " + ex.Message); }
             finally
             {
                 _voltageQueryInFlight = false;
@@ -169,6 +186,10 @@ namespace OptimizerWpf.Views
             AppSettingsService.Save();
             _closed = true;
             _timer.Stop();
+            _timer.Tick -= OnTick;
+            IsVisibleChanged -= OnVisibilityChanged;
+            _lifetime.Cancel();
+            _lifetime.Dispose();
             ReleaseOverlay();
         }
     }

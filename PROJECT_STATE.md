@@ -1,6 +1,6 @@
 # CURRENT CHECKPOINT — 2026-11-28
 
-**Read [START_HERE.md](START_HERE.md) first.** Active development branch is `release/7.1.0-ultra`, draft PR #6; target 7.1.0, version fields remain 7.0.0 until release gate. The current source targets .NET 11; older state below is retained as historical evidence, not current instructions. Latest confirmed full build: 795 .NET and 32 Python at b69332fc; recovery/distro/E2E previously green at 7960011c. Endurance 15+15 min succeeded on older 006cd09e. New profile/shell changes pending CI. Physical restore and independent provider unverified.
+**Read [START_HERE.md](START_HERE.md) first.** Active development branch is `release/7.1.0-ultra`, draft PR #6; target 7.1.0, version fields remain 7.0.0 until release gate. The current source targets .NET 11; older state below is retained as historical evidence, not current instructions. Latest confirmed full build: 843 .NET and 32 Python at 9a92f649; recovery/distro/E2E previously green at 7960011c. Endurance 15+15 min at 006cd09e. New shell and tray/native demand changes pending CI.
 
 ---
 

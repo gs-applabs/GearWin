@@ -25,6 +25,10 @@ namespace OptimizerWpf.Services
         private static readonly object SensorGate = new();
         private static long _lastRefresh;
         private static bool _closed;
+        private static int _releasePending;
+        private static readonly ResourceDemand Demand = new(ScheduleIdleRelease);
+
+        internal static IDisposable? Subscribe() => Demand.Acquire();
 
         private static readonly object SnapshotGate = new();
         private static System.Threading.Tasks.Task<(int? Cpu, int? Gpu, int? Ram, string? Pawn)>? _temperatureTask;
@@ -36,9 +40,12 @@ namespace OptimizerWpf.Services
             lock (SnapshotGate)
             {
                 if (_temperatureTask is { IsCompleted: false }) return _temperatureTask;
-                return _temperatureTask = System.Threading.Tasks.Task.Run(() => (
-                    GetCpuTemperatureCelsius(), GetGpuTemperatureCelsius(),
-                    GetRamTemperatureCelsius(), GetPawnIoVersion()));
+                return _temperatureTask = System.Threading.Tasks.Task.Run(() =>
+                {
+                    using var demand = Subscribe();
+                    return (GetCpuTemperatureCelsius(), GetGpuTemperatureCelsius(),
+                        GetRamTemperatureCelsius(), GetPawnIoVersion());
+                });
             }
         }
 
@@ -60,12 +67,44 @@ namespace OptimizerWpf.Services
 
         public static void Close()
         {
+            Demand.Stop();
             lock (SensorGate)
             {
                 _closed = true;
-                try { _computer?.Close(); } catch { }
-                _computer = null;
+                ReleaseComputer();
             }
+        }
+
+        private static void ReleaseComputer()
+        {
+            try { _computer?.Close(); } catch { }
+            _computer = null;
+            _lastRefresh = 0;
+            FailedHardware.Clear();
+            _gpuTemperature = null;
+            _gpuTemperatureAt = 0;
+        }
+
+        private static void ScheduleIdleRelease()
+        {
+            if (System.Threading.Volatile.Read(ref _computer) == null ||
+                System.Threading.Interlocked.CompareExchange(ref _releasePending, 1, 0) != 0) return;
+            _ = System.Threading.Tasks.Task.Run(() =>
+            {
+                try
+                {
+                    lock (SensorGate)
+                        if (Demand.IsIdle) ReleaseComputer();
+                }
+                finally
+                {
+                    System.Threading.Interlocked.Exchange(ref _releasePending, 0);
+                    // Recheck after resetting the gate; at most one close worker
+                    // waits behind a slow hardware query.
+                    if (Demand.IsIdle && System.Threading.Volatile.Read(ref _computer) != null)
+                        ScheduleIdleRelease();
+                }
+            });
         }
 
         private static Computer? GetComputer()
@@ -197,6 +236,8 @@ namespace OptimizerWpf.Services
 
         public static int? GetGpuTemperatureCelsius()
         {
+            using var demand = Subscribe();
+            if (demand == null) return null;
             lock (SensorGate)
             {
                 if (_closed) return null;
@@ -225,6 +266,8 @@ namespace OptimizerWpf.Services
 
         private static double? GetVoltage(HardwareType type, string[]? preferredNames)
         {
+            using var demand = Subscribe();
+            if (demand == null) return null;
             lock (SensorGate)
             {
                 var computer = GetComputer();
@@ -395,6 +438,8 @@ namespace OptimizerWpf.Services
         // (ένας μόνο φυσικός δίσκος στο σύστημα).
         public static int? GetDiskTemperatureCelsius(string? modelHint)
         {
+            using var demand = Subscribe();
+            if (demand == null) return null;
             lock (SensorGate)
             {
                 var computer = GetComputer();
@@ -422,6 +467,8 @@ namespace OptimizerWpf.Services
         // DiskInfoToolkit DriveNumber (verified upstream at tag v0.9.6).
         internal static int? GetDiskTemperatureByNumber(uint number)
         {
+            using var demand = Subscribe();
+            if (demand == null) return null;
             lock (SensorGate)
             {
                 var computer = GetComputer();
@@ -441,6 +488,8 @@ namespace OptimizerWpf.Services
 
         private static int? GetTemperature(HardwareType type, string[]? preferredNames)
         {
+            using var demand = Subscribe();
+            if (demand == null) return null;
             lock (SensorGate)
             {
                 var computer = GetComputer();

@@ -80,6 +80,7 @@ namespace OptimizerWpf.Services
 
                 if (s.TempAlertsEnabled)
                 {
+                    using var demand = SensorService.Subscribe();
                     var th = s.TempAlertThresholdC > 0 ? s.TempAlertThresholdC : DefaultTempThresholdC;
                     var title = LanguageService.T("Alert_TempTitle");
                     var body = LanguageService.T("Alert_TempBody");

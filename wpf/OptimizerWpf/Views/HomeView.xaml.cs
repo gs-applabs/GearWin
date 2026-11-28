@@ -49,6 +49,7 @@ namespace OptimizerWpf.Views
         // στο γρήγορο 1s timer (αυτά ΕΙΝΑΙ πραγματικά live).
         private readonly DispatcherTimer _diskRefreshTimer;
         private IDisposable? _gpuSubscription;
+        private IDisposable? _sensorSubscription;
         private bool _gpuReading;
         private readonly List<string> _drives = new();
         private int _driveIndex;
@@ -101,6 +102,7 @@ namespace OptimizerWpf.Views
                 }
                 SetLiveSubscriptions(true);
                 _gpuSubscription ??= SharedTelemetryService.SubscribeGpu();
+                _sensorSubscription ??= SensorService.Subscribe();
                 _refreshTimer.Interval = TimeSpan.FromSeconds(PollSeconds(
                     PerformanceProfileService.Current.HomeRefreshSeconds, parentWindow.IsActive));
                 if (!_refreshTimer.IsEnabled) _refreshTimer.Start();
@@ -388,6 +390,8 @@ namespace OptimizerWpf.Views
         {
             _gpuSubscription?.Dispose();
             _gpuSubscription = null;
+            _sensorSubscription?.Dispose();
+            _sensorSubscription = null;
         }
 
         private async Task RefreshSharedGpuAsync()
