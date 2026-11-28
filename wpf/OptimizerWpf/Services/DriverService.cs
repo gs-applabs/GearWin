@@ -7,6 +7,7 @@ using System.Linq;
 using System.Management;
 using System.Net.Http;
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -54,6 +55,26 @@ namespace OptimizerWpf.Services
     public static class DriverService
     {
         private static readonly HttpClient Http = BuildHttpClient();
+        private static readonly HttpClient CatalogHttp = new(new HttpClientHandler { AllowAutoRedirect = false })
+        {
+            Timeout = System.Threading.Timeout.InfiniteTimeSpan
+        };
+
+        private static async Task<string> ReadCatalogHtmlAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            const int limit = 2 * 1024 * 1024;
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            deadline.CancelAfter(TimeSpan.FromSeconds(20));
+            using var response = await CatalogHttp.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, deadline.Token)
+                .ConfigureAwait(false);
+            response.EnsureSuccessStatusCode(); // no redirects to arbitrary origins
+            if (response.Content.Headers.ContentLength > limit || response.Content.Headers.ContentEncoding.Count != 0)
+                throw new InvalidDataException("Unsupported Catalog HTML size or encoding.");
+            var charset = response.Content.Headers.ContentType?.CharSet;
+            var encoding = string.IsNullOrWhiteSpace(charset) ? Encoding.UTF8 : Encoding.GetEncoding(charset.Trim('"'));
+            using var stream = await response.Content.ReadAsStreamAsync(deadline.Token).ConfigureAwait(false);
+            return await CatalogPackage.ReadBoundedHtmlAsync(stream, limit, encoding, deadline.Token).ConfigureAwait(false);
+        }
 
         // Τελευταίο SHA256 hash που υπολογίστηκε σε εγκατάσταση Catalog driver - διαθέσιμο στο UI
         // για εμφάνιση/log, ίδια λογική με το "κράτα ίχνος τι πραγματικά εγκαταστάθηκε".
@@ -170,6 +191,7 @@ namespace OptimizerWpf.Services
             var rnd = new Random();
             var cache = LoadCatalogCache();
             var cacheChanged = false;
+            var requestFailed = false;
 
             foreach (var device in devices)
             {
@@ -188,43 +210,46 @@ namespace OptimizerWpf.Services
 
                 try
                 {
-                    var candidates = await SearchCatalogForDeviceWithRetryAsync(device);
+                    var candidates = await SearchCatalogForDeviceWithRetryAsync(device, ct);
                     if (candidates.Count > 0) devicesWithAnyResult++;
                     cache[device.HardwareId] = new CatalogCacheEntry(DateTime.UtcNow, candidates.Select(ToCached).ToList());
                     cacheChanged = true;
                     var best = PickBest(device, candidates);
                     if (best != null) results.Add(best);
                 }
-                catch { /* ένα αποτυχημένο device δεν πρέπει να σταματήσει τα υπόλοιπα */ }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+                catch { requestFailed = true; /* do not cache failed requests as empty successes */ }
                 await Task.Delay(350 + rnd.Next(0, 250), ct);
             }
 
             if (cacheChanged) SaveCatalogCache();
 
-            var looksBlocked = devicesScanned >= 5 && devicesWithAnyResult == 0;
+            var looksBlocked = devicesWithAnyResult == 0 && (requestFailed || devicesScanned >= 5);
             return (results, looksBlocked);
         }
 
-        private static async Task<List<CatalogCandidate>> SearchCatalogForDeviceWithRetryAsync(PnpDeviceInfo device)
+        private static async Task<List<CatalogCandidate>> SearchCatalogForDeviceWithRetryAsync(PnpDeviceInfo device, CancellationToken ct)
         {
-            try { return await SearchCatalogForDeviceAsync(device); }
+            try { return await SearchCatalogForDeviceAsync(device, ct); }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
             catch
             {
-                await Task.Delay(1500);
-                try { return await SearchCatalogForDeviceAsync(device); }
-                catch { return new List<CatalogCandidate>(); }
+                await Task.Delay(1500, ct);
+                return await SearchCatalogForDeviceAsync(device, ct);
             }
         }
 
-        private static async Task<List<CatalogCandidate>> SearchCatalogForDeviceAsync(PnpDeviceInfo device)
+        private static async Task<List<CatalogCandidate>> SearchCatalogForDeviceAsync(PnpDeviceInfo device, CancellationToken ct)
         {
             var url = $"https://www.catalog.update.microsoft.com/Search.aspx?q={Uri.EscapeDataString(device.HardwareId)}";
-            var html = await Http.GetStringAsync(url);
+            using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            request.Headers.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
+            var html = await ReadCatalogHtmlAsync(request, ct);
 
             // Ίδιο regex με το reference script - parsing του πίνακα αποτελεσμάτων του Catalog.
             const string pattern = "(?s)<tr id=\"(?<UpdateId>[a-f0-9\\-]+)_row\".*?class=\"tableRow\">.*?<a.*?>(?<Title>.*?)</a>.*?<td>(?<Class>.*?)</td>.*?<td>(?<Version>.*?)</td>.*?<td>(?<Date>.*?)</td>";
             var list = new List<CatalogCandidate>();
-            foreach (Match m in Regex.Matches(html, pattern))
+            foreach (Match m in Regex.Matches(html, pattern, RegexOptions.None, TimeSpan.FromSeconds(2)))
             {
                 var title = m.Groups["Title"].Value.Trim();
                 if (title.Contains("Beta", StringComparison.OrdinalIgnoreCase) || title.Contains("Preview", StringComparison.OrdinalIgnoreCase)) continue;
@@ -339,11 +364,10 @@ namespace OptimizerWpf.Services
             var body = $"updateIDs=[{{\"size\":0,\"updateID\":\"{updateId}\",\"uidInfo\":\"{updateId}\"}}]";
             using var content = new StringContent(Uri.UnescapeDataString(body));
             content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/x-www-form-urlencoded");
-            using var response = await Http.PostAsync("https://www.catalog.update.microsoft.com/DownloadDialog.aspx", content);
-            response.EnsureSuccessStatusCode();
-            var html = await response.Content.ReadAsStringAsync();
-            if (html.Length > 2 * 1024 * 1024) return null;
-            var urls = Regex.Matches(html, @"(https?://(?:dl\.delivery\.mp\.microsoft\.com|(?:catalog\.s\.|www\.)?download\.windowsupdate\.com)/[^'""]*)")
+            using var request = new HttpRequestMessage(HttpMethod.Post, "https://www.catalog.update.microsoft.com/DownloadDialog.aspx") { Content = content };
+            request.Headers.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
+            var html = await ReadCatalogHtmlAsync(request, CancellationToken.None);
+            var urls = Regex.Matches(html, @"(https?://(?:dl\.delivery\.mp\.microsoft\.com|(?:catalog\.s\.|www\.)?download\.windowsupdate\.com)/[^'""]*)", RegexOptions.None, TimeSpan.FromSeconds(2))
                 .Select(m => CatalogPackage.Normalize(System.Net.WebUtility.HtmlDecode(m.Groups[1].Value), fromCatalog: true))
                 .Where(u => u != null).Select(u => u!.AbsoluteUri).Distinct(StringComparer.Ordinal).ToArray();
             return urls.Length == 1 ? urls[0] : null;

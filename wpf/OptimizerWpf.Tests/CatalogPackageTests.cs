@@ -42,16 +42,50 @@ public class CatalogPackageTests
     }
 
     [Theory]
-    [InlineData(5, 4, 10)]
-    [InlineData(5, 6, 10)]
-    [InlineData(5, null, 4)]
-    [InlineData(0, null, 10)]
+    [InlineData(5, 4L, 10L)]
+    [InlineData(5, 6L, 10L)]
+    [InlineData(5, null, 4L)]
+    [InlineData(0, null, 10L)]
     public async Task StreamRejectsTruncationOrOversize(int size, long? expected, long limit)
     {
         using var input = new MemoryStream(new byte[size]);
         using var output = new MemoryStream();
         await Assert.ThrowsAsync<InvalidDataException>(() =>
             CatalogPackage.CopyHashAsync(input, output, expected, limit, CancellationToken.None));
+    }
+
+    [Theory]
+    [InlineData(0, 4, true)]
+    [InlineData(4, 4, true)]
+    [InlineData(5, 4, false)]
+    [InlineData(8193, 8192, false)]
+    public async Task HtmlReadEnforcesByteLimit(int size, int limit, bool accepted)
+    {
+        using var input = new MemoryStream(Encoding.UTF8.GetBytes(new string('a', size)));
+        if (accepted)
+            Assert.Equal(new string('a', size),
+                await CatalogPackage.ReadBoundedHtmlAsync(input, limit, Encoding.UTF8, CancellationToken.None));
+        else
+            await Assert.ThrowsAsync<InvalidDataException>(() =>
+                CatalogPackage.ReadBoundedHtmlAsync(input, limit, Encoding.UTF8, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task HtmlReadHonorsCancellation()
+    {
+        using var input = new MemoryStream(new byte[8]);
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            CatalogPackage.ReadBoundedHtmlAsync(input, 16, Encoding.UTF8, cts.Token));
+    }
+
+    [Fact]
+    public async Task HtmlReadDecodesUtf8BomWithinByteLimit()
+    {
+        var bytes = new byte[] { 0xef, 0xbb, 0xbf, 0xce, 0xb1 };
+        using var input = new MemoryStream(bytes);
+        Assert.Equal("α", await CatalogPackage.ReadBoundedHtmlAsync(input, 5, Encoding.UTF8, CancellationToken.None));
     }
 
     private const string Inf = "[Manufacturer]\n%Vendor%=Models,NTamd64\n[Models.NTamd64]\n%Device%=Install,PCI\\VEN_1234&DEV_5678\n[Other]\n%Other%=Install,PCI\\VEN_9999&DEV_0000";

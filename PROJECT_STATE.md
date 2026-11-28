@@ -1,6 +1,14 @@
 # CURRENT CHECKPOINT — 2026-11-28
 
-**Read [START_HERE.md](START_HERE.md) first.** Active development branch is `release/7.1.0-ultra`, draft PR #6; target 7.1.0, version fields remain 7.0.0 until release gate. The current source targets .NET 11; older state below is retained as historical evidence, not current instructions. Latest confirmed full build: 843 .NET and 32 Python at 9a92f649; recovery/distro/E2E previously green at 7960011c. Endurance 15+15 min at 006cd09e. New shell and tray/native demand changes pending CI.
+Read [START_HERE.md](START_HERE.md) first; branch `release/7.1.0-ultra`, draft PR #6, target 7.1.0. No merge/release.
+
+## Active CI / P2 checkpoint — 2026-11-28
+
+- Parent source `003f386c2c6c001bc98e1e4ac23ab284950dd89c`: installer run [46105576693](https://github.com/gs-applabs/GearWin/actions/runs/46105576693), build job 140857464198: 905 desktop passed, 2 failed before test body (xUnit Int32 cannot bind to Nullable<Int64> in CatalogPackageTests); migration not reached in this job; installer E2E skipped; offline clone green. UMP01 run 46105576677 pending at inspection.
+- Last fully successful short baseline and installer on `c9c5e7d109f746c1113b15555aec3bcf7c4e230b`: runs [46104859038](https://github.com/gs-applabs/GearWin/actions/runs/46104859038) and [46104859016](https://github.com/gs-applabs/GearWin/actions/runs/46104859016). 865 desktop + 42 migration = 907 .NET; 32 Python in installer offline-clone job. Normal/tray peak private 143.43/48.30 MiB, working set 256.52/133.98 MiB, process write transfer 635/0 B. Not physical SSD or sustained leak proof.
+- This commit: corrected typed xUnit InlineData (no skipped tests or relaxed checks); Catalog search and dialog share a 2 MiB bounded HTML stream reader, 20 s total request/stream deadline, no redirects, regex timeout, cancellation through search and retry; failed searches no longer cached as successful empty responses. Six new fixture cases (522 cumulative authored, not passed). Real HTTP/charset/redirect compatibility, partial-results indication, cache bounds/ownership, WMI and extraction quota remain open. No Windows build claimed for this commit until exact CI verifies it.
+- Next: let exact-head CI finish before more pushes; inspect logs for regression; P2 WMI identity/disposal, bounded cache and extraction, update outcomes, cleanup protection/dedupe, gaming/SSD and remaining P3-P5 gates. No merge or release; version metadata 7.0.0. Preserve earlier requirements below.
+
 
 ---
 

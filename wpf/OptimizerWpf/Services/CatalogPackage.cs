@@ -60,6 +60,29 @@ internal static class CatalogPackage
         return Convert.ToHexString(hash.GetHashAndReset());
     }
 
+    // Cap the bytes actually received, including responses without Content-Length.
+    // Only the small, bounded HTML response is buffered; CABs use streaming.
+    internal static async Task<string> ReadBoundedHtmlAsync(Stream input, int limit,
+        Encoding encoding, CancellationToken ct)
+    {
+        if (limit <= 0 || limit > 2 * 1024 * 1024) throw new ArgumentOutOfRangeException(nameof(limit));
+        ct.ThrowIfCancellationRequested();
+        using var output = new MemoryStream();
+        var buffer = new byte[8192];
+        while (true)
+        {
+            int read = await input.ReadAsync(buffer.AsMemory(0, (int)Math.Min(buffer.Length, limit - output.Length + 1)), ct)
+                .ConfigureAwait(false);
+            if (read == 0) break;
+            if (read > limit - output.Length) throw new InvalidDataException("Catalog HTML exceeds its byte limit.");
+            output.Write(buffer, 0, read);
+        }
+        ct.ThrowIfCancellationRequested();
+        output.Position = 0;
+        using var reader = new StreamReader(output, encoding, detectEncodingFromByteOrderMarks: true);
+        return reader.ReadToEnd();
+    }
+
     internal static async Task<string> DownloadAsync(Uri uri, string target, CancellationToken ct = default)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
