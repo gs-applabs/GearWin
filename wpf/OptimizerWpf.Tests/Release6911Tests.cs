@@ -28,9 +28,24 @@ namespace OptimizerWpf.Tests
             Version V(string k) => new(int.Parse(k[..1]), int.Parse(k[1..2]), int.Parse(k[2..]));
             var versions = keys.Select(V).ToList();
             Assert.Equal(versions.OrderByDescending(v => v).ToList(), versions);
-            Assert.Equal("6911", keys[0]);
+            var csproj = File.ReadAllText(Path.Combine(Root(), "wpf", "OptimizerWpf", "OptimizerWpf.csproj"));
+            var current = Regex.Match(csproj, @"<Version>([\d.]+)</Version>").Groups[1].Value;
+            Assert.Equal(current.Replace(".", ""), keys[0]);
             // η παλιά μπλε σύνοψη "6.9.0 (6.7 - 6.9)" δεν υπάρχει πια πάνω από τις εκδόσεις
             Assert.DoesNotContain("VerHist_690Title", xaml);
+        }
+
+        [Theory]
+        [InlineData("700")]
+        [InlineData("6912")]
+        public void RecoveredHistoryHasExactlyFourteenLanguageEntries(string version)
+        {
+            var source = File.ReadAllText(Path.Combine(Root(), "wpf", "OptimizerWpf", "Services", "LanguageService.cs"));
+            foreach (var suffix in new[] { "Title", "Desc" })
+            {
+                var key = $"VerHist_v{version}{suffix}";
+                Assert.Equal(14, Regex.Matches(source, Regex.Escape("[\"" + key + "\"]")).Count);
+            }
         }
 
         [Fact]

@@ -1,0 +1,123 @@
+name: Product snapshots
+on:
+  workflow_dispatch:
+  push:
+    branches: [release/7.1.0-ultra]
+    paths: ['.github/workflows/product-snapshots.yml']
+permissions:
+  contents: read
+concurrency:
+  group: product-snapshots
+  cancel-in-progress: false
+jobs:
+  capture:
+    if: github.ref == 'refs/heads/release/7.1.0-ultra'
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '11.0.x'
+      - name: Capture actual application controls in an isolated test process
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:GS_SNAPSHOT_DIR = Join-Path $env:RUNNER_TEMP 'product-snapshots'
+          $env:GEARWIN_TEST_HOST = '1'
+          $source = @'
+          using System;
+          using System.IO;
+          using System.Threading;
+          using System.Windows;
+          using System.Windows.Media;
+          using System.Windows.Media.Imaging;
+          using System.Windows.Threading;
+          using Xunit;
+          namespace OptimizerWpf.Tests;
+          public class ProductCaptureTests
+          {
+              static void Pump(int milliseconds)
+              {
+                  var frame = new DispatcherFrame();
+                  var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(milliseconds) };
+                  timer.Tick += (_, _) => { timer.Stop(); frame.Continue = false; };
+                  timer.Start();
+                  Dispatcher.PushFrame(frame);
+              }
+              static void Save(Window window, string output)
+              {
+                  window.UpdateLayout();
+                  var w = (int)Math.Ceiling(window.ActualWidth);
+                  var h = (int)Math.Ceiling(window.ActualHeight);
+                  if (w < 400 || h < 300) throw new Exception("Window too small");
+                  var bitmap = new RenderTargetBitmap(w,h,96,96,PixelFormats.Pbgra32);
+                  bitmap.Render(window);
+                  var png = new PngBitmapEncoder();
+                  png.Frames.Add(BitmapFrame.Create(bitmap));
+                  using var stream = File.Create(output);
+                  png.Save(stream);
+              }
+              [Fact]
+              public void CaptureAllMainPages()
+              {
+                  var output = Environment.GetEnvironmentVariable("GS_SNAPSHOT_DIR");
+                  if (string.IsNullOrEmpty(output)) return;
+                  Directory.CreateDirectory(output);
+                  Exception? error = null;
+                  var thread = new Thread(() =>
+                  {
+                      try
+                      {
+                          if (Application.Current == null) { var app = new OptimizerWpf.App(); app.InitializeComponent(); }
+                          Application.Current!.ShutdownMode = ShutdownMode.OnExplicitShutdown;
+                          ThemeManager.LoadPersisted();
+                          var window = new MainWindow { Width=1400, Height=850 };
+                          window.Show();
+                          Pump(1000);
+                          foreach(var theme in new[]{0,1})
+                          {
+                              if(theme==1) ThemeManager.ToggleLightDark();
+                              foreach(var tag in new[]{"Home","Bloatware","Health","Network","GamesMedia","Tweaks","System"})
+                              {
+                                  int count=TabLayout.SubPages(tag)?.Count ?? 1;
+                                  for(var i=0;i<count;i++)
+                                  {
+                                      window.SelectTab(tag+"#"+i);
+                                      Pump(600);
+                                      Save(window,Path.Combine(output,$"{theme}-{tag}-{i}.png"));
+                                  }
+                              }
+                          }
+                          window.Close();
+                      } catch(Exception ex) { error=ex; }
+                  });
+                  thread.SetApartmentState(ApartmentState.STA);
+                  thread.Start();
+                  if(!thread.Join(TimeSpan.FromMinutes(8))) throw new TimeoutException("Page rendering timeout");
+                  if(error!=null) throw error;
+              }
+          }
+          '@
+          Set-Content 'wpf/OptimizerWpf.Tests/ProductCaptureTests.cs' -Value $source -Encoding utf8
+          dotnet test 'wpf/OptimizerWpf.Tests/OptimizerWpf.Tests.csproj' -c Release --filter FullyQualifiedName~ProductCaptureTests
+          if ($LASTEXITCODE -ne 0) { throw 'Rendering tests failed' }
+      - name: Validate gallery for review
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $src = Join-Path $env:RUNNER_TEMP 'product-snapshots'
+          $files = @(Get-ChildItem $src -Recurse -File -Filter '*.png')
+          if ($files.Count -lt 24) { throw "Too few screenshots: $($files.Count)" }
+          Add-Type -AssemblyName System.Drawing
+          foreach ($file in $files) {
+            $image = [Drawing.Image]::FromFile($file.FullName)
+            try { if ($image.Width -lt 32 -or $image.Height -lt 32) { throw "Invalid image: $($file.Name)" } } finally { $image.Dispose() }
+          }
+          "Validated $($files.Count) screenshots from $env:GITHUB_SHA" | Set-Content (Join-Path $src 'capture-source.txt')
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: product-snapshots
+          path: ${{ runner.temp }}/product-snapshots/
+          if-no-files-found: error

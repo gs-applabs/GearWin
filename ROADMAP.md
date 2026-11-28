@@ -59,14 +59,14 @@ Latest confirmed Windows CI at audit: run 46070758350, 716 passed (674 desktop +
 
 | RQ | Τρέχουσα κατάσταση / επόμενο βήμα |
 |---|---|
-| RQ01 | PORTED — .NET 11 source/SDK/CI/launchers aligned; build and tests pending |
+| RQ01 | VERIFIED HOSTED CI — .NET 11 build/tests/installer at 7960011c |
 | RQ02 | PORTED — opt-in resources, compile/visual gates pending |
-| RQ03–04 | PORTED — guarded Partclone source, kit and recovery/distro CI; native engine tests pending |
+| RQ03–04 | VERIFIED LOOP / DISTRO CI — physical boot and full interactive acceptance pending |
 | RQ05 | PORTED — signer guard; real package trust/install test pending |
 | RQ06 | SOURCE COVERED — root logic already fixed; regression test restored |
 | RQ07 | PORTED — catalog ID check with volume identity; native backup/restore pending |
-| RQ08–09 | PARTIAL — brush and dynamic installer restored; remaining history, recovery export and upgrade tests |
-| RQ10–11 | OPEN — product docs/second provider |
+| RQ08–09 | PORTED — history/export/brush; E2E passed at 7960011c, latest history and asset assertion pending; visual/settings checks open |
+| RQ10–11 | RQ10 restored historical gallery/docs + artifact workflow; new visual capture pending; RQ11 independent provider OPEN |
 | RQ12 | PARTIAL — CLI planning; GUI/data migration gaps |
 | RQ13 | OPEN/deferred — usage-based suggestions |
 | RQ14–19 | PARTIAL — existing functionality; targeted runtime and lifecycle validation |
@@ -87,6 +87,14 @@ RQ03/RQ04 deliberately not blindly ported: master Partclone adapter imports sysf
 ## P0.R — recovery CI integration (2026-11-28)
 
 RQ04: authored Linux loop-device harness with four tests (actual geometry/copy and trailing bytes, mismatched sectors/capacity, mounted target refusal, Partclone held-source fd create/check/CI-only restore/tamper). Guards require root + GITHUB_ACTIONS, verify each freshly allocated loop backing file before any mutation; production rejects loops. Two Ubuntu runner versions plus Windows 2022/2025 tests; six distro containers (Debian 12/13, Fedora, Arch, openSUSE, Alpine) and migration CLI, shared kernel not independent VM provider. Required Partclone missing is a failure, not skip. Fixed post-image plan to omit initial conservative space check before publish (all identity checks remain); lsblk fixed system dirs for usrmerge variants. 32 regular/mock Python cases plus four loop methods authored; not yet certified. Container and real loop checks not executed locally. No UEFI boot or physical SSD evidence. RQ03 is source implemented (experimental), RQ04 CI configured, not validated.
+
+
+## P0.R — history, product documentation and verified CI (2026-11-28)
+
+Exact validated source SHA 7960011c034d9e5a49605b2d34e73a0e37f6ca61. UMP01 46101805741 success: job 140845869672 739 desktop + 42 migration = 781 passed (.NET 11), installer and normal/tray baseline; 140845869860 32 Python fixtures passed. Normal/tray CPU 4.414/0.058%, peak WS 274.34/134.28 MiB, private 162.25/48.57 MiB, process write transfer 635/0 B, handles 1143→1270/698→832. Not a physical SSD measurement or endurance proof. Recovery 46101805697 all four jobs passed (Windows 2022/2025, Ubuntu 22.04/24.04; four actual loop methods including held-fd Partclone create/check/CI-only restore/tamper). Linux distro 46101805674 all six jobs green; shared host kernel, not independent distro kernels. Installer 46101805761 all six jobs green including fresh, from-latest and in-app scenario; artifact reports version 7.0.0, NOT final 7.1.0. No proof of real physical WinRE/UEFI/BitLocker boot or full production adapter interactive acceptance. Endurance 46101279059 remains in progress at inspection. RQ01 validated on hosted Windows; RQ03/RQ04 loop/userland gates passed; RQ05/RQ07 fixtures passed but actual driver/backup remain pending. RQ09 installer scenarios passed, visual dark-mode and changed-file/settings preservation review still open.
+
+RQ08: restored master Help history 6.9.12/7.0.0 translations: full LanguageService blobs compared; removing exactly 56 new history lines yields identical candidate file; all 4 keys each occur 14 times. No unrelated translation changes. Help XAML and dynamic newest-version test aligned; 2 new fixture cases for translation counts (350 cumulative authored .NET, current test count still 781). Export-app error handling already exists; TabLayout identical. Added missing installed Partclone asset assertion to installer E2E.
+RQ10: restored historical 26 screenshot blobs, gallery provenance, FAQ, two issue templates, reference audit doc, bilingual README links and read-only screenshot CI (artifacts only, no automatic master push). Existing screenshot previews are historical; new capture and visual review pending. No new release or merge. RQ11 independent provider still unverified. Next check new CI and continue P0/P1 (shutdown timeout, process safety, resource lifecycle), with P3 visual/translation acceptance and RQ20 final version pending.
 
 ### Αποδεδειγμένη κατάσταση
 

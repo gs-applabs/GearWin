@@ -9,6 +9,10 @@
 
 *A free, open-source maintenance and optimization tool for Windows 11 — see the [English section](#english) below.*
 
+**[Latest published release / Τελευταία δημοσιευμένη έκδοση](https://github.com/gs-applabs/GearWin/releases/latest)** · [Visual showcase / Οπτική παρουσίαση](docs/SHOWCASE.md) · [FAQ / Συχνές ερωτήσεις](docs/GS-APP-LABS-FAQ.md) · [Report an issue](https://github.com/gs-applabs/GearWin/issues/new/choose)
+
+Development branch 7.1.0: .NET 11 and recovery validation are in progress. Published release and development snapshots are distinct. / Η υπό ανάπτυξη έκδοση 7.1.0 δεν αποτελεί ακόμη τελική έκδοση.
+
 ## Περιεχόμενα / Contents
 
 - [Ελληνικά](#ελληνικά)

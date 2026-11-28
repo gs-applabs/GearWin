@@ -6,8 +6,14 @@ available inside the app itself, via Help/Instructions → the "Version History"
 
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
-## Unreleased — Windows system backup and migration preview
-- Offline Linux Live expert raw disk cloner `tools/recovery/gearwin_clone.py`: whole-disk identity/space/mount/swap checks, two typed destructive confirmations, full SHA-256 clone verification. GUI exports the recovery kit ZIP and installer includes the script/manual. **Not run on physical devices; virtual disk-file tests only.**
+## Unreleased — GearWin 7.1.0 integration candidate
+
+- Demand-driven feature lifecycle, bounded work coordination, registry/service/power recovery journals, driver signer checks, and recovery safeguards. See ROADMAP.md and the cumulative pass log for exact scope and limitations.
+- .NET 11 candidate validated on Windows Server 2022/2025; Partclone and raw copy fixtures on disposable loops, six Linux userlands, and installer smoke/upgrade scenarios passed at 7960011c. No physical bare-metal restore or final 7.1.0 publication.
+- Restored version history 7.0.0 and 6.9.12 in 14 languages; version metadata deliberately remains 7.0.0 until final gate.
+
+## v7.0.0 — Windows system backup and migration
+- Offline Linux Live expert raw disk cloner `tools/recovery/gearwin_clone.py`: whole-disk identity/space/mount/swap checks, two typed destructive confirmations, full SHA-256 clone verification. GUI exports the recovery kit ZIP and installer includes the script/manual. **Physical disk/boot restore unverified.**
 - Read-only Windows RE status (`reagentc /info`) available in the backup card.
 - Windows system image backup uses `-vssCopy` and queries the selected backup catalog on completion; successful catalog access is not proof of restored system boot.
 - Linux runner safety tests and Windows installer smoke tests verify source and packaged recovery assets. Full SSD host-write and cloned-Windows boot tests still require disposable physical/UEFI VM hardware.
@@ -17,7 +23,11 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 - The recovery card links to Windows system image recovery and Clonezilla Live disk-to-disk guides.
 - The source includes the Windows/Linux migration CLI for read-only application inventory and package planning.
 - Folder preflight and installed app export now appear immediately below System Image Backup in System > Tools. The folder preflight uses a bounded read-only metadata scan; the JSON app list uses the shared migration core.
-- Installer tests pass on GitHub Windows 2022/2025 VMs, but system image recovery, disk cloning/boot, SSD write benchmarks and real hardware remain unverified; disk-to-disk cloning and file transfer are not performed by GearWin.
+- Installer tests pass on GitHub Windows 2022/2025 VMs, but system image recovery, disk cloning/boot, SSD write benchmarks and real hardware remain unverified; Windows GUI does not directly perform raw disk-to-disk copying or file transfer; the offline expert kit is separate.
+
+## v6.9.12 — Migration to .NET 11
+
+- Updated desktop and migration framework/SDK, self-contained packaging and aligned dependencies. Physical Windows client acceptance is separate from hosted VM tests.
 
 ## v6.9.11 — GitHub account rename (giorstergiopoulos-design to gs-applabs)
 
