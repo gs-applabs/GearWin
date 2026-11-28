@@ -1,51 +1,58 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Text;
 using System.Text.Json;
 
 namespace OptimizerWpf.Services
 {
-    // Μικρό, επαναχρησιμοποιήσιμο αρχείο "τι έχει ήδη δει/ειδοποιηθεί ο χρήστης και για ποια έκδοση" (key -> έκδοση).
-    // Χρησιμοποιείται για: τον οδηγό καλωσορίσματος (μία φορά ανά major.minor), την πρόταση της σουίτας (μία φορά) και την
-    // ειδοποίηση νέας έκδοσης (μία φορά ανά έκδοση). Ανθεκτικό σε κατεστραμμένο αρχείο (ξεκινά κενό), ατομική εγγραφή, thread-safe.
+    // One small existing store shared by onboarding, suite offers and release notifications.
+    // Read the latest state under a process-wide gate, not a stale instance snapshot.
+    // No timer, persistent handle or unbounded path cache.
     public sealed class OncePerVersionStore
     {
+        private const int MaxBytes = 64 * 1024;
+        private static readonly object Gate = new();
         private readonly string _path;
-        private readonly object _gate = new();
-        private Dictionary<string, string> _data;
 
-        public OncePerVersionStore(string path)
-        {
-            _path = path;
-            _data = Load(path);
-        }
+        public OncePerVersionStore(string path) => _path = Path.GetFullPath(path);
 
         public static string DefaultPath() => Path.Combine(AppDataDir(), "seen-versions.json");
 
-        // Ίδιος κανόνας φακέλου δεδομένων με τις υπόλοιπες υπηρεσίες (τα tests ορίζουν GEARWIN_DATA_DIR).
         public static string AppDataDir() =>
             Environment.GetEnvironmentVariable("GEARWIN_DATA_DIR") is { Length: > 0 } c
                 ? c
                 : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "OptimizerWpf");
 
-        private static Dictionary<string, string> Load(string path)
+        private Dictionary<string, string> Load()
         {
             try
             {
-                if (!File.Exists(path) || new FileInfo(path).Length > 64 * 1024) return new();
-                var d = JsonSerializer.Deserialize<Dictionary<string, string>>(File.ReadAllText(path));
-                return d ?? new();
+                using var stream = new FileStream(_path, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete);
+                if (stream.Length > MaxBytes) throw new InvalidDataException("Seen-version store exceeds size limit.");
+                using var reader = new BinaryReader(stream);
+                var bytes = reader.ReadBytes(MaxBytes + 1);
+                if (bytes.Length > MaxBytes) throw new InvalidDataException("Seen-version store exceeds size limit.");
+                // Older files may contain a UTF-8 BOM.
+                var offset = bytes.Length >= 3 && bytes[0] == 0xef && bytes[1] == 0xbb && bytes[2] == 0xbf ? 3 : 0;
+                return JsonSerializer.Deserialize<Dictionary<string, string>>(bytes.AsSpan(offset)) ?? new();
             }
-            catch { return new(); }
+            catch (FileNotFoundException) { return new(); }
+            catch (DirectoryNotFoundException) { return new(); }
+            catch (JsonException) { return new(); } // retain existing malformed-JSON recovery policy
         }
 
-        public string? Get(string key)
+        internal Dictionary<string, string> Snapshot()
         {
-            lock (_gate) return _data.TryGetValue(key, out var v) ? v : null;
+            lock (Gate)
+            {
+                try { return Load(); }
+                catch { return new(); }
+            }
         }
 
-        // true όταν δεν έχει καταγραφεί τίποτα για το key ή η καταγεγραμμένη έκδοση είναι μικρότερη από την τρέχουσα.
-        // majorMinorOnly: οι αλλαγές patch (6.6.0 -> 6.6.1) δεν θεωρούνται "νέα έκδοση".
+        public string? Get(string key) => Snapshot().TryGetValue(key, out var value) ? value : null;
+
         public bool ShouldShow(string key, ReleaseVersion current, bool majorMinorOnly = true)
         {
             var seen = ReleaseVersion.ParseOrNull(Get(key));
@@ -53,45 +60,46 @@ namespace OptimizerWpf.Services
             return majorMinorOnly ? current.MajorMinor > seen.MajorMinor : current > seen;
         }
 
-        public void MarkSeen(string key, ReleaseVersion version)
+        private void Mutate(Func<Dictionary<string, string>, bool> change)
         {
-            lock (_gate)
+            lock (Gate)
             {
-                // δεν πάμε ποτέ προς τα πίσω (π.χ. downgrade ή παλαιότερο tag)
-                var old = ReleaseVersion.ParseOrNull(_data.TryGetValue(key, out var o) ? o : null);
-                if (old != null && old >= version) return;
-                _data[key] = version.ToString();
-                Save();
+                try
+                {
+                    var data = Load(); // inaccessible or oversized files are not replaced
+                    if (!change(data)) return;
+                    var json = JsonSerializer.Serialize(data);
+                    if (Encoding.UTF8.GetByteCount(json) > MaxBytes) return;
+                    AppSettingsService.WriteIfChanged(_path, json, null);
+                }
+                catch { /* Optional notifications and onboarding must not crash the app. */ }
             }
         }
 
-        // Ελεύθερο κείμενο (π.χ. ETag) στο ίδιο αρχείο - χωρίς έλεγχο έκδοσης.
-        public void SetRaw(string key, string? value)
+        public void MarkSeen(string key, ReleaseVersion version) => Mutate(data =>
         {
-            lock (_gate)
-            {
-                if (value == null) { if (_data.Remove(key)) Save(); return; }
-                if (_data.TryGetValue(key, out var o) && o == value) return;
-                _data[key] = value;
-                Save();
-            }
-        }
+            var old = ReleaseVersion.ParseOrNull(data.TryGetValue(key, out var o) ? o : null);
+            if (old != null && old >= version) return false;
+            data[key] = version.ToString();
+            return true;
+        });
 
-        public void Forget(string key)
-        {
-            lock (_gate) { if (_data.Remove(key)) Save(); }
-        }
+        public void SetRaw(string key, string? value) => SetRawBatch((key, value));
 
-        private void Save()
+        // One atomic replacement for related release cache fields, only when changed.
+        internal void SetRawBatch(params (string Key, string? Value)[] values) => Mutate(data =>
         {
-            try
+            bool changed = false;
+            foreach (var (key, value) in values)
             {
-                Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
-                var tmp = _path + ".tmp";
-                File.WriteAllText(tmp, JsonSerializer.Serialize(_data));
-                File.Move(tmp, _path, overwrite: true);
+                if (value == null) { changed |= data.Remove(key); continue; }
+                if (data.TryGetValue(key, out var old) && old == value) continue;
+                data[key] = value;
+                changed = true;
             }
-            catch { /* η αποτυχία αποθήκευσης δεν πρέπει ποτέ να ρίξει την εφαρμογή· χειρότερη περίπτωση: ο οδηγός ξαναεμφανίζεται */ }
-        }
+            return changed;
+        });
+
+        public void Forget(string key) => SetRaw(key, null);
     }
 }

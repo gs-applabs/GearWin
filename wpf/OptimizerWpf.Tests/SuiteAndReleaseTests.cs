@@ -119,6 +119,73 @@ namespace OptimizerWpf.Tests
         }
 
         [Fact]
+        public void ExistingInstancesDoNotLoseOtherKeysOrRegressVersion()
+        {
+            var p = Temp();
+            var a = new OncePerVersionStore(p);
+            var b = new OncePerVersionStore(p);
+            a.MarkSeen("guide", ReleaseVersion.ParseOrNull("7.1.0")!);
+            b.SetRaw("etag", "fresh");
+            b.MarkSeen("guide", ReleaseVersion.ParseOrNull("7.0.0")!);
+            Assert.Equal("7.1.0", b.Get("guide"));
+            Assert.Equal("fresh", a.Get("etag"));
+            a.Forget("guide");
+            b.SetRaw("tag", "v7.2.0");
+            Assert.Null(a.Get("guide"));
+            Assert.Equal("fresh", b.Get("etag"));
+        }
+
+        [Fact]
+        public void BatchUpdateKeepsUnrelatedKeysAndDoesNotRewriteUnchangedValues()
+        {
+            var p = Temp();
+            var a = new OncePerVersionStore(p);
+            var b = new OncePerVersionStore(p);
+            a.SetRaw("guide", "7.1.0");
+            b.SetRawBatch(("etag", "abc"), ("tag", "v7.2.0"));
+            var oldTime = new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+            File.SetLastWriteTimeUtc(p, oldTime);
+            var recorded = File.GetLastWriteTimeUtc(p);
+            a.SetRawBatch(("etag", "abc"), ("tag", "v7.2.0"));
+            Assert.Equal(recorded, File.GetLastWriteTimeUtc(p));
+            Assert.Equal("7.1.0", b.Get("guide"));
+            Assert.Equal("v7.2.0", a.Get("tag"));
+        }
+
+        [Fact]
+        public void OversizedExistingStoreIsNotReplaced()
+        {
+            var p = Temp();
+            Directory.CreateDirectory(Path.GetDirectoryName(p)!);
+            var original = new string('x', 65537);
+            File.WriteAllText(p, original);
+            var s = new OncePerVersionStore(p);
+            s.SetRaw("guide", "7.1.0");
+            Assert.Equal(original, File.ReadAllText(p));
+        }
+
+        [Fact]
+        public void OversizedNewValueDoesNotReplaceValidStore()
+        {
+            var p = Temp();
+            var s = new OncePerVersionStore(p);
+            s.SetRaw("guide", "7.1.0");
+            s.SetRaw("etag", new string('x', 65537));
+            Assert.Equal("7.1.0", s.Get("guide"));
+            Assert.Null(s.Get("etag"));
+        }
+
+        [Fact]
+        public void ParallelInstancesMergeIndependentWrites()
+        {
+            var p = Temp();
+            System.Threading.Tasks.Parallel.For(0, 12, i => new OncePerVersionStore(p).SetRaw("key" + i, "value" + i));
+            var state = new OncePerVersionStore(p).Snapshot();
+            Assert.Equal(12, state.Count);
+            for (int i = 0; i < 12; i++) Assert.Equal("value" + i, state["key" + i]);
+        }
+
+        [Fact]
         public void CorruptFileStartsEmpty_AndRawValuesRoundTrip()
         {
             var p = Temp();

@@ -8,7 +8,7 @@
 
 ## How do I get started? / Πώς ξεκινάω;
 
-Use the existing backup and recovery documentation; an installer test is not a full restore test.
+Open **System & Tools → Tools** (Σύστημα & Εργαλεία → Εργαλεία). Directly below System Image Backup are the folder-transfer preflight and application-list export. Preflight checks selected folders; it does not copy files. Export is an inventory for planning, not automatic installation on another operating system. See [backup and recovery](disk-backup-and-recovery.md) and [migration CLI](../migration/README.md). Offline clone kit requires a separately booted Linux Live environment; an installer test is not a full restore or boot test.
 
 ## What are the limitations? / Ποιοι είναι οι περιορισμοί;
 

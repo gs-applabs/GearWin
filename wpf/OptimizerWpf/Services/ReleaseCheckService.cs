@@ -38,7 +38,9 @@ namespace OptimizerWpf.Services
 
         public static async Task<ReleaseCheckOutcome> CheckAsync(OncePerVersionStore store, ReleaseVersion current, HttpMessageHandler? handler = null, CancellationToken ct = default)
         {
-            var res = await GitHubReleaseClient.GetLatestAsync(SelfUpdateService.Owner, SelfUpdateService.Repo, store.Get(KeyEtag), handler, ct: ct);
+            var cached = store.Snapshot();
+            cached.TryGetValue(KeyEtag, out var etag);
+            var res = await GitHubReleaseClient.GetLatestAsync(SelfUpdateService.Owner, SelfUpdateService.Repo, etag, handler, ct: ct);
             ct.ThrowIfCancellationRequested();
             string? tag; string page; bool can;
             switch (res.Status)
@@ -48,22 +50,22 @@ namespace OptimizerWpf.Services
                     page = res.Release.PageUrl;
                     var info = SelfUpdateService.ParseRelease(res.Release.Json);
                     can = info?.Sha256 != null;   // χωρίς digest το SelfUpdateService δεν θα εγκαταστήσει τίποτα
-                    store.SetRaw(KeyEtag, res.ETag);
-                    store.SetRaw(KeyTag, tag);
-                    store.SetRaw(KeyPage, page);
-                    store.SetRaw(KeyCan, can ? "1" : "0");
+                    store.SetRawBatch((KeyEtag, res.ETag), (KeyTag, tag), (KeyPage, page), (KeyCan, can ? "1" : "0"));
                     break;
                 case ReleaseFetchStatus.NotModified:
-                    tag = store.Get(KeyTag);
-                    page = store.Get(KeyPage) ?? $"https://github.com/{SelfUpdateService.Owner}/{SelfUpdateService.Repo}/releases";
-                    can = store.Get(KeyCan) == "1";
+                    cached.TryGetValue(KeyTag, out tag);
+                    page = cached.TryGetValue(KeyPage, out var cachedPage) && cachedPage != null ? cachedPage : $"https://github.com/{SelfUpdateService.Owner}/{SelfUpdateService.Repo}/releases";
+                    can = cached.TryGetValue(KeyCan, out var cachedCan) && cachedCan == "1";
                     break;
                 default:
                     return new ReleaseCheckOutcome(res.Status, null, null, "", false, false);
             }
             var latest = ReleaseVersion.ParseOrNull(tag);
             if (latest == null) return new ReleaseCheckOutcome(res.Status, tag, null, page, can, false);
-            return new ReleaseCheckOutcome(res.Status, tag, latest, page, can, ShouldNotify(current, latest, store.Get(KeyBalloon), store.Get(Views.UpdateAnnounceWindow.SkippedKey)));
+            var notificationState = store.Snapshot();
+            notificationState.TryGetValue(KeyBalloon, out var notified);
+            notificationState.TryGetValue(Views.UpdateAnnounceWindow.SkippedKey, out var skipped);
+            return new ReleaseCheckOutcome(res.Status, tag, latest, page, can, ShouldNotify(current, latest, notified, skipped));
         }
 
         public static void Start()
