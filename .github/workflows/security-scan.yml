@@ -101,6 +101,9 @@ jobs:
           Expand-Archive gl.zip gl -Force
           ./gl/gitleaks.exe detect --source . --no-banner --redact -v --exit-code 1
 
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 11.0.x
       - name: Known-vulnerable NuGet packages
         shell: pwsh
         run: |

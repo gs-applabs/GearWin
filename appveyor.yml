@@ -1,13 +1,19 @@
-version: '7.0.0-validation.{build}'
+version: '7.1.0-validation.{build}'
 image: Visual Studio 2022
 branches:
   only:
-    - release/7.0.0-validation
+    - release/7.1.0-ultra
 build: off
 
 test_script:
   - ps: |
       $ErrorActionPreference = 'Stop'
+      $sdkDir = Join-Path $env:USERPROFILE '.dotnet-gearwin'
+      $script = Join-Path $env:TEMP 'gearwin-dotnet-install.ps1'
+      Invoke-WebRequest 'https://dot.net/v1/dotnet-install.ps1' -UseBasicParsing -OutFile $script
+      & $script -Version '11.0.100' -InstallDir $sdkDir -NoPath
+      $env:PATH = "$sdkDir;$env:PATH"
+      if ((dotnet --version) -notmatch '^11\.') { throw 'Required .NET 11 SDK unavailable' }
       dotnet test wpf/OptimizerWpf.Tests -c Release
       if ($LASTEXITCODE -ne 0) { throw 'Windows desktop tests failed' }
       dotnet test migration/GearWin.Migration.Tests -c Release
