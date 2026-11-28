@@ -83,7 +83,7 @@ namespace OptimizerWpf.Views
                     row.IsOn = true;
                     return;
                 }
-                await row.ApplyRequestedAsync(row.IsOn);
+                await row.ApplyRequestedAsync(row.IsOn, allowHibernateOff: true);
             }
             catch (Exception ex)
             {
@@ -230,7 +230,8 @@ namespace OptimizerWpf.Views
             var settings = AppSettingsService.Current;
             return new FullProfileData
             {
-                Tweaks = AllTweakRows().ToDictionary(r => r.PinKey, r => r.IsOn),
+                Tweaks = AllTweakRows().Where(r => r.HasKnownState && ProfileImportPolicy.CanReplay(r.Tweak))
+                    .ToDictionary(r => r.PinKey, r => r.IsOn),
                 ThemeName = settings.ThemeName,
                 IsDarkMode = settings.IsDarkMode,
                 Language = LanguageService.Current,
@@ -246,11 +247,13 @@ namespace OptimizerWpf.Views
         private async System.Threading.Tasks.Task<int> ApplyProfileAsync(FullProfileData full)
         {
             var applied = 0;
+            int skipped = 0, failed = 0;
             foreach (var row in AllTweakRows().ToList())
             {
                 if (!(full.Tweaks.TryGetValue(row.PinKey, out var desired) || full.Tweaks.TryGetValue(row.LegacyPinKey, out desired))) continue;
+                if (!ProfileImportPolicy.CanReplay(row.Tweak)) { skipped++; continue; }
                 try { if (await row.ApplyRequestedAsync(desired)) applied++; }
-                catch { /* ένα μεμονωμένο tweak μπορεί να αποτύχει (π.χ. δεν υποστηρίζεται σε αυτό το build) - τα υπόλοιπα συνεχίζουν */ }
+                catch (Exception ex) { failed++; System.Diagnostics.Trace.TraceWarning("Profile tweak failed: " + ex.Message); }
             }
 
             ListMainTweaks.ItemsSource = TweakRowVm.CreateDeferred(TweakService.AllMainTweaks(), "Main");
@@ -274,6 +277,11 @@ namespace OptimizerWpf.Views
             if (full.PinnedTweakKeys != null) settings.PinnedTweakKeys = full.PinnedTweakKeys.ToList();
             AppSettingsService.Save();
 
+            if (skipped + failed > 0)
+                ThemedMessageBox.Show(LanguageService.Current == "el"
+                    ? $"Παραλείφθηκαν {skipped} ρυθμίσεις που απαιτούν χειροκίνητη επιλογή· απέτυχαν {failed}. Το προφίλ εφαρμόστηκε μερικώς."
+                    : $"Skipped {skipped} manual-only settings; {failed} failed. Profile applied partially.",
+                    LanguageService.T("Tweaks_ConfirmTitle"), MessageBoxButton.OK, MessageBoxImage.Warning);
             return applied;
         }
 
@@ -313,17 +321,7 @@ namespace OptimizerWpf.Views
             FullProfileData? full;
             try
             {
-                var json = File.ReadAllText(dlg.FileName);
-                using var doc = JsonDocument.Parse(json);
-                if (doc.RootElement.ValueKind == JsonValueKind.Object && doc.RootElement.TryGetProperty("Tweaks", out _))
-                {
-                    full = JsonSerializer.Deserialize<FullProfileData>(json);
-                }
-                else
-                {
-                    var tweaks = JsonSerializer.Deserialize<Dictionary<string, bool>>(json);
-                    full = tweaks == null ? null : new FullProfileData { Tweaks = tweaks };
-                }
+                full = ProfileImportPolicy.Read(dlg.FileName);
             }
             catch { ThemedMessageBox.Show(LanguageService.T("Tweaks_ProfileImportFailed"), LanguageService.T("Adv_ErrorTitle"), MessageBoxButton.OK, MessageBoxImage.Warning); return; }
             if (full == null) return;
@@ -391,12 +389,15 @@ namespace OptimizerWpf.Views
         public string LegacyPinKey { get; }
         private bool _isOn;
         private bool _userSet;
+        public bool HasKnownState { get; private set; }
         public bool IsOn { get => _isOn; set { _userSet = true; _isOn = value; PropertyChanged?.Invoke(this, new(nameof(IsOn))); } }
 
         // Εφαρμογή αποτελέσματος ανίχνευσης χωρίς να θεωρηθεί ενέργεια χρήστη.
         private void ApplyDetected(bool value)
         {
-            if (_userSet || _isOn == value) return; // ο χρήστης πρόλαβε να πατήσει τον διακόπτη - δεν τον αλλάζουμε
+            if (_userSet) return;
+            HasKnownState = true;
+            if (_isOn == value) return; // ο χρήστης πρόλαβε να πατήσει τον διακόπτη - δεν τον αλλάζουμε
             _isOn = value;
             PropertyChanged?.Invoke(this, new(nameof(IsOn)));
         }
@@ -452,8 +453,10 @@ namespace OptimizerWpf.Views
         public System.Windows.Visibility AdminBadgeVisibility => Tweak.RequiresAdmin ? System.Windows.Visibility.Visible : System.Windows.Visibility.Collapsed;
         public string AdminBadgeTip => LanguageService.T("Tweak_RequiresAdminTip");
 
-        internal async System.Threading.Tasks.Task<bool> ApplyRequestedAsync(bool desired)
+        internal async System.Threading.Tasks.Task<bool> ApplyRequestedAsync(bool desired, bool allowHibernateOff = false)
         {
+            if (ProfileImportPolicy.RequiresOffConfirmation(Tweak, desired) && !allowHibernateOff)
+                throw new InvalidOperationException("Disable hibernation only after explicit confirmation.");
             var changed = await GearWinCore.RunAsync(CoreWork.TweakChange, () => System.Threading.Tasks.Task.Run(() =>
             {
                 var before = Tweak.DetectState?.Invoke();
@@ -465,7 +468,8 @@ namespace OptimizerWpf.Views
                 return true;
             }));
             IsOn = desired;
-            if (changed) RecordChange(desired);
+            HasKnownState = true;
+            if (changed && ProfileImportPolicy.CanReplay(Tweak)) RecordChange(desired);
             return changed;
         }
 
@@ -497,7 +501,7 @@ namespace OptimizerWpf.Views
             // τη γλώσσα. LegacyPinKey = παλιό κλειδί βασισμένο στο label, για συμβατότητα με υπάρχοντα δεδομένα.
             LegacyPinKey = $"{listKey}:{tweak.Label}";
             PinKey = tweak.Id != null ? $"{listKey}:{tweak.Id}" : LegacyPinKey;
-            if (detectNow) { try { _isOn = tweak.DetectState?.Invoke() ?? false; } catch { _isOn = false; } }
+            if (detectNow) { try { var state = tweak.DetectState?.Invoke(); HasKnownState = state.HasValue; _isOn = state ?? false; } catch { _isOn = false; } }
             var pins = AppSettingsService.Current.PinnedTweakKeys;
             _isPinned = pins.Contains(PinKey) || pins.Contains(LegacyPinKey);
             // Μετανάστευση παλιού pin στο σταθερό κλειδί

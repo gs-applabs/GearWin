@@ -304,11 +304,23 @@ namespace OptimizerWpf.Views
         {
             if (sender is not ToggleButton { Tag: TweakRowVm row } button) return;
             button.IsEnabled = false;
-            try { await row.ApplyRequestedAsync(row.IsOn); }
-            catch
+            try
             {
-                row.IsOn = !row.IsOn;
-                ThemedMessageBox.Show(LanguageService.T("Net_ChangeFailed"), LanguageService.T("Net_ErrorTitle"), MessageBoxButton.OK, MessageBoxImage.Warning);
+                if (ProfileImportPolicy.RequiresOffConfirmation(row.Tweak, row.IsOn) &&
+                    ThemedMessageBox.Show(row.Tweak.Description, LanguageService.T("Tweaks_ConfirmTitle"),
+                        MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
+                {
+                    row.IsOn = true;
+                    return;
+                }
+                await row.ApplyRequestedAsync(row.IsOn, allowHibernateOff: true);
+            }
+            catch (Exception ex)
+            {
+                try { row.IsOn = await Task.Run(() => row.Tweak.DetectState?.Invoke()) ?? !row.IsOn; }
+                catch { row.IsOn = !row.IsOn; }
+                ThemedMessageBox.Show(LanguageService.T("Net_ChangeFailed") + "\n" + ex.Message,
+                    LanguageService.T("Net_ErrorTitle"), MessageBoxButton.OK, MessageBoxImage.Warning);
             }
             finally { button.IsEnabled = true; }
         }

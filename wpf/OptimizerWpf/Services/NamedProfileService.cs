@@ -38,10 +38,12 @@ namespace OptimizerWpf.Services
         {
             try
             {
-                if (!Directory.Exists(ProfilesDir)) return Array.Empty<string>();
-                return Directory.GetFiles(ProfilesDir, "*.json")
+                if (!Directory.Exists(ProfilesDir) || !MaintenancePaths.IsOrdinaryLocalPath(ProfilesDir)) return Array.Empty<string>();
+                return Directory.EnumerateFiles(ProfilesDir, "*.json")
+                    .Take(ProfileImportPolicy.MaxKeys)
+                    .Where(MaintenancePaths.IsOrdinaryLocalPath)
                     .Select(Path.GetFileNameWithoutExtension)
-                    .Where(n => !string.IsNullOrEmpty(n))
+                    .Where(ProfileImportPolicy.ValidName)
                     .Select(n => n!)
                     .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
                     .ToList();
@@ -53,8 +55,12 @@ namespace OptimizerWpf.Services
         {
             try
             {
-                Directory.CreateDirectory(ProfilesDir);
-                File.WriteAllText(PathFor(name), JsonSerializer.Serialize(profile, new JsonSerializerOptions { WriteIndented = true }));
+                if (!ProfileImportPolicy.Valid(profile)) return false;
+                string path = PathFor(name);
+                ProfileImportPolicy.ValidateNamedPath(path);
+                string json = JsonSerializer.Serialize(profile, new JsonSerializerOptions { WriteIndented = true });
+                if (System.Text.Encoding.UTF8.GetByteCount(json) > ProfileImportPolicy.MaxBytes) return false;
+                AppSettingsService.WriteIfChanged(path, json, null);
                 return true;
             }
             catch { return false; }
@@ -65,7 +71,8 @@ namespace OptimizerWpf.Services
             try
             {
                 var path = PathFor(name);
-                return File.Exists(path) ? JsonSerializer.Deserialize<FullProfileData>(File.ReadAllText(path)) : null;
+                ProfileImportPolicy.ValidateNamedPath(path);
+                return File.Exists(path) ? ProfileImportPolicy.Read(path) : null;
             }
             catch { return null; }
         }
@@ -75,6 +82,7 @@ namespace OptimizerWpf.Services
             try
             {
                 var path = PathFor(name);
+                ProfileImportPolicy.ValidateNamedPath(path);
                 if (!File.Exists(path)) return false;
                 File.Delete(path);
                 return true;
@@ -82,12 +90,10 @@ namespace OptimizerWpf.Services
             catch { return false; }
         }
 
-        private static string PathFor(string name) => Path.Combine(ProfilesDir, SafeFileName(name) + ".json");
-
-        private static string SafeFileName(string name)
+        private static string PathFor(string name)
         {
-            var invalid = Path.GetInvalidFileNameChars();
-            return new string(name.Select(c => invalid.Contains(c) ? '_' : c).ToArray());
+            if (!ProfileImportPolicy.ValidName(name)) throw new ArgumentException("Invalid profile name.");
+            return Path.Combine(ProfilesDir, name + ".json");
         }
     }
 }
