@@ -57,6 +57,45 @@ public class AutoGameProfileJournalTests
         Assert.False(AutoGameProfileJournal.CanRestoreValue(new("dword", "0"), original, applied));
     }
 
+    [Fact]
+    public void FailedApplyRequiresRecoveryBeforeAnotherProfile()
+    {
+        var state = new AutoGamingRecoveryState();
+        state.Start();
+        state.Recover(() => { });
+        Assert.False(state.RequiresRecovery);
+        state.RequireRecovery();
+        Assert.Throws<InvalidOperationException>(() => state.Recover(() => throw new InvalidOperationException()));
+        Assert.True(state.RequiresRecovery);
+        state.Recover(() => { });
+        Assert.False(state.RequiresRecovery);
+    }
+
+    [Fact]
+    public void StopBeforeFirstTickAttemptsRecoveryAndOnlyClearsOnSuccess()
+    {
+        var state = new AutoGamingRecoveryState();
+        int calls = 0;
+        state.Stop(() => calls++);
+        Assert.Equal(0, calls);
+        state.Start();
+        Assert.Throws<InvalidOperationException>(() => state.Stop(() => throw new InvalidOperationException()));
+        Assert.True(state.StopRequired);
+        state.Stop(() => calls++);
+        Assert.False(state.StopRequired);
+        Assert.True(state.RequiresRecovery);
+        state.Stop(() => calls++);
+        Assert.Equal(1, calls);
+    }
+
+    [Theory]
+    [InlineData(true, 0, true)]
+    [InlineData(false, 0, false)]
+    [InlineData(false, 1, false)]
+    [InlineData(false, 2, true)]
+    public void ManualProfileTakesPriorityWithoutForegroundDebounce(bool manual, int misses, bool expected) =>
+        Assert.Equal(expected, AutoGamingModeService.ShouldRestoreActive(manual, misses));
+
     [Theory]
     [InlineData(0, 0, 1920, 1080, 0, 0, 1920, 1080, true)]
     [InlineData(-2560, 0, 0, 1440, -2560, 0, 0, 1440, true)]

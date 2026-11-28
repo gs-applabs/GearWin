@@ -13,7 +13,7 @@ public static class AutoGamingModeService
     internal static bool IsRunning => _timer != null;
     private static string? _candidate, _active;
     private static int _stableTicks, _misses;
-    private static bool _recoveryChecked;
+    private static readonly AutoGamingRecoveryState Recovery = new();
     private static bool _reportedFailure;
     private static long _lastProfileProbe;
     private static long _lastFailureAt;
@@ -39,7 +39,8 @@ public static class AutoGamingModeService
         if (_timer != null || !AppSettingsService.Current.AutoGamingModeEnabled) return;
         _candidate = _active = null;
         _stableTicks = _misses = 0;
-        _recoveryChecked = _reportedFailure = false;
+        Recovery.Start();
+        _reportedFailure = false;
         _lastProfileProbe = _lastFailureAt = 0;
         _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
         _timer.Tick += OnTick;
@@ -51,14 +52,10 @@ public static class AutoGamingModeService
         if (_timer != null) { _timer.Stop(); _timer.Tick -= OnTick; _timer = null; }
         // An interrupted session remains recoverable even after disable/exit.
         // Never start a retry timer for a disabled feature.
-        if (_active != null || _recoveryChecked)
-        {
-            try { AutoGameProfileJournal.Restore(); _active = null; }
-            catch (Exception ex) { Report(ex); }
-        }
+        try { Recovery.Stop(AutoGameProfileJournal.Restore); _active = null; }
+        catch (Exception ex) { Report(ex); }
         _candidate = null;
         _stableTicks = _misses = 0;
-        _recoveryChecked = false;
     }
 
     private static void Report(Exception ex)
@@ -72,6 +69,8 @@ public static class AutoGamingModeService
     internal static int NextStableTicks(string? previous, string? current, int ticks) =>
         current == null ? 0 : string.Equals(previous, current, StringComparison.Ordinal) ? Math.Min(2, ticks + 1) : 1;
 
+    internal static bool ShouldRestoreActive(bool manualProfile, int misses) => manualProfile || misses >= 2;
+
     private static void OnTick(object? sender, EventArgs e)
     {
         if (!AppSettingsService.Current.AutoGamingModeEnabled) return;
@@ -79,16 +78,18 @@ public static class AutoGamingModeService
         try
         {
             // Recover an interrupted automatic session before any new one.
-            if (!_recoveryChecked)
+            if (Recovery.RequiresRecovery)
             {
                 using var lease = GearWinCore.TryEnterBackground(CoreWork.ProfileChange);
                 if (lease == null) return;
-                AutoGameProfileJournal.Restore();
-                _recoveryChecked = true;
-                _reportedFailure = false;
+                Recovery.Recover(AutoGameProfileJournal.Restore);
+                _active = _candidate = null;
+                _stableTicks = _misses = 0;
+                _lastProfileProbe = 0;
             }
             var settings = AppSettingsService.Current;
-            var current = settings.GamingModeActive || settings.OfficeModeActive ? null : ForegroundGame();
+            bool manual = settings.GamingModeActive || settings.OfficeModeActive;
+            var current = manual ? null : ForegroundGame();
             string? identity = current?.Identity;
             if (_candidate != identity) _lastProfileProbe = 0;
             _stableTicks = NextStableTicks(_candidate, identity, _stableTicks);
@@ -96,7 +97,7 @@ public static class AutoGamingModeService
             if (_active != null)
             {
                 _misses = _active == identity ? 0 : Math.Min(2, _misses + 1);
-                if (_misses < 2) return;
+                if (!ShouldRestoreActive(manual, _misses)) return;
                 using var restoreLease = GearWinCore.TryEnterBackground(CoreWork.ProfileChange);
                 if (restoreLease == null) return;
                 AutoGameProfileJournal.Restore();
@@ -116,7 +117,14 @@ public static class AutoGamingModeService
             _active = identity; // even a no-op remains stable until a different game
             _reportedFailure = false;
         }
-        catch (Exception ex) { _lastFailureAt = Environment.TickCount64; Report(ex); }
+        catch (Exception ex)
+        {
+            // Apply may have failed after writing a recovery journal. Reconcile
+            // it before any further application, with the existing retry throttle.
+            Recovery.RequireRecovery();
+            _lastFailureAt = Environment.TickCount64;
+            Report(ex);
+        }
     }
 
     private static (string Path, string Identity)? ForegroundGame()
@@ -140,5 +148,35 @@ public static class AutoGamingModeService
             return (path, pid + ":" + process.StartTime.ToUniversalTime().Ticks + ":" + GameProfileService.Identity(path));
         }
         catch { return null; }
+    }
+}
+
+// Dispatcher-owned state: failed recovery cannot mark the journal as reconciled.
+// A started feature gets one stop-time recovery attempt even before its first tick.
+internal sealed class AutoGamingRecoveryState
+{
+    internal bool RequiresRecovery { get; private set; } = true;
+    internal bool StopRequired { get; private set; }
+
+    internal void Start()
+    {
+        RequiresRecovery = true;
+        StopRequired = true;
+    }
+
+    internal void RequireRecovery() => RequiresRecovery = true;
+
+    internal void Recover(Action restore)
+    {
+        restore();
+        RequiresRecovery = false;
+    }
+
+    internal void Stop(Action restore)
+    {
+        if (!StopRequired) return;
+        restore();
+        StopRequired = false;
+        RequiresRecovery = true;
     }
 }
