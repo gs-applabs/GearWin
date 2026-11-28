@@ -117,6 +117,54 @@ public sealed class StoreUpdateRoutingTests
     public void StoreUpdateActionMustBeExplicitAndNotBulk(string id, string caption, bool expected) =>
         Assert.Equal(expected, StoreGuiUpdateService.IsExplicitUpdateAction(id, caption, StoreGuiUpdateService.RowState.Available));
 
+    [Theory]
+    [InlineData("Options: --apply", "9NBLGGH4NNS1", "Example", true)]
+    [InlineData("Options: --apply-all", "9NBLGGH4NNS1", "Example", false)]
+    [InlineData("No apply option", "9NBLGGH4NNS1", "Example", false)]
+    [InlineData("Options: --apply", "Example", "Example", false)]
+    public void NativeStoreMutationRequiresExactProductAndAdvertisedApply(string help, string id, string title, bool expected)
+    {
+        var command = WingetService.NativeStoreUpdateArguments(new WingetUpdate(title, id, "1.0", "2.0", "msstore"), help);
+        if (expected) Assert.Equal("update " + id + " --apply", command);
+        else Assert.Null(command);
+    }
+
+    [Fact]
+    public void NativeStoreTableRetainsExplicitIdAndBlankColumns()
+    {
+        var rows = WingetService.ParseNativeStoreTable(
+            "│ Name │ Product ID │ Current version │ Available version │\n" +
+            "│ Example │ 9NBLGGH4NNS1 │ │ 2.0 │\n" +
+            "│ Other │ │ 1.0 │ 2.0 │", true);
+        Assert.Equal(2, rows.Count);
+        Assert.Equal("9NBLGGH4NNS1", rows[0].Id);
+        Assert.Equal("?", rows[0].CurrentVersion);
+        Assert.Equal("2.0", rows[0].AvailableVersion);
+        Assert.Equal("Other", rows[1].Id);
+        Assert.False(WingetService.HasStoreProductId(rows[1]));
+        Assert.Empty(WingetService.ParseNativeStoreTable("Unrelated  1.2.3", true));
+    }
+
+    [Fact]
+    public void NativeInstalledReadbackRequiresExplicitUniqueProductId()
+    {
+        string header = "│ Name │ Product ID │ Version │\n";
+        string entry = "│ Example │ 9NBLGGH4NNS1 │ 2.0 │";
+        Assert.Equal("2.0", WingetService.ReadExactNativeStoreVersion(header + entry, "9NBLGGH4NNS1"));
+        Assert.Null(WingetService.ReadExactNativeStoreVersion("│ Name │ Publisher │ Version │\n│ Example │ Vendor │ 2.0 │", "9NBLGGH4NNS1"));
+        Assert.Null(WingetService.ReadExactNativeStoreVersion(header + entry + "\n" + entry, "9NBLGGH4NNS1"));
+    }
+
+    [Fact]
+    public void StoreMergeRetainsDistinctExplicitProductsWithSameTitle()
+    {
+        var existing = new[] { new WingetUpdate("Example", "9NBLGGH4NNS1", "1.0", "2.0", "msstore") };
+        var discovered = new[] { new WingetUpdate("Example", "Example", "?", "?", "msstore"),
+            new WingetUpdate("Example", "9NBLGGH4NNS2", "1.0", "2.0", "msstore"),
+            existing[0] };
+        Assert.Equal("9NBLGGH4NNS2", Assert.Single(WingetService.AdditionalStoreRows(existing, discovered)).Id);
+    }
+
     [Fact]
     public void NightlyUpdatesExcludeStore() => Assert.Contains("--source winget", WingetService.NightlyWingetArguments);
 }

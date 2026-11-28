@@ -357,10 +357,21 @@ namespace OptimizerWpf.Services
 
         internal static IEnumerable<WingetUpdate> AdditionalStoreRows(IEnumerable<WingetUpdate> existing, IEnumerable<WingetUpdate> discovered)
         {
-            var names = existing.Where(u => string.Equals(u.Source, "msstore", StringComparison.OrdinalIgnoreCase))
-                .Select(u => u.Name.Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase);
-            foreach (var row in discovered)
-                if (names.Add(row.Name.Trim())) yield return row;
+            var existingStore = existing.Where(u => string.Equals(u.Source, "msstore", StringComparison.OrdinalIgnoreCase)).ToArray();
+            var names = existingStore.Select(u => u.Name.Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var ids = existingStore.Where(HasStoreProductId).Select(u => u.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            // Preserve distinct explicit product IDs, even with the same title.
+            // Suppress title-only duplicates only after explicit IDs are retained.
+            foreach (var row in discovered.OrderByDescending(HasStoreProductId))
+            {
+                if (HasStoreProductId(row))
+                {
+                    if (!ids.Add(row.Id)) continue;
+                    names.Add(row.Name.Trim());
+                    yield return row;
+                }
+                else if (names.Add(row.Name.Trim())) yield return row;
+            }
         }
 
         internal static string StoreUpgradeArguments(WingetUpdate update)
@@ -413,12 +424,55 @@ namespace OptimizerWpf.Services
             return matches.Length == 1 && Version.TryParse(matches[0].CurrentVersion, out _) ? matches[0].CurrentVersion : null;
         }
 
-        private static async Task<string?> ReadStoreVersionAsync(string id)
+        // Microsoft Windows Developer Blog, 2026-02-11: store update <product-id>.
+        // The Preview CLI's apply switch is capability-checked on the local build.
+        // Never use a bulk update, title guess, or install as a substitute.
+        private static string? StoreCliAlias()
+        {
+            var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            if (!Path.IsPathFullyQualified(local)) return null;
+            var path = Path.Combine(local, "Microsoft", "WindowsApps", "store.exe");
+            try
+            {
+                return File.Exists(path) && (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0 ? path : null;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
+        }
+
+        internal static string? NativeStoreUpdateArguments(WingetUpdate update, string help) =>
+            HasStoreProductId(update) &&
+            Regex.IsMatch(help, @"(?<![\w-])--apply(?![\w-])", RegexOptions.CultureInvariant)
+                ? $"update {update.Id} --apply" : null;
+
+        private static async Task<string?> ReadStoreVersionAsync(string id, string? storeCli)
         {
             var (output, exitCode, started) = await RunToolAsync("winget.exe",
                 $"list --id \"{id}\" --exact --source msstore --accept-source-agreements --disable-interactivity",
                 TimeSpan.FromSeconds(30));
-            return started && exitCode == 0 ? ReadExactStoreVersion(output, id) : null;
+            var version = started && exitCode == 0 ? ReadExactStoreVersion(output, id) : null;
+            if (version != null || storeCli == null) return version;
+            var installed = await RunToolAsync(storeCli, "installed", TimeSpan.FromSeconds(30), closeInput: true);
+            return installed.Started && installed.ExitCode == 0 ? ReadExactNativeStoreVersion(installed.Output, id) : null;
+        }
+
+        internal static string? ReadExactNativeStoreVersion(string output, string productId)
+        {
+            var matches = ParseNativeStoreTable(output, updates: false).Where(row => HasStoreProductId(row) &&
+                string.Equals(row.Id, productId, StringComparison.OrdinalIgnoreCase)).Take(2).ToArray();
+            return matches.Length == 1 && Version.TryParse(matches[0].CurrentVersion, out _) ? matches[0].CurrentVersion : null;
+        }
+
+        private static async Task<bool> VerifyStoreAfterAttemptAsync(WingetUpdate update, string? before,
+            string? storeCli, int exitCode, CancellationToken ct)
+        {
+            for (int probe = 0; probe < 3; probe++)
+            {
+                if (probe > 0) await Task.Delay(TimeSpan.FromSeconds(2), ct);
+                var after = await ReadStoreVersionAsync(update.Id, storeCli);
+                if (StoreReadbackConfirmsUpdate(before, after, update.AvailableVersion)) return true;
+                if (exitCode != 0) break;
+            }
+            return false;
         }
 
         // One core mutation lease for both the direct route and the interactive
@@ -439,8 +493,40 @@ namespace OptimizerWpf.Services
                 }
                 if (HasStoreProductId(update))
                 {
-                    var before = await ReadStoreVersionAsync(update.Id);
+                    var storeCli = StoreCliAlias();
+                    var before = await ReadStoreVersionAsync(update.Id, storeCli);
                     if (StoreVersionAtLeast(before, update.AvailableVersion)) return StoreUpdateOutcome.AlreadyCurrent;
+                    ct.ThrowIfCancellationRequested();
+
+                    // The dedicated end-user Store CLI is the primary route on
+                    // builds exposing the selected-product --apply capability.
+                    if (storeCli != null)
+                    {
+                        var help = await RunToolAsync(storeCli, "update --help", TimeSpan.FromSeconds(15), closeInput: true);
+                        var nativeArguments = help.Started && help.ExitCode == 0
+                            ? NativeStoreUpdateArguments(update, help.Output) : null;
+                        if (nativeArguments != null)
+                        {
+                            ct.ThrowIfCancellationRequested();
+                            log?.Invoke("Microsoft Store: native selected-product update");
+                            (string Output, int ExitCode, bool Started) native;
+                            ActiveScanToken.Value = CancellationToken.None;
+                            try { native = await RunToolAsync(storeCli, nativeArguments, TimeSpan.FromMinutes(5), closeInput: true); }
+                            finally { ActiveScanToken.Value = ct; }
+                            ct.ThrowIfCancellationRequested();
+                            if (native.Started)
+                            {
+                                if (await VerifyStoreAfterAttemptAsync(update, before, storeCli, native.ExitCode, ct))
+                                    return StoreUpdateOutcome.Updated;
+                                // Preview exit codes do not prove that no
+                                // deployment was queued. Never automatically
+                                // submit a second mutation after this attempt.
+                                log?.Invoke("Store CLI outcome not verified; rescan before retry.");
+                                return StoreUpdateOutcome.Unconfirmed;
+                            }
+                        }
+                    }
+
                     ct.ThrowIfCancellationRequested();
                     log?.Invoke("Microsoft Store: exact WinGet upgrade");
                     // Once the installer has started, allow it to finish rather than
@@ -452,21 +538,10 @@ namespace OptimizerWpf.Services
                     ct.ThrowIfCancellationRequested();
                     if (attempt.Started)
                     {
-                        // A Store deployment may finalize after the WinGet process
-                        // exits. Recheck at most twice after the initial readback.
-                        for (int probe = 0; probe < 3; probe++)
-                        {
-                            if (probe > 0) await Task.Delay(TimeSpan.FromSeconds(2), ct);
-                            var after = await ReadStoreVersionAsync(update.Id);
-                            if (StoreReadbackConfirmsUpdate(before, after, update.AvailableVersion))
-                                return StoreUpdateOutcome.Updated;
-                            if (attempt.ExitCode != 0) break;
-                        }
+                        if (await VerifyStoreAfterAttemptAsync(update, before, storeCli, attempt.ExitCode, ct))
+                            return StoreUpdateOutcome.Updated;
                         if (attempt.ExitCode == 0 || attempt.ExitCode == -1)
                             return StoreUpdateOutcome.Unconfirmed;
-                        // An explicit error may still have queued work; the UI
-                        // fallback may observe an active row but may only invoke
-                        // a uniquely identified, explicit available update.
                         log?.Invoke("WinGet Store upgrade failed: " + (DescribeExitCode(attempt.ExitCode) ?? attempt.ExitCode.ToString()));
                     }
                 }
@@ -480,103 +555,58 @@ namespace OptimizerWpf.Services
         // ===== Microsoft Store CLI ("store updates") =====
         private static async Task<List<WingetUpdate>> ScanMsStoreAsync()
         {
+            var storeCli = StoreCliAlias();
+            if (storeCli == null) return new();
+            // The scan command may offer a bulk apply prompt. Explicitly
+            // decline; only the selected update workflow may mutate packages.
+            var result = await RunToolAsync(storeCli, "updates", TimeSpan.FromSeconds(60), stdinResponse: "n");
+            return result.Started && result.ExitCode == 0
+                ? ParseNativeStoreTable(result.Output, updates: true) : new();
+        }
+
+        internal static List<WingetUpdate> ParseNativeStoreTable(string raw, bool updates)
+        {
             var list = new List<WingetUpdate>();
-            var psi = new ProcessStartInfo
-            {
-                FileName = "store.exe",
-                Arguments = "updates",
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                RedirectStandardInput = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                StandardOutputEncoding = System.Text.Encoding.UTF8,
-            };
-
-            Process? process;
-            try { process = Process.Start(psi); }
-            catch (Win32Exception) { return list; } // "store" CLI δεν υπάρχει σε αυτό το build Windows
-
-            // Ανάγνωση stdout/stderr ΤΑΥΤΟΧΡΟΝΑ με την αναμονή: πριν περιμέναμε πρώτα το exit και διαβάζαμε μετά —
-            // αν η έξοδος ξεπερνούσε το buffer του pipe το store.exe μπλόκαρε και το scan κατέληγε σε timeout.
-            using var ownedProcess = process;
-            if (process == null) return list;
-            Task<string> stdoutTask, stderrTask;
-            try
-            {
-                using var cts = CancellationTokenSource.CreateLinkedTokenSource(ActiveScanToken.Value);
-                cts.CancelAfter(TimeSpan.FromSeconds(60));
-                stdoutTask = process.StandardOutput.ReadToEndAsync(cts.Token);
-                stderrTask = process.StandardError.ReadToEndAsync(cts.Token);
-                try { await process.StandardInput.WriteLineAsync("n".AsMemory(), cts.Token); process.StandardInput.Close(); }
-                catch (IOException) { }
-                await Task.WhenAll(stdoutTask, stderrTask, process.WaitForExitAsync(cts.Token));
-                if (process.ExitCode != 0) return list;
-            }
-            catch (OperationCanceledException)
-            {
-                try { process.Kill(true); } catch { }
-                ActiveScanToken.Value.ThrowIfCancellationRequested();
-                return list;
-            }
-
-            var raw = await stdoutTask;
             var clean = Regex.Replace(raw, @"\x1B\[[0-9;]*[a-zA-Z]", "");
-            const char vertical = '│';
-            string[]? headers = null;
-
+            int width = 0, nameIdx = -1, idIdx = -1, versionIdx = -1, availableIdx = -1;
+            static string Header(string value) => Regex.Replace(value.Trim(), @"[\s_-]+", " ").ToLowerInvariant();
             foreach (var rawLine in clean.Split('\n'))
             {
-                var line = rawLine.TrimEnd('\r').Trim();
-                if (string.IsNullOrWhiteSpace(line)) continue;
-                if (Regex.IsMatch(line, @"^(checking|usage:|commands?:|options?:|examples?:|store cli)", RegexOptions.IgnoreCase)) continue;
-                if (Regex.IsMatch(line, @"^(no updates|all apps are up to date|your apps are up to date)", RegexOptions.IgnoreCase)) continue;
-
-                string[] cols;
-                if (line.Contains(vertical))
-                {
-                    var raw2 = line.Split(vertical);
-                    cols = raw2.Length > 2 ? raw2[1..^1].Select(c => c.Trim()).Where(c => c != "").ToArray() : Array.Empty<string>();
-                }
+                var line = rawLine.Trim();
+                if (line.Length == 0) continue;
+                string[] columns;
+                if (line.StartsWith('│') && line.EndsWith('│'))
+                    columns = line.Split('│')[1..^1].Select(c => c.Trim()).ToArray();
                 else if (Regex.IsMatch(line, @"\s{2,}"))
-                {
-                    cols = Regex.Split(line, @"\s{2,}").Select(c => c.Trim()).Where(c => c != "").ToArray();
-                }
+                    columns = Regex.Split(line, @"\s{2,}").Select(c => c.Trim()).ToArray();
                 else continue;
-
-                if (cols.Length < 2) continue;
-
-                var lower = cols.Select(c => c.ToLowerInvariant()).ToArray();
-                if (lower.Contains("name") || lower.Contains("app") || lower.Contains("title"))
+                if (columns.Length < 2) continue;
+                var lower = columns.Select(Header).ToArray();
+                int name = Array.FindIndex(lower, h => h is "name" or "app" or "title" or "app name" or "application");
+                int id = Array.FindIndex(lower, h => h is "id" or "product id" or "store id" or "productid");
+                int current = Array.FindIndex(lower, h => h is "version" or "installed" or "current" or "installed version" or "current version");
+                int available = Array.FindIndex(lower, h => h is "available" or "latest" or "available version" or "latest version" or "new version" or "update");
+                // Do not infer fields from prose or an unrelated table.
+                if (name >= 0 && (id >= 0 || current >= 0 || available >= 0))
                 {
-                    headers = cols;
+                    width = columns.Length;
+                    nameIdx = name; idIdx = id; versionIdx = current; availableIdx = available;
                     continue;
                 }
-
-                var nameIdx = 0;
-                var verIdx = -1;
-                var availIdx = -1;
-                if (headers != null)
-                {
-                    for (var h = 0; h < headers.Length; h++)
-                    {
-                        if (Regex.IsMatch(headers[h], "^(name|app|title)$", RegexOptions.IgnoreCase)) nameIdx = h;
-                        else if (Regex.IsMatch(headers[h], "installed|current|^version$", RegexOptions.IgnoreCase)) verIdx = h;
-                        else if (Regex.IsMatch(headers[h], "available|latest|new\\s+version|update", RegexOptions.IgnoreCase)) availIdx = h;
-                    }
-                }
-                if (availIdx == verIdx) availIdx = -1;
-
-                var name = nameIdx < cols.Length ? cols[nameIdx] : "";
-                name = Regex.Replace(name, "[─-╿]", "");
-                name = Regex.Replace(name, @"^[^\p{L}\p{Nd}]+", "").Trim();
-                if (string.IsNullOrWhiteSpace(name) || Regex.IsMatch(name, "^(name|app|title)$", RegexOptions.IgnoreCase)) continue;
-
-                var ver = verIdx >= 0 && verIdx < cols.Length ? cols[verIdx] : "?";
-                var avail = availIdx >= 0 && availIdx < cols.Length ? cols[availIdx] : "Update available";
-                list.Add(new WingetUpdate(name, name, ver, avail, "msstore"));
+                if (nameIdx < 0 || columns.Length != width) continue;
+                var title = columns[nameIdx];
+                if (string.IsNullOrWhiteSpace(title) || title.Any(char.IsControl) ||
+                    title.All(c => c is >= '─' and <= '╿')) continue;
+                string productId = idIdx >= 0 ? columns[idIdx] : "";
+                // Keep IDs only from an explicit identity column; names are
+                // advisory when an older CLI omits it.
+                if (!Regex.IsMatch(productId, @"\A[A-Za-z0-9]{12,14}\z", RegexOptions.CultureInvariant))
+                    productId = title;
+                var version = versionIdx >= 0 && columns[versionIdx].Length > 0 ? columns[versionIdx] : "?";
+                var target = updates && availableIdx >= 0 && columns[availableIdx].Length > 0
+                    ? columns[availableIdx] : updates ? "Update available" : "";
+                list.Add(new WingetUpdate(title, productId, version, target, "msstore"));
             }
-
             return list;
         }
 
@@ -784,7 +814,8 @@ $out | ConvertTo-Json -Compress";
         // started=false σημαίνει "το εργαλείο δεν βρέθηκε στο σύστημα" (Win32Exception ERROR_FILE_NOT_FOUND) -
         // ακριβώς η ίδια σημασιολογία με το "Get-Command X -ErrorAction SilentlyContinue" του ps1 original,
         // ώστε ο έλεγχος ύπαρξης κάθε προαιρετικού package manager να μη χρειάζεται ξεχωριστό βήμα.
-        private static async Task<(string Output, int ExitCode, bool Started)> RunToolAsync(string fileName, string arguments, TimeSpan timeout)
+        private static async Task<(string Output, int ExitCode, bool Started)> RunToolAsync(string fileName, string arguments, TimeSpan timeout,
+            bool closeInput = false, string? stdinResponse = null)
         {
             var psi = new ProcessStartInfo
             {
@@ -792,6 +823,7 @@ $out | ConvertTo-Json -Compress";
                 Arguments = arguments,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
+                RedirectStandardInput = closeInput || stdinResponse != null,
                 UseShellExecute = false,
                 CreateNoWindow = true,
                 StandardOutputEncoding = System.Text.Encoding.UTF8,
@@ -833,6 +865,16 @@ $out | ConvertTo-Json -Compress";
                 {
                     using var cts = CancellationTokenSource.CreateLinkedTokenSource(ActiveScanToken.Value);
                     cts.CancelAfter(timeout);
+                    if (psi.RedirectStandardInput)
+                    {
+                        try
+                        {
+                            if (stdinResponse != null)
+                                await proc.StandardInput.WriteLineAsync(stdinResponse.AsMemory(), cts.Token);
+                            proc.StandardInput.Close();
+                        }
+                        catch (IOException) { }
+                    }
                     await proc.WaitForExitAsync(cts.Token);
                     await Task.WhenAll(stdoutTask, stderrTask).WaitAsync(cts.Token);
                 }
