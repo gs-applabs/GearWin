@@ -4,6 +4,7 @@ using System.Linq;
 using System.Management;
 using System.Globalization;
 using System.Threading.Tasks;
+using System.Threading;
 
 namespace OptimizerWpf.Services
 {
@@ -59,10 +60,9 @@ namespace OptimizerWpf.Services
                     try { updateId = ((string)update.Identity.UpdateID).Trim(); revision = (int)update.Identity.RevisionNumber; } catch { }
                     if (!TryParseRowId($"{updateId}|{revision}", out _, out _)) continue;
 
-                    if (completed.Contains($"{updateId}|{revision}")) { pendingReboot++; continue; }
-
                     // UpdateType is language-neutral: utSoftware=1, utDriver=2.
                     if ((int)update.Type != 1) continue;
+                    if (completed.Contains($"{updateId}|{revision}")) { pendingReboot++; continue; }
                     var category = CategoryText(update);
 
                     string? kb = null;
@@ -152,7 +152,11 @@ namespace OptimizerWpf.Services
         public static Task<(bool Ok, bool RebootRequired, string? Error)> InstallAsync(string rowId) => InstallCoordinatedAsync(rowId, CorePriority.User);
 
         internal static Task<(bool Ok, bool RebootRequired, string? Error)> InstallCoordinatedAsync(string rowId, CorePriority priority) =>
-            GearWinCore.RunAsync(CoreWork.SoftwareChange, () => InstallCoreAsync(rowId), priority);
+            GearWinCore.RunAsync(CoreWork.SoftwareChange, () => InstallCoreAsync(rowId, 1, CancellationToken.None), priority);
+
+        // The driver UI supplies the exact scanned revision and handles recovery prerequisites.
+        internal static Task<(bool Ok, bool RebootRequired, string? Error)> InstallDriverAsync(string rowId, CancellationToken ct) =>
+            GearWinCore.RunAsync(CoreWork.SoftwareChange, () => InstallCoreAsync(rowId, 2, ct), ct: ct);
 
         internal static bool TryParseRowId(string? rowId, out Guid updateId, out int revision)
         {
@@ -167,24 +171,31 @@ namespace OptimizerWpf.Services
         internal static bool ExactOperationSuccess(int aggregate, int item, int hresult) =>
             aggregate == 2 && item == 2 && hresult == 0;
 
-        private static Task<(bool Ok, bool RebootRequired, string? Error)> InstallCoreAsync(string rowId) => Task.Run<(bool Ok, bool RebootRequired, string? Error)>(() =>
+        internal static bool MatchesIdentity(Guid requested, int revision, int type, string? actualId, int actualRevision, int actualType) =>
+            requested != Guid.Empty && revision > 0 && type is 1 or 2 &&
+            Guid.TryParseExact(actualId, "D", out var actual) && actual == requested &&
+            actualRevision == revision && actualType == type;
+
+        private static Task<(bool Ok, bool RebootRequired, string? Error)> InstallCoreAsync(string rowId, int updateType, CancellationToken ct) => Task.Run<(bool Ok, bool RebootRequired, string? Error)>(() =>
         {
             try
             {
-                if (!TryParseRowId(rowId, out var updateId, out var revision)) return (false, false, "Invalid update id");
+                if (!TryParseRowId(rowId, out var updateId, out var revision) || updateType is not (1 or 2)) return (false, false, "Invalid update identity");
+                ct.ThrowIfCancellationRequested();
 
                 dynamic session = Activator.CreateInstance(Type.GetTypeFromProgID("Microsoft.Update.Session")!)!;
                 dynamic searcher = session.CreateUpdateSearcher();
                 try { searcher.Online = true; } catch { }
-                dynamic result = searcher.Search("IsInstalled=0 and IsHidden=0");
+                string criteria = $"IsInstalled=0 and IsHidden=0 and UpdateID='{updateId:D}' and Type='{(updateType == 1 ? "Software" : "Driver")}'";
+                dynamic result = searcher.Search(criteria);
 
                 dynamic? target = null;
                 foreach (dynamic u in result.Updates)
                 {
                     try
                     {
-                        if (Guid.TryParseExact((string)u.Identity.UpdateID, "D", out Guid id) && id == updateId &&
-                            (int)u.Identity.RevisionNumber == revision && (int)u.Type == 1)
+                        if (MatchesIdentity(updateId, revision, updateType, (string)u.Identity.UpdateID,
+                            (int)u.Identity.RevisionNumber, (int)u.Type))
                         {
                             if (target != null) return (false, false, "Ambiguous update identity");
                             target = u;
@@ -192,7 +203,8 @@ namespace OptimizerWpf.Services
                     }
                     catch { }
                 }
-                if (target == null) return (false, false, "Update no longer available");
+                if (target == null) return (false, false, "Update no longer available at the selected revision");
+                ct.ThrowIfCancellationRequested(); // cancellation before servicing only
 
                 if (!(bool)target.EulaAccepted) target.AcceptEula();
                 if (!(bool)target.EulaAccepted) return (false, false, "Update license not accepted");

@@ -15,8 +15,15 @@ using System.Threading.Tasks;
 
 namespace OptimizerWpf.Services
 {
-    public record DriverUpdate(string UpdateId, string Title, string? DriverClass, string? Manufacturer, string? Model, string? Date);
-    public record DriverScanResult(bool PolicyBlocked, IReadOnlyList<DriverUpdate> Updates);
+    public record DriverUpdate(string UpdateId, string Title, string? DriverClass, string? Manufacturer, string? Model, string? Date)
+    {
+        public int Revision { get; init; }
+        public string RowId => $"{UpdateId}|{Revision}";
+    }
+    public record DriverScanResult(bool PolicyBlocked, IReadOnlyList<DriverUpdate> Updates)
+    {
+        public bool ScanSucceeded { get; init; } = true;
+    }
     public record DriverStoreEntry(string Driver, string OriginalFileName, string? Version, string? Date, string? Class, bool InUse = false, string? KeptInfo = null);
     public record PnpDeviceInfo(string DeviceName, string HardwareId, Version CurrentVersion, DateTime CurrentDate)
     {
@@ -525,14 +532,16 @@ foreach ($p in @(
 }
 
 $updates = @()
+$scanSucceeded = $false
 if (-not $policyBlocked) {
     try {
         $session = New-Object -ComObject Microsoft.Update.Session
         $searcher = $session.CreateUpdateSearcher()
-        $result = $searcher.Search(""IsInstalled=0 and Type='Driver'"")
+        $result = $searcher.Search(""IsInstalled=0 and IsHidden=0 and Type='Driver'"")
         foreach ($u in $result.Updates) {
             $updates += [PSCustomObject]@{
                 UpdateId     = $u.Identity.UpdateID
+                Revision     = $u.Identity.RevisionNumber
                 Title        = $u.Title
                 DriverClass  = $u.DriverClass
                 Manufacturer = $u.DriverManufacturer
@@ -540,35 +549,50 @@ if (-not $policyBlocked) {
                 Date         = if ($u.DriverVerDate) { $u.DriverVerDate.ToString('yyyy-MM-dd') } else { $null }
             }
         }
+        $scanSucceeded = ($result.ResultCode -eq 2)
     } catch {}
 }
 
-[PSCustomObject]@{ PolicyBlocked = $policyBlocked; Updates = @($updates) } | ConvertTo-Json -Depth 4 -Compress
+[PSCustomObject]@{ PolicyBlocked = $policyBlocked; ScanSucceeded = $scanSucceeded; Updates = @($updates) } | ConvertTo-Json -Depth 4 -Compress
 ";
             var output = await RunPowerShellScriptAsync(script, TimeSpan.FromMinutes(3));
-            if (string.IsNullOrWhiteSpace(output)) return new DriverScanResult(false, Array.Empty<DriverUpdate>());
+            return ParseDriverScan(output);
+        }
 
+        internal static DriverScanResult ParseDriverScan(string output)
+        {
+            static DriverScanResult Unknown() => new(false, Array.Empty<DriverUpdate>()) { ScanSucceeded = false };
+            if (string.IsNullOrWhiteSpace(output)) return Unknown();
             try
             {
-                var root = JsonDocument.Parse(output).RootElement;
+                using var document = JsonDocument.Parse(output);
+                var root = document.RootElement;
                 var policyBlocked = root.GetProperty("PolicyBlocked").GetBoolean();
+                var succeeded = root.GetProperty("ScanSucceeded").GetBoolean();
                 var updates = new List<DriverUpdate>();
+                var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var ambiguous = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 foreach (var u in root.GetProperty("Updates").EnumerateArray())
                 {
-                    updates.Add(new DriverUpdate(
+                    var update = new DriverUpdate(
                         u.GetProperty("UpdateId").GetString() ?? "",
                         u.GetProperty("Title").GetString() ?? "",
                         u.TryGetProperty("DriverClass", out var dc) ? dc.GetString() : null,
                         u.TryGetProperty("Manufacturer", out var mf) ? mf.GetString() : null,
                         u.TryGetProperty("Model", out var md) ? md.GetString() : null,
-                        u.TryGetProperty("Date", out var dt) ? dt.GetString() : null));
+                        u.TryGetProperty("Date", out var dt) ? dt.GetString() : null)
+                    { Revision = u.GetProperty("Revision").GetInt32() };
+                    if (!WindowsUpdateService.TryParseRowId(update.RowId, out _, out _) || string.IsNullOrWhiteSpace(update.Title))
+                    { succeeded = false; continue; }
+                    if (!seen.Add(update.RowId)) { succeeded = false; ambiguous.Add(update.RowId); continue; }
+                    updates.Add(update);
                 }
-                return new DriverScanResult(policyBlocked, updates);
+                updates.RemoveAll(update => ambiguous.Contains(update.RowId));
+                return new DriverScanResult(policyBlocked, policyBlocked ? Array.Empty<DriverUpdate>() : updates)
+                    { ScanSucceeded = succeeded && !policyBlocked };
             }
-            catch (JsonException)
-            {
-                return new DriverScanResult(false, Array.Empty<DriverUpdate>());
-            }
+            catch (Exception ex) when (ex is JsonException or InvalidOperationException or KeyNotFoundException or FormatException or OverflowException)
+            { return Unknown(); }
         }
 
         // "Νεότερο" πάντα με ημερομηνίες (yyyy-MM-dd) - ίδια λογική με το Complete-DriverScan του ps1
@@ -871,47 +895,12 @@ try {
         }
 
         // Await the exact WUA driver result; no detached installation route.
-        public static async Task<bool> InstallAndWaitAsync(string updateId, CancellationToken ct = default)
+        public static async Task<bool> InstallAndWaitAsync(string rowId, CancellationToken ct = default)
         {
-            using var lease = await GearWinCore.EnterAsync(CoreWork.SoftwareChange, ct: ct);
-            if (!Guid.TryParseExact(updateId, "D", out var id) || id == Guid.Empty) return false;
-            ct.ThrowIfCancellationRequested();
-            updateId = id.ToString("D");
-            var script = $@"
-$ErrorActionPreference = 'Stop'
-try {{
-    $session = New-Object -ComObject Microsoft.Update.Session
-    $result = $session.CreateUpdateSearcher().Search(""UpdateID='{updateId}' and IsInstalled=0 and IsHidden=0 and Type='Driver'"")
-    if ($result.Updates.Count -ne 1) {{ exit 1 }}
-    $target = $result.Updates.Item(0)
-    if (-not $target.EulaAccepted) {{ $target.AcceptEula() }}
-    if (-not $target.EulaAccepted) {{ exit 2 }}
-    $toInstall = New-Object -ComObject Microsoft.Update.UpdateColl
-    $toInstall.Add($target) | Out-Null
-    if (-not $target.IsDownloaded) {{
-        $downloader = $session.CreateUpdateDownloader(); $downloader.Updates = $toInstall
-        $download = $downloader.Download()
-        $item = $download.GetUpdateResult(0)
-        if ($download.ResultCode -ne 2 -or $item.ResultCode -ne 2 -or $item.HResult -ne 0 -or -not $target.IsDownloaded) {{ exit 2 }}
-    }}
-    $installer = $session.CreateUpdateInstaller(); $installer.Updates = $toInstall
-    $installer.AllowSourcePrompts = $false
-    $r = $installer.Install()
-    $item = $r.GetUpdateResult(0)
-    if ($r.ResultCode -eq 2 -and $item.ResultCode -eq 2 -and $item.HResult -eq 0) {{
-        if ($r.RebootRequired -or $item.RebootRequired) {{ exit 10 }} else {{ exit 0 }}
-    }} else {{ exit 2 }}
-}} catch {{ exit 3 }}
-";
-            var psi = new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, @"WindowsPowerShell\v1.0\powershell.exe"),
-                PowerShellArgs.Command(script, hidden: true)) { UseShellExecute = false, CreateNoWindow = true };
-            ct.ThrowIfCancellationRequested();
-            using var p = Process.Start(psi);
-            if (p == null) return false;
-            // Admission cancellation only. Do not terminate an active WUA install.
-            await p.WaitForExitAsync();
-            if (p.ExitCode == 10) WingetService.RestartRequiredAfterUpdates = true;
-            return p.ExitCode is 0 or 10;
+            var result = await WindowsUpdateService.InstallDriverAsync(rowId, ct);
+            if (result.RebootRequired) WingetService.RestartRequiredAfterUpdates = true;
+            if (!result.Ok && result.Error != null) Trace.TraceWarning("WUA driver: " + result.Error);
+            return result.Ok;
         }
 
         // 6.9.1: αντίγραφο των τρεχόντων οδηγών τρίτων (pnputil /export-driver) σε φάκελο με timestamp ΠΡΙΝ από κάθε εγκατάσταση οδηγού· κρατούνται τα 3 τελευταία.

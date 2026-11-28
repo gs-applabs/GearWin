@@ -1,5 +1,13 @@
 # ROADMAP
 
+## ACTIVE — one WUA installation engine, exact driver revision (2026-11-28)
+
+- DUP05/RQ15: existing WindowsUpdateService COM installation engine now serves both software and drivers, distinct language-neutral type and exact GUID + positive revision, shared EULA/download/per-item install checks, reboot propagation even on partial install result, no forced termination. Removed separate PowerShell driver installation body; DriverService wrapper remains. Driver scan captures revision and distinguishes failed/blocked/partial results from verified empty scan; duplicate exact identities omitted, notification/UI no longer publish authoritative zero on failed scan. Software pending-reboot count now excludes drivers before counting. UI confirmation/driver recovery preflight preserved. Native driver COM compatibility, physical activation and reboot reporting still require acceptance. Older external callers passing bare GUID to InstallAndWaitAsync now fail safely; tracked UI callers updated.
+- Eleven new deterministic cases (635 cumulative authored, not passed); last verified baseline 76bd8e5b 1003 desktop + 42 migration PASS. Parent 8deef40c installer 46108951518 in progress, offline clone job 140867964398 passed; audit 46108951497 in progress. No merge or release.
+- Remaining: shared cleanup category plan, gaming ownership/dispatcher, migration/UI, native and combined tests. Do not duplicate service or create a third updater.
+
+
+
 ## ACTIVE — shared desktop registration traversal and manual-profile recovery (2026-11-28)
 
 - DUP02: SystemInstallProbe.ReadRegistrations is now the shared read-only uninstall registry traversal for suite detection, BloatwareService and AppIconService (also RecommendedInventoryService through existing icon evidence). Explicit 64/32 machine views, default current-user view, consumer precedence preserved, lazy projection, deterministic disposal even on early return. Bloatware keeps strict scan failure and exact machine MSI policy, display-name dedupe preserved; icon/suite evidence remains best effort and does not prove absence when entries are inaccessible. No raw uninstall commands executed; no new cache/timer, no registry writes. Migration.ApplicationDiscovery remains separate to preserve portable core/export IDs, view coverage and incomplete warnings; do not merge blindly.

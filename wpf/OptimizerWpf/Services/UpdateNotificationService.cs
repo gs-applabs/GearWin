@@ -189,7 +189,7 @@ namespace OptimizerWpf.Services
                 var driverResult = await DriverService.ScanCoordinatedAsync(priority);
                 if (Stale()) return;
                 Log($"RunCheckAsync: driver scan found {driverResult.Updates.Count} update(s) (PolicyBlocked={driverResult.PolicyBlocked})");
-                if (!driverResult.PolicyBlocked)
+                if (!driverResult.PolicyBlocked && driverResult.ScanSucceeded)
                 {
                     UpdatesHubService.ReportDriverScan(driverResult.Updates.Count);
                     MaybeNotify(driverResult.Updates.Count,
@@ -198,6 +198,7 @@ namespace OptimizerWpf.Services
                         LanguageService.T("UpdateNotify_DriversTitle"),
                         string.Format(LanguageService.T("UpdateNotify_DriversBody"), driverResult.Updates.Count), announce: announce);
                 }
+                else UpdatesHubService.ReportDriverScan(null);
             }
             catch (Exception ex) { Log($"RunCheckAsync: driver scan threw - {ex}"); }
 

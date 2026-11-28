@@ -1,6 +1,6 @@
 # CURRENT CHECKPOINT — 2026-11-28
 
-Read [START_HERE.md](START_HERE.md) and [ROADMAP.md](ROADMAP.md). Shared desktop registration traversal, manual-profile recovery and coordinated gaming undo. Four new tests; no new service, no release. Exact new head pending CI.
+Read [START_HERE.md](START_HERE.md) and [ROADMAP.md](ROADMAP.md). One shared WUA installation engine, driver exact revision and scan completeness. Eleven new tests, current CI pending; no merge or release.
 
 ---
 

@@ -2,6 +2,10 @@
 
 Updated 2026-11-28. This is the single current entry point for a new ChatGPT/Claude Code session. Repository: gs-applabs/GearWin. Active branch: release/7.1.0-ultra. Draft integration PR: #6 (base release/7.0.0-validation). Resolve live branch HEAD first; last fully validated source 7960011c034d9e5a49605b2d34e73a0e37f6ca61; current HEAD includes newer history/product reconciliation. Master audit reference: c025e12d3e4cc8d3dc2be63d27f30b0aa8f34132. Never reset or blindly merge. No final release yet.
 
+## ACTIVE CHECKPOINT — one WUA installation engine
+
+Read current ROADMAP ACTIVE pass. DriverService delegates exact-revision WUA servicing to existing WindowsUpdateService; scan failures distinguished from empty and hub counts invalidated. Native acceptance pending. No new service, no release.
+
 ## ACTIVE CHECKPOINT — shared registration traversal
 
 Read current ROADMAP ACTIVE pass. Desktop uninstall registry readers now share SystemInstallProbe traversal with per-consumer projections; Office/Gaming recover UI through one helper and undo uses existing coordinated method. Migration core remains separate pending scope review. Current CI pending, no release.

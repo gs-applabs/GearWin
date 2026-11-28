@@ -741,7 +741,7 @@ namespace OptimizerWpf.Views
                 bool done;
                 try
                 {
-                    done = row.WuUpdate != null ? await DriverService.InstallAndWaitAsync(row.WuUpdate.UpdateId)
+                    done = row.WuUpdate != null ? await DriverService.InstallAndWaitAsync(row.WuUpdate.RowId)
                         : row.CatalogCandidate != null && await DriverService.InstallCatalogDriverAsync(row.CatalogCandidate);
                 }
                 catch { done = false; }
@@ -998,10 +998,11 @@ namespace OptimizerWpf.Views
             var parts = new List<string>();
             parts.Add(wuResult.PolicyBlocked
                 ? LanguageService.T("Opt_WuPolicyBlocked")
-                : $"Windows Update: {wuResult.Updates.Count}{LanguageService.T("Opt_UpdatesSuffix")}");
+                : $"Windows Update: {wuResult.Updates.Count}{LanguageService.T("Opt_UpdatesSuffix")}" +
+                    (wuResult.ScanSucceeded ? "" : $" · {LanguageService.T("Opt_Unknown")}"));
             parts.Add($"Update Catalog: {candidates.Count}" + (looksBlocked
                 ? $" · {LanguageService.T("Opt_Unknown")}" : $"{LanguageService.T("Opt_CatalogUpdatesMid")}{devices.Count}{LanguageService.T("Opt_CatalogUpdatesSuffix")}"));
-            bool incomplete = looksBlocked || wuResult.PolicyBlocked;
+            bool incomplete = looksBlocked || wuResult.PolicyBlocked || !wuResult.ScanSucceeded;
             DriverScan.SetStatus(_driverUpdates.Count == 0
                 ? $"{LanguageService.T(incomplete ? "Opt_Unknown" : "Opt_NoDriverUpdatesFound")} {string.Join(" ", parts)}"
                 : $"{LanguageService.T("Opt_DriverUpdatesFoundPrefix")}{_driverUpdates.Count}{LanguageService.T("Opt_DriverUpdatesFoundSuffix")} {string.Join(" ", parts)}");
@@ -1167,10 +1168,10 @@ namespace OptimizerWpf.Views
                 TxtDriverStatus.Text = installingText;
                 StatusService.SetBusy(installingText);
                 bool installed;
-                try { installed = await DriverService.InstallAndWaitAsync(row.WuUpdate.UpdateId); }
+                try { installed = await DriverService.InstallAndWaitAsync(row.WuUpdate.RowId); }
                 catch { installed = false; }
                 finally { StatusService.SetIdle(LanguageService.T("Ready")); }
-                DriverHistoryService.Record(row.WuUpdate.Title, "Windows Update", installed ? "installed" : "failed");
+                DriverHistoryService.Record(row.WuUpdate.Title, "Windows Update", installed ? "WUA reported success; activation not verified" : "failed");
                 // 6.9.0: το αποτέλεσμα φαίνεται (κάρτα + γραμμή κατάστασης), η γραμμή δεν μένει «παγωμένη» στο «Εγκατάσταση…»
                 var resultText = string.Format(LanguageService.T(installed ? "Opt_DriverWuDone" : "Opt_DriverWuFailed"), row.WuUpdate.Title);
                 TxtDriverStatus.Text = resultText;
