@@ -180,6 +180,25 @@ public sealed class ApplicationInventoryTests
             destination: new ApplicationInventory(1, "windows", [], [])));
     }
 
+    [Fact]
+    public void PackagedAppsKeepStoreAndNonStoreIdentitiesSeparate()
+    {
+        var source = ApplicationDiscovery.AddPackagedApps(new ApplicationInventory(1, "windows", [], []), [
+            ("Vendor.App", "Vendor.App_1.2.3.4_x64__abcdefghijklm", true),
+            ("Vendor.App", "Vendor.App_1.2.3.4_arm64__abcdefghijklm", false)
+        ], incomplete: true);
+        Assert.Equal(2, source.Applications.Count);
+        Assert.Contains(source.Applications, a => a.Kind == InventorySource.WindowsStorePackage);
+        Assert.Contains(source.Applications, a => a.Kind == InventorySource.WindowsPackagedApp);
+        Assert.Equal(2, source.Warnings.Count);
+        var target = new PackageProfile("linux", "x64", "debian", "13", null, [new(PackageManager.Apt, "apt-get")], null);
+        var manifest = new PackageManifest(1, [new("Example", [new(PackageManager.Apt, "example")],
+            [new(InventorySource.WindowsPackagedApp, Id: "VENDOR.APP_ABCDEFGHIJKLM")])]);
+        var plan = PackagePlanner.CreatePlan(target, manifest, source);
+        Assert.Equal(PlanStatus.Unresolved, plan.Single(a => a.Source!.Kind == InventorySource.WindowsStorePackage).Status);
+        Assert.Equal(PlanStatus.CommandPreview, plan.Single(a => a.Source!.Kind == InventorySource.WindowsPackagedApp).Status);
+    }
+
     private static string Entry(string name) => $"[Desktop Entry]\nType=Application\nName={name}\n";
 
     private static void WriteEntry(string dataDirectory, string relativePath, string content)

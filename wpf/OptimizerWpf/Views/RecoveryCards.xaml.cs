@@ -325,18 +325,18 @@ namespace OptimizerWpf.Views
             {
                 TxtAppsExportStatus.Text = Translation("Απογραφή εφαρμογών…", "Reading installed applications…");
                 var inventory = await GearWinCore.RunAsync(CoreWork.TransferScan, () => System.Threading.Tasks.Task.Run(GearWin.Migration.ApplicationDiscovery.InspectHost));
-                // The existing Store scanner acquires its own core lease; do not nest
-                // it inside TransferScan. A failure is an explicit inventory warning.
+                // The shared read-only packaged-app scanner acquires its own core lease.
+                // Its broader migration result is never used for uninstall eligibility.
                 try
                 {
-                    var store = await BloatwareService.ScanUwpAppsAsync();
-                    inventory = GearWin.Migration.ApplicationDiscovery.AddStorePackages(inventory,
-                        store.Select(a => (a.Name, a.PackageFullName)));
+                    var packaged = await BloatwareService.ScanPackagedAppsForInventoryAsync();
+                    inventory = GearWin.Migration.ApplicationDiscovery.AddPackagedApps(inventory,
+                        packaged.Apps.Select(a => (a.Name, a.PackageFullName, a.IsStore)), packaged.Incomplete);
                 }
                 catch (System.Exception ex)
                 {
-                    System.Diagnostics.Trace.TraceWarning("Store inventory: " + ex.Message);
-                    inventory = inventory with { Warnings = inventory.Warnings.Concat(new[] { "Store inventory failed or was unavailable." }).ToArray() };
+                    System.Diagnostics.Trace.TraceWarning("Packaged app inventory: " + ex.Message);
+                    inventory = inventory with { Warnings = inventory.Warnings.Concat(new[] { "Packaged app inventory failed or was unavailable." }).ToArray() };
                 }
                 if (includeSelectedExecutables)
                     inventory = GearWin.Migration.ApplicationDiscovery.AddSelectedExecutables(inventory, selectedNames);

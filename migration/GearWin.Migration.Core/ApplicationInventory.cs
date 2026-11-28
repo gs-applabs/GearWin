@@ -3,7 +3,7 @@ using Microsoft.Win32;
 
 namespace GearWin.Migration;
 
-public enum InventorySource { LinuxDesktop, WindowsRegistry, WindowsStorePackage, WindowsSelectedExecutable }
+public enum InventorySource { LinuxDesktop, WindowsRegistry, WindowsStorePackage, WindowsSelectedExecutable, WindowsPackagedApp }
 
 public sealed record InstalledApplication(InventorySource Kind, string Id, string Name,
     string? Version = null, string? Publisher = null);
@@ -196,15 +196,23 @@ public static class ApplicationDiscovery
     // The Windows UI supplies already validated current-user Store package records
     // from its existing UWP scanner. Never infer a WinGet ID from a package family.
     public static ApplicationInventory AddStorePackages(ApplicationInventory inventory,
-        IEnumerable<(string Name, string FullName)> packages)
+        IEnumerable<(string Name, string FullName)> packages) =>
+        AddPackagedAppsCore(inventory, packages.Select(p => (p.Name, p.FullName, true)), false, true);
+
+    public static ApplicationInventory AddPackagedApps(ApplicationInventory inventory,
+        IEnumerable<(string Name, string FullName, bool IsStore)> packages, bool incomplete = false) =>
+        AddPackagedAppsCore(inventory, packages, incomplete, false);
+
+    private static ApplicationInventory AddPackagedAppsCore(ApplicationInventory inventory,
+        IEnumerable<(string Name, string FullName, bool IsStore)> packages, bool incomplete, bool removableStoreOnly)
     {
         if (inventory.OperatingSystem != "windows" || inventory.SchemaVersion != PackagePlanner.SchemaVersion)
             throw new ArgumentException("Expected a Windows inventory.");
         var apps = inventory.Applications.ToList();
-        var seen = new HashSet<string>(apps.Where(a => a.Kind == InventorySource.WindowsStorePackage)
-            .Select(a => a.Id + "\\n" + a.Version), StringComparer.OrdinalIgnoreCase);
+        var seen = new HashSet<string>(apps.Where(a => a.Kind is InventorySource.WindowsStorePackage or InventorySource.WindowsPackagedApp)
+            .Select(a => a.Kind + "|" + a.Id + "|" + a.Version), StringComparer.OrdinalIgnoreCase);
         var warnings = inventory.Warnings.ToList();
-        bool invalid = false;
+        bool invalid = incomplete;
         foreach (var package in packages)
         {
             var parts = package.FullName.Split('_');
@@ -215,11 +223,14 @@ public static class ApplicationDiscovery
             { invalid = true; continue; }
 
             string family = parts[0] + "_" + parts[4];
-            if (seen.Add(family + "\\n" + parts[1]))
-                apps.Add(new(InventorySource.WindowsStorePackage, family, package.Name, parts[1]));
+            var kind = package.IsStore ? InventorySource.WindowsStorePackage : InventorySource.WindowsPackagedApp;
+            if (seen.Add(kind + "|" + family + "|" + parts[1]))
+                apps.Add(new(kind, family, package.Name, parts[1]));
         }
-        if (invalid) warnings.Add("Some Store package identities could not be interpreted.");
-        warnings.Add("Store supplement covers current-user removable Store apps only; other MSIX, system apps and portable apps are not fully inventoried.");
+        if (invalid) warnings.Add("Some packaged application identities could not be interpreted.");
+        warnings.Add(removableStoreOnly
+            ? "Store supplement covers current-user removable Store apps only; other MSIX, system apps and portable apps are not fully inventoried."
+            : "Packaged app supplement covers current-user non-framework, non-resource package registrations; other users, provisioning, optional package types and portable applications are not fully inventoried.");
         return inventory with { Applications = Sort(apps), Warnings = warnings.ToArray() };
     }
 

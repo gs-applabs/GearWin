@@ -24,6 +24,9 @@ namespace OptimizerWpf.Services
         public string Initial => string.IsNullOrEmpty(Name) ? "?" : Name[..1].ToUpperInvariant();
     }
 
+    internal sealed record PackagedInventoryApp(string Name, string PackageFullName, bool IsStore);
+    internal sealed record PackagedInventoryScan(IReadOnlyList<PackagedInventoryApp> Apps, bool Incomplete);
+
     // Port του Optimizer.ps1's Εφαρμογές & Bloat καρτέλα (~14193-15000). Βλ. HANDOFF.md §0.4ιβ.
     public static class BloatwareService
     {
@@ -263,16 +266,53 @@ try {{
 
         public static async Task<IReadOnlyList<UwpAppInfo>> ScanUwpAppsAsync()
         {
+            var scan = await ScanPackagedAppsAsync(removableStoreOnly: true);
+            return scan.Apps.Where(a => a.IsStore).Select(a => new UwpAppInfo(a.Name, a.PackageFullName)).ToList();
+        }
+
+        // Migration only: include non-removable and non-Store current-user packages.
+        // Never feed this broader inventory to the uninstall window or removal API.
+        internal static Task<PackagedInventoryScan> ScanPackagedAppsForInventoryAsync() =>
+            ScanPackagedAppsAsync(removableStoreOnly: false);
+
+        private static async Task<PackagedInventoryScan> ScanPackagedAppsAsync(bool removableStoreOnly)
+        {
             using var lease = await GearWinCore.EnterAsync(CoreWork.UpdateScan);
-            const string script = "$ErrorActionPreference = 'Stop'; Get-AppxPackage | Where-Object { -not $_.IsFramework -and -not $_.IsResourcePackage -and -not $_.NonRemovable -and $_.SignatureKind -eq 'Store' } | " +
-                                   "Select-Object Name, PackageFullName | Sort-Object Name | ConvertTo-Json -Compress";
-            var output = await RunPsCaptureAsync(script);
-            if (string.IsNullOrWhiteSpace(output)) return Array.Empty<UwpAppInfo>();
+            var output = await RunPsCaptureAsync(PackagedInventoryScript(removableStoreOnly));
+            return ParsePackagedInventory(output, removableStoreOnly);
+        }
+
+        internal static string PackagedInventoryScript(bool removableStoreOnly) =>
+            "$ErrorActionPreference = 'Stop'; Get-AppxPackage | Where-Object { -not $_.IsFramework -and -not $_.IsResourcePackage" +
+            (removableStoreOnly ? " -and -not $_.NonRemovable -and $_.SignatureKind -eq 'Store'" : "") +
+            " } | Select-Object Name, PackageFullName, @{Name='Signature';Expression={[string]$_.SignatureKind}} | Sort-Object Name | ConvertTo-Json -Compress";
+
+        internal static PackagedInventoryScan ParsePackagedInventory(string output, bool removableStoreOnly)
+        {
+            if (string.IsNullOrWhiteSpace(output)) return new(Array.Empty<PackagedInventoryApp>(), false);
             using var document = System.Text.Json.JsonDocument.Parse(output);
             var root = document.RootElement;
             var elements = root.ValueKind == System.Text.Json.JsonValueKind.Array ? root.EnumerateArray() : new[] { root }.AsEnumerable();
-            return elements.Select(e => new UwpAppInfo(e.GetProperty("Name").GetString() ?? "", e.GetProperty("PackageFullName").GetString() ?? ""))
-                .Where(e => IsValidUwpPackageIdentity(e.PackageFullName)).ToList();
+            var apps = new List<PackagedInventoryApp>();
+            bool incomplete = false;
+            static string? Field(System.Text.Json.JsonElement element, string key) =>
+                element.TryGetProperty(key, out var value) && value.ValueKind == System.Text.Json.JsonValueKind.String ? value.GetString() : null;
+            foreach (var element in elements)
+            {
+                if (element.ValueKind != System.Text.Json.JsonValueKind.Object)
+                { incomplete = true; continue; }
+                var name = Field(element, "Name");
+                var fullName = Field(element, "PackageFullName");
+                var signature = Field(element, "Signature");
+                if (string.IsNullOrWhiteSpace(name) || !IsValidUwpPackageIdentity(fullName) ||
+                    !string.Equals(name, fullName!.Split('_')[0], StringComparison.OrdinalIgnoreCase) ||
+                    signature is not ("Store" or "System" or "Enterprise" or "Developer" or "None"))
+                { incomplete = true; continue; }
+                bool isStore = signature == "Store";
+                if (removableStoreOnly && !isStore) { incomplete = true; continue; }
+                apps.Add(new(name, fullName!, isStore));
+            }
+            return new(apps, incomplete);
         }
 
         internal static bool IsValidUwpPackageIdentity(string? name) =>
@@ -372,11 +412,13 @@ try {{
             using var timeout = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(30));
             try
             {
-                var output = process.StandardOutput.ReadToEndAsync(timeout.Token);
-                var errors = process.StandardError.ReadToEndAsync(timeout.Token);
+                var output = ReadInventoryOutputAsync(process.StandardOutput, 4 * 1024 * 1024, timeout.Token);
+                var errors = ReadInventoryOutputAsync(process.StandardError, 64 * 1024, timeout.Token);
                 await Task.WhenAll(output, errors, process.WaitForExitAsync(timeout.Token));
                 if (process.ExitCode != 0) throw new InvalidOperationException("App inventory failed (exit " + process.ExitCode + ").");
-                return await output;
+                if (output.Result.Exceeded || errors.Result.Exceeded)
+                    throw new IOException("App inventory output exceeded its limit.");
+                return output.Result.Text;
             }
             catch (OperationCanceledException) when (timeout.IsCancellationRequested)
             {
@@ -384,6 +426,24 @@ try {{
                 try { if (!process.HasExited) process.Kill(entireProcessTree: true); } catch { }
                 throw new TimeoutException("App inventory exceeded the time limit.");
             }
+        }
+
+        // Continue draining both pipes after the limit, without retaining excess
+        // text, so a verbose child cannot deadlock on a full pipe.
+        internal static async Task<(string Text, bool Exceeded)> ReadInventoryOutputAsync(
+            TextReader reader, int maxChars, System.Threading.CancellationToken token)
+        {
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxChars);
+            var buffer = new char[4096];
+            var text = new System.Text.StringBuilder();
+            bool exceeded = false;
+            int count;
+            while ((count = await reader.ReadAsync(buffer.AsMemory(), token)) != 0)
+            {
+                if (count > maxChars - text.Length) exceeded = true;
+                if (!exceeded) text.Append(buffer, 0, count);
+            }
+            return (text.ToString(), exceeded);
         }
 
         private static async Task<bool> RunProcessForSuccessAsync(string fileName, string arguments)
