@@ -1,6 +1,6 @@
 # CURRENT CHECKPOINT — 2026-11-28
 
-Read [START_HERE.md](START_HERE.md) and SINGLE ACTIVE BACKLOG in [ROADMAP.md](ROADMAP.md). All remaining work, easiest to hardest; E01 shared cleanup rules implemented. Parent 4a2e9df0: 1068 .NET tests passed, final E2E pending. New CI pending; no merge/release.
+Read [START_HERE.md](START_HERE.md) and SINGLE ACTIVE BACKLOG in [ROADMAP.md](ROADMAP.md). E02 Bloatware usage and safe uninstall localization across 14 languages; other strings and all remaining categories stay open. E01 build succeeded. New CI pending.
 
 ---
 

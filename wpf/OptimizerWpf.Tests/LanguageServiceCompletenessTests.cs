@@ -14,6 +14,15 @@ namespace OptimizerWpf.Tests;
 public class LanguageServiceCompletenessTests
 {
     [Fact]
+    public void UsageReviewAndUninstallSafetyMessagesExistInEveryLanguage()
+    {
+        string[] keys = { "Bloatware_UsageReview", "Bloatware_UsageTitle", "Bloatware_UsageConsent", "Bloatware_UsageUnavailable", "Bloatware_UsageEmpty", "Bloatware_UsageResults", "Bloatware_UninstallSettings", "Bloatware_UninstallRestoreFailed", "Bloatware_UninstallSettingsOpened", "Bloatware_UninstallRestart", "Bloatware_UninstallUnverified", "Bloatware_UninstallFailed", "Bloatware_ResidualAdvisory", "Bloatware_UninstallVerified", "Bloatware_DeepUninstallBtn", "Help_Bloat_DeepUninstall", "Bloatware_UninstallConfirmPrefix", "Bloatware_UninstallConfirmSuffix" };
+        foreach (var (language, dictionary) in LanguageService.AllTranslations)
+            foreach (var key in keys)
+                Assert.True(dictionary.TryGetValue(key, out var value) && !string.IsNullOrWhiteSpace(value), $"{language}: {key}");
+    }
+
+    [Fact]
     public void EveryKey_IsEitherInAllLanguages_OrOnlyInGreek()
     {
         var all = LanguageService.AllTranslations;

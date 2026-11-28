@@ -60,7 +60,6 @@ namespace OptimizerWpf.Views
         public BloatwareView()
         {
             InitializeComponent();
-            BtnUsageReview.Content = LanguageService.Current == "el" ? "Έλεγχος παλαιότερης χρήσης εφαρμογών" : "Review older app usage";
             ListBuiltin.ItemsSource = _builtin;
             ListAllFeatures.ItemsSource = _displayedFeatures;
             LoadPopularFeatureChips();
@@ -258,11 +257,8 @@ namespace OptimizerWpf.Views
         private async void BtnUsageReview_Click(object sender, RoutedEventArgs e)
         {
             if (s_usageReviewBusy || _deepUninstallBusy) return;
-            bool greek = LanguageService.Current == "el";
-            var title = greek ? "Έλεγχος χρήσης εφαρμογών" : "App usage review";
-            var notice = greek
-                ? "Να διαβαστούν μία φορά οι τοπικές ενδείξεις εκκίνησης εφαρμογών του τρέχοντος χρήστη από τα Windows; Δεν γίνεται παρακολούθηση, αποθήκευση ή αποστολή. Η απουσία πρόσφατης ένδειξης δεν αποδεικνύει αχρησία. Δεν αφαιρείται τίποτα."
-                : "Read existing Windows launch indicators for the current user once? No monitoring, storage or transmission. Lack of a recent observation does not prove non-use. Nothing is removed.";
+            var title = LanguageService.T("Bloatware_UsageTitle");
+            var notice = LanguageService.T("Bloatware_UsageConsent");
             if (ThemedMessageBox.Show(notice, title, MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
             s_usageReviewBusy = true;
             BtnUsageReview.IsEnabled = false;
@@ -273,10 +269,10 @@ namespace OptimizerWpf.Views
                 var result = await System.Threading.Tasks.Task.Run(() => AppUsageReview.Read(apps));
                 if (!IsLoaded) return;
                 var text = result == null
-                    ? (greek ? "Δεν υπάρχουν αξιόπιστα ή προσβάσιμα στοιχεία." : "Reliable observations are unavailable.")
+                    ? LanguageService.T("Bloatware_UsageUnavailable")
                     : result.Count == 0
-                        ? (greek ? "Δεν βρέθηκαν κατάλληλες παλαιές ενδείξεις." : "No eligible older observations found.")
-                        : (greek ? "Τελευταία καταγεγραμμένη εκκίνηση (όχι απόδειξη αχρησίας):" : "Last recorded launch (not proof of non-use):") +
+                        ? LanguageService.T("Bloatware_UsageEmpty")
+                        : LanguageService.T("Bloatware_UsageResults") +
                           "\n\n" + string.Join("\n", result.Select(row => row.Name + " · " + row.LastObservedUtc.ToLocalTime().ToString("d")));
                 ThemedMessageBox.Show(text, title, MessageBoxButton.OK, MessageBoxImage.Information);
             }
@@ -289,11 +285,9 @@ namespace OptimizerWpf.Views
         private async void BtnDeepUninstall_Click(object sender, RoutedEventArgs e)
         {
             if (sender is not Button { Tag: DeepUninstallRow row } button || _deepUninstallBusy) return;
-            bool greek = LanguageService.Current == "el";
             var question = $"{LanguageService.T("Bloatware_UninstallConfirmPrefix")}{row.App.DisplayName}{LanguageService.T("Bloatware_UninstallConfirmSuffix")}";
             if (row.App.MachineProductCode == null)
-                question += greek ? "\n\nΗ απεγκατάσταση θα γίνει από τις Ρυθμίσεις των Windows." :
-                    "\n\nUninstall will be performed from Windows Settings.";
+                question += "\n\n" + LanguageService.T("Bloatware_UninstallSettings");
             if (ThemedMessageBox.Show(question, LanguageService.T("Bloatware_ConfirmTitle"),
                     MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
 
@@ -305,8 +299,7 @@ namespace OptimizerWpf.Views
                 if (row.App.MachineProductCode != null &&
                     await RestoreGuardService.EnsureRecentAsync() == RestoreGuardResult.Failed)
                 {
-                    ThemedMessageBox.Show(greek ? "Δεν δημιουργήθηκε σημείο επαναφοράς. Η απεγκατάσταση δεν ξεκίνησε." :
-                        "Restore point failed. Uninstall was not started.", "GearWin", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    ThemedMessageBox.Show(LanguageService.T("Bloatware_UninstallRestoreFailed"), "GearWin", MessageBoxButton.OK, MessageBoxImage.Warning);
                     return;
                 }
                 busy.Update($"{LanguageService.T("Bloatware_Uninstall")} {row.App.DisplayName}...");
@@ -316,17 +309,10 @@ namespace OptimizerWpf.Views
                 {
                     string message = result.State switch
                     {
-                        SafeUninstallService.Outcome.WindowsSettingsOpened => greek
-                            ? "Ολοκληρώστε την απεγκατάσταση στις Ρυθμίσεις και ανανεώστε τη λίστα."
-                            : "Complete uninstall in Windows Settings and refresh the list.",
-                        SafeUninstallService.Outcome.RestartRequired => greek
-                            ? "Απαιτείται επανεκκίνηση. Δεν αφαιρέθηκαν φάκελοι δεδομένων."
-                            : "Restart required. No data folders were removed.",
-                        SafeUninstallService.Outcome.NotVerified => greek
-                            ? "Η αφαίρεση δεν επιβεβαιώθηκε. Η καταχώρηση διατηρείται."
-                            : "Removal could not be verified. The entry is retained.",
-                        _ => (greek ? "Η απεγκατάσταση απέτυχε ή δεν ολοκληρώθηκε." :
-                            "Uninstall failed or did not complete.") + (result.ExitCode is int code ? $" ({code})" : "")
+                        SafeUninstallService.Outcome.WindowsSettingsOpened => LanguageService.T("Bloatware_UninstallSettingsOpened"),
+                        SafeUninstallService.Outcome.RestartRequired => LanguageService.T("Bloatware_UninstallRestart"),
+                        SafeUninstallService.Outcome.NotVerified => LanguageService.T("Bloatware_UninstallUnverified"),
+                        _ => LanguageService.T("Bloatware_UninstallFailed") + (result.ExitCode is int code ? $" ({code})" : "")
                     };
                     busy.End(message);
                     ThemedMessageBox.Show(message, "GearWin", MessageBoxButton.OK, MessageBoxImage.Information);
@@ -337,13 +323,11 @@ namespace OptimizerWpf.Views
                 var residuals = await System.Threading.Tasks.Task.Run(() => BloatwareService.FindResidualFolders(row.App.DisplayName));
                 if (residuals.Count > 0)
                 {
-                    var note = greek
-                        ? "Πιθανοί φάκελοι για χειροκίνητο έλεγχο. Μπορεί να περιέχουν προσωπικά ή κοινόχρηστα δεδομένα. Δεν διαγράφηκε τίποτα."
-                        : "Possible folders for manual review. They may contain personal or shared data. Nothing was deleted.";
+                    var note = LanguageService.T("Bloatware_ResidualAdvisory");
                     ThemedMessageBox.Show(note + "\n\n" + string.Join("\n", residuals),
                         LanguageService.T("Bloatware_ResidualFilesTitle"), MessageBoxButton.OK, MessageBoxImage.Information);
                 }
-                busy.End(greek ? "Η απεγκατάσταση επιβεβαιώθηκε." : "Uninstall verified.");
+                busy.End(LanguageService.T("Bloatware_UninstallVerified"));
             }
             catch (Exception ex) { busy.End(ex.Message); }
             finally { button.IsEnabled = true; _deepUninstallBusy = false; }

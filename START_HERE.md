@@ -2,6 +2,10 @@
 
 Updated 2026-11-28. This is the single current entry point for a new ChatGPT/Claude Code session. Repository: gs-applabs/GearWin. Active branch: release/7.1.0-ultra. Draft integration PR: #6 (base release/7.0.0-validation). Resolve live branch HEAD first; last fully validated source 7960011c034d9e5a49605b2d34e73a0e37f6ca61; current HEAD includes newer history/product reconciliation. Master audit reference: c025e12d3e4cc8d3dc2be63d27f30b0aa8f34132. Never reset or blindly merge. No final release yet.
 
+## ACTIVE CHECKPOINT — E02 localization
+
+Read SINGLE ACTIVE BACKLOG in ROADMAP. Bloatware usage and safe uninstall messages/help localized in 14 languages; other fallback strings and full visual/native tests remain. Parent E01 build-setup and offline clone succeeded. No release.
+
 ## ACTIVE CHECKPOINT — single complete backlog
 
 Read [ROADMAP.md](ROADMAP.md), SINGLE ACTIVE BACKLOG first. All categories of outstanding work included; easy → medium → hard → final with safety/dependency gates. E01 common cleanup rule catalog implemented; tests pending. Parent 4a2e9df0 build/1026 desktop + 42 migration tests passed. No feature duplicate, no release.
