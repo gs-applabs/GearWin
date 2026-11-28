@@ -257,18 +257,21 @@ namespace OptimizerWpf.Services
             if (string.Equals(json, lastPersisted, StringComparison.Ordinal) && File.Exists(path)) return false;
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             var tmp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            bool ownsStage = false;
             try
             {
                 using (var stream = new FileStream(tmp, FileMode.CreateNew, FileAccess.Write, FileShare.None))
                 {
+                    ownsStage = true;
                     using (var writer = new StreamWriter(stream, new System.Text.UTF8Encoding(false), 4096, leaveOpen: true))
                         writer.Write(json);
                     stream.Flush(flushToDisk: true);
                 }
                 File.Move(tmp, path, overwrite: true);
+                ownsStage = false;
                 return true;
             }
-            finally { if (File.Exists(tmp)) try { File.Delete(tmp); } catch { } }
+            finally { if (ownsStage) try { File.Delete(tmp); } catch { } }
         }
 
         private static bool SaveCore()

@@ -26,6 +26,7 @@ Updated 2026-11-28. This is the single current entry point for a new ChatGPT/Cla
 - New SDK source targets .NET 11, global.json 11.0.100; dependency alignment and build workflows updated. Validate exact head including all preceding changes. AppVeyor config only, no verified execution. Existing base branch and master remain untouched.
 
 ## Next execution order
+- P1: shared bounded daily score/disk history and per-day cache now authored, 16 new fixtures; check actual CI before further edits. No timer or duplicate disk writes for already recorded days. Product screenshots run 46102812135 succeeded; artifact 15245849208, review visuals later. New grouped-registry source and daily storage require tests.
 - P0: grouped mouse/GameBar/classic registry changes now use typed value journals. Bulk restore refuses unowned legacy shell/telemetry keys; exact original only. Six fixture methods pending CI. Do not claim atomic groups or real shell behavior until tested; background apps/SysMain/hibernate/visual effects/explicit shell verbs remain open.
 - New P0 change: shared bounded read-only RecoveryMetadataProbe, catalog 90s/WinRE 25s, no mutation timeout; backup/catalog gate. Six new test cases pending. Verify latest CI; no real backup certification.
 - First inspect GitHub Actions for current exact HEAD: query repository /actions/runs?head_sha=... and branch listing (push + PR), not just PR wrapper. Fix compile/test regression before further heavy changes. Investigate shutdown timeout with repeatable coordinator test, no blanket timeout inflation.
