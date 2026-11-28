@@ -38,6 +38,8 @@ public class DriveTypeServiceTests
     [InlineData(11, false, PhysicalDriveKind.Ssd)]
     [InlineData(11, null, PhysicalDriveKind.Unknown)]
     [InlineData(7, true, PhysicalDriveKind.Usb)]
+    [InlineData(12, false, PhysicalDriveKind.Usb)]
+    [InlineData(13, null, PhysicalDriveKind.Usb)]
     [InlineData(8, false, PhysicalDriveKind.Unknown)]
     [InlineData(15, false, PhysicalDriveKind.Unknown)]
     [InlineData(16, false, PhysicalDriveKind.Unknown)]

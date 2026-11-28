@@ -53,6 +53,7 @@ namespace OptimizerWpf.Services
             if (bus == 7) return PhysicalDriveKind.Usb;
             if (bus == 17) return seekPenalty == true ? PhysicalDriveKind.Unknown : PhysicalDriveKind.Nvme;
             if (!IsDirectStorageBus(bus)) return PhysicalDriveKind.Unknown;
+            if (bus is 12 or 13) return PhysicalDriveKind.Usb; // removable SD/MMC icon class
             return seekPenalty switch { true => PhysicalDriveKind.Hdd, false => PhysicalDriveKind.Ssd, _ => PhysicalDriveKind.Unknown };
         }
 

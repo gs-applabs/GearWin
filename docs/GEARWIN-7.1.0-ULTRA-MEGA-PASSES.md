@@ -809,3 +809,10 @@ CatalogPackage streams HTTPS Microsoft allowlisted CAB to protected staging with
 - 18 additional deterministic cases (601 cumulative authored, not passed), includes descriptor bounds and SMART identity. References: Microsoft Learn DEVICE_SEEK_PENALTY_DESCRIPTOR, STORAGE_PROPERTY_ID, MSFT_Disk, MSFT_PhysicalDisk. Parent fa4d8405363763cdbda56f3eb099b5d5452a768f CI runs 46106722565 and 46106722579 in progress at inspection; offline clone job 140861043096 passed. No final release.
 - Remaining implementation: RQ13 opt-in usage suggestions, RQ14 gaming ownership/UI thread, broader cleanup overlap, update retry/progress, migration, Opsis.UI 6/UI/i18n and acceptance gates. Continue functionality first, then unified tests; no merge; version metadata 7.0.0.
 
+
+
+## Current P2 follow-up: storage read path consolidation — 2026-11-28
+
+- Static review of parent 38bbbcd5637f97d756cdcda5a22c99520dc7c20b: removed old out-variable dependency introduced during temperature refactor. Temperature now uses same physical handle for bus and temperature descriptors, no seek-penalty query per temperature sample; native failure returns unknown, fallback checks current volume number before reading. This does not prove identity across device replacement or make WMI fallback atomic. SD/MMC use removable icon class instead of SSD/HDD guess.
+- Two additional cases, 603 cumulative authored (not passed). Prior fa4d8405 CI still in progress at inspection. Next: opt-in usage suggestions, gaming, cleanup/update/migration/UI, then final test matrix. No merge or release.
+

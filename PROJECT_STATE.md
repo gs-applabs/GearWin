@@ -2,11 +2,10 @@
 
 Read [START_HERE.md](START_HERE.md) first; release/7.1.0-ultra, draft PR #6.
 
-## Current P2 follow-up: SSD/NVMe identity and SMART — 2026-11-28
+## Current P2 follow-up: storage read path consolidation — 2026-11-28
 
-- RQ17: storage metadata now uses single volume disk extent, matching PhysicalDrive handle, native device bus and seek-penalty descriptors; RAID/virtual/Storage Spaces/unknown are not classified as physical SSD/HDD. Exact Win32_DiskDrive Index query only after direct device traits, no MSFT_PhysicalDisk.DeviceId == disk-number assumption. SMART uses exact PNP identity or numeric suffix, rejects duplicate matches; fallback only explicit one-to-one physical association and known health statuses (provider summary, not raw SMART). Temperature shares same volume mapping and direct bus guard. Native read-only operations; no background timers or disk writes. Direct SCSI/USB bridges and virtualized drivers may still report abstract device properties; hardware acceptance required. Drive-letter TTL caching and physical identity across hotplug still open. Model fallback now avoids generic EVO/number false positives, KC3000 NVMe estimate; model inference remains estimate, not device proof.
-- 18 additional deterministic cases (601 cumulative authored, not passed), includes descriptor bounds and SMART identity. References: Microsoft Learn DEVICE_SEEK_PENALTY_DESCRIPTOR, STORAGE_PROPERTY_ID, MSFT_Disk, MSFT_PhysicalDisk. Parent fa4d8405363763cdbda56f3eb099b5d5452a768f CI runs 46106722565 and 46106722579 in progress at inspection; offline clone job 140861043096 passed. No final release.
-- Remaining implementation: RQ13 opt-in usage suggestions, RQ14 gaming ownership/UI thread, broader cleanup overlap, update retry/progress, migration, Opsis.UI 6/UI/i18n and acceptance gates. Continue functionality first, then unified tests; no merge; version metadata 7.0.0.
+- Static review of parent 38bbbcd5637f97d756cdcda5a22c99520dc7c20b: removed old out-variable dependency introduced during temperature refactor. Temperature now uses same physical handle for bus and temperature descriptors, no seek-penalty query per temperature sample; native failure returns unknown, fallback checks current volume number before reading. This does not prove identity across device replacement or make WMI fallback atomic. SD/MMC use removable icon class instead of SSD/HDD guess.
+- Two additional cases, 603 cumulative authored (not passed). Prior fa4d8405 CI still in progress at inspection. Next: opt-in usage suggestions, gaming, cleanup/update/migration/UI, then final test matrix. No merge or release.
 
 
 ---

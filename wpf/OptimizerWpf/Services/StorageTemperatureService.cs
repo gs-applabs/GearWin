@@ -93,18 +93,18 @@ internal static class StorageTemperatureService
             var diskNumber = ResolveDiskNumber(drive);
             if (!diskNumber.HasValue) return null;
             uint number = diskNumber.Value;
-            var traits = ReadDeviceTraits(number);
-            if (traits == null || !DriveTypeService.IsDirectStorageBus(traits.Value.Bus)) return null;
             using var disk = Open(@"\\.\PhysicalDrive" + number);
-            if (disk.IsInvalid) return SensorService.GetDiskTemperatureByNumber(number) ?? ReadReliabilityCounter(number);
-            // Device first; adapter property is not used as a substitute for device temperature.
-            var query = new byte[12];
-            BinaryPrimitives.WriteUInt32LittleEndian(query, 52);
-            var buffer = new byte[4096];
-            var reading = DeviceIoControl(disk, StorageQueryProperty, query, query.Length, buffer, buffer.Length,
-                out used, IntPtr.Zero) && used >= 0 && used <= buffer.Length
-                ? ParseDescriptor(buffer.AsSpan(0, used)) : null;
-            return reading ?? SensorService.GetDiskTemperatureByNumber(number) ?? ReadReliabilityCounter(number);
+            if (disk.IsInvalid) return null;
+            // Keep the same handle for identity and temperature; do not query
+            // seek penalty on every temperature sample.
+            var descriptor = QueryProperty(disk, 0);
+            int? bus = descriptor == null ? null : ParseBusType(descriptor);
+            if (bus == null || !DriveTypeService.IsDirectStorageBus(bus.Value)) return null;
+            var temperature = QueryProperty(disk, 52);
+            var reading = temperature == null ? null : ParseDescriptor(temperature);
+            if (reading.HasValue) return reading;
+            if (ResolveDiskNumber(drive) != number) return null;
+            return SensorService.GetDiskTemperatureByNumber(number) ?? ReadReliabilityCounter(number);
         }
         catch { return null; }
     }
