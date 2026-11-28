@@ -163,6 +163,8 @@
 
 
   <ItemGroup>
+    <Content Include="..\..\tools\shell\ShellContextHelper.ps1" Link="Shell\ShellContextHelper.ps1"
+             CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="..\..\tools\recovery\gearwin_clone.py" Link="Recovery\gearwin_clone.py"
              CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="..\..\tools\recovery\partclone_adapter.py" Link="Recovery\partclone_adapter.py"

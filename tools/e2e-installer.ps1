@@ -93,6 +93,7 @@ Check ($code -eq 0) "the new setup finished (exit code $code)"
 Start-Sleep -Seconds 2
 $exe = Join-Path $MachineDir 'GearWin.exe'
 Check (Test-Path $exe) 'GearWin.exe is in Program Files'
+Check (Test-Path (Join-Path $MachineDir 'Shell\ShellContextHelper.ps1')) 'protected shell action helper is included in Program Files'
 Check (Test-Path (Join-Path $MachineDir 'Recovery\gearwin_clone.py')) 'offline cloning script is included in Program Files'
 Check (Test-Path (Join-Path $MachineDir 'Recovery\partclone_adapter.py')) 'used-block partition imaging script is included in Program Files'
 Check (Test-Path (Join-Path $MachineDir 'Recovery\README.md')) 'offline cloning manual is included in Program Files'

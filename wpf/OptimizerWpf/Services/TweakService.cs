@@ -205,52 +205,17 @@ namespace OptimizerWpf.Services
 
         // ===== 2 hardcoded δεξί-κλικ επιλογές (Ιδιοκτησία/PowerShell εδώ) =====
 
-        public static void InstallTakeOwnership()
-        {
-            foreach (var root in new[] { @"*\shell\OptimizerTakeOwnership", @"Directory\shell\OptimizerTakeOwnership", @"Drive\shell\OptimizerTakeOwnership" })
-            {
-                using var key = Registry.ClassesRoot.CreateSubKey(root, writable: true);
-                key?.SetValue("", LanguageService.T("Tweak_TakeOwnershipMenuLabel"));
-                key?.SetValue("HasLUAShield", "");
-                using var cmd = Registry.ClassesRoot.CreateSubKey(root + @"\command", writable: true);
-                cmd?.SetValue("", "cmd.exe /c takeown /f \"%1\" && icacls \"%1\" /grant *S-1-3-4:F /c /l & pause");
-            }
-        }
+        public static void InstallTakeOwnership() =>
+            BuiltInShellJournal.Change(BuiltInShellJournal.Own, LanguageService.T("Tweak_TakeOwnershipMenuLabel"), false);
+        public static void RemoveTakeOwnership() =>
+            BuiltInShellJournal.Change(BuiltInShellJournal.Own, "", true);
+        public static bool IsTakeOwnershipInstalled() => BuiltInShellJournal.IsOn(BuiltInShellJournal.Own);
 
-        public static void RemoveTakeOwnership()
-        {
-            foreach (var root in new[] { @"*\shell\OptimizerTakeOwnership", @"Directory\shell\OptimizerTakeOwnership", @"Drive\shell\OptimizerTakeOwnership" })
-                try { Registry.ClassesRoot.DeleteSubKeyTree(root, throwOnMissingSubKey: false); } catch { }
-        }
-
-        // ΔΙΟΡΘΩΣΗ (γνωστό κενό #01) - τα 2 hardcoded ToggleButton (TweaksView.xaml) δεν περνούν από
-        // SimpleTweak/TweakRowVm, οπότε χρειάζονται τη δική τους δημόσια έκθεση κατάστασης.
-        public static bool IsTakeOwnershipInstalled() =>
-            new[] { @"*\shell\OptimizerTakeOwnership", @"Directory\shell\OptimizerTakeOwnership", @"Drive\shell\OptimizerTakeOwnership" }
-                .Any(root => { using var k = Registry.ClassesRoot.OpenSubKey(root); return k != null; });
-
-        public static void InstallOpenPowerShellHere()
-        {
-            foreach (var root in new[] { @"Directory\shell\OptimizerOpenPS", @"Directory\Background\shell\OptimizerOpenPS" })
-            {
-                using var key = Registry.ClassesRoot.CreateSubKey(root, writable: true);
-                key?.SetValue("", LanguageService.T("Tweak_OpenPsHereMenuLabel"));
-                using var cmd = Registry.ClassesRoot.CreateSubKey(root + @"\command", writable: true);
-                cmd?.SetValue("", root.Contains("Background")
-                    ? "powershell.exe -NoExit -Command \"Set-Location -LiteralPath '%V'\""
-                    : "powershell.exe -NoExit -Command \"Set-Location -LiteralPath '%1'\"");
-            }
-        }
-
-        public static void RemoveOpenPowerShellHere()
-        {
-            foreach (var root in new[] { @"Directory\shell\OptimizerOpenPS", @"Directory\Background\shell\OptimizerOpenPS" })
-                try { Registry.ClassesRoot.DeleteSubKeyTree(root, throwOnMissingSubKey: false); } catch { }
-        }
-
-        public static bool IsOpenPowerShellHereInstalled() =>
-            new[] { @"Directory\shell\OptimizerOpenPS", @"Directory\Background\shell\OptimizerOpenPS" }
-                .Any(root => { using var k = Registry.ClassesRoot.OpenSubKey(root); return k != null; });
+        public static void InstallOpenPowerShellHere() =>
+            BuiltInShellJournal.Change(BuiltInShellJournal.Open, LanguageService.T("Tweak_OpenPsHereMenuLabel"), false);
+        public static void RemoveOpenPowerShellHere() =>
+            BuiltInShellJournal.Change(BuiltInShellJournal.Open, "", true);
+        public static bool IsOpenPowerShellHereInstalled() => BuiltInShellJournal.IsOn(BuiltInShellJournal.Open);
 
         // ===== Πλήρης επαναφορά (uninstall) =====
 
@@ -287,6 +252,12 @@ namespace OptimizerWpf.Services
                 try { VisualEffectsJournal.Restore(); reverted++; }
                 catch (Exception ex) { Trace.TraceError("Visual preset restore: " + ex.Message); }
             }
+            foreach (var kind in new[] { BuiltInShellJournal.Own, BuiltInShellJournal.Open })
+            {
+                if (!BuiltInShellJournal.CanRestore(kind)) continue;
+                try { BuiltInShellJournal.Change(kind, "", true); reverted++; }
+                catch (Exception ex) { Trace.TraceError("Shell action restore: " + ex.Message); }
+            }
             return reverted;
         }
 
@@ -294,7 +265,8 @@ namespace OptimizerWpf.Services
             MainTweaks.Concat(AiCopilotTweaks).Concat(PerfRegTweaks).Count(TweakRegistryJournal.CanRestore)
             + GroupedRegistryTweaks.Groups().Count(g => GroupedRegistryTweaks.CanRestore(g.Values))
             + (BackgroundAppJournal.CanRestore() ? 1 : 0) + (ServiceStartJournal.CanRestoreSysMain() ? 1 : 0)
-            + (VisualEffectsJournal.CanRestore() ? 1 : 0);
+            + (VisualEffectsJournal.CanRestore() ? 1 : 0)
+            + new[] { BuiltInShellJournal.Own, BuiltInShellJournal.Open }.Count(BuiltInShellJournal.CanRestore);
 
         // ===== Ελαφρύτερα Windows (roadmap) =====
 

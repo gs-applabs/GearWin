@@ -9,6 +9,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'dotnet publish failed' }
     dotnet publish migration/GearWin.Migration.Cli -c Release -r win-x64 --self-contained true -o wpf/OptimizerWpf/publish/win-x64/migration
     if ($LASTEXITCODE -ne 0) { throw 'Migration CLI publish failed' }
+    if (!(Test-Path (Join-Path $root 'wpf/OptimizerWpf/publish/win-x64/Shell/ShellContextHelper.ps1'))) { throw 'Shell context helper missing from publish output' }
     $recoveryRoot = Join-Path $root 'wpf/OptimizerWpf/publish/win-x64/Recovery'
     foreach ($name in @('gearwin_clone.py', 'partclone_adapter.py', 'README.md')) {
         if (-not (Test-Path (Join-Path $recoveryRoot $name))) {

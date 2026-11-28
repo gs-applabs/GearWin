@@ -159,16 +159,32 @@ namespace OptimizerWpf.Views
             }
         }
 
-        private void ToggleTakeOwnership_Click(object sender, RoutedEventArgs e)
-        {
-            if (ToggleTakeOwnership.IsChecked == true) TweakService.InstallTakeOwnership();
-            else TweakService.RemoveTakeOwnership();
-        }
+        private async void ToggleTakeOwnership_Click(object sender, RoutedEventArgs e) =>
+            await ApplyShellToggleAsync(ToggleTakeOwnership, TweakService.InstallTakeOwnership,
+                TweakService.RemoveTakeOwnership, TweakService.IsTakeOwnershipInstalled);
 
-        private void TogglePSHere_Click(object sender, RoutedEventArgs e)
+        private async void TogglePSHere_Click(object sender, RoutedEventArgs e) =>
+            await ApplyShellToggleAsync(TogglePSHere, TweakService.InstallOpenPowerShellHere,
+                TweakService.RemoveOpenPowerShellHere, TweakService.IsOpenPowerShellHereInstalled);
+
+        private async System.Threading.Tasks.Task ApplyShellToggleAsync(ToggleButton button,
+            Action install, Action remove, Func<bool> detect)
         {
-            if (TogglePSHere.IsChecked == true) TweakService.InstallOpenPowerShellHere();
-            else TweakService.RemoveOpenPowerShellHere();
+            bool enabled = button.IsChecked == true;
+            button.IsEnabled = false;
+            try
+            {
+                await GearWinCore.RunAsync(CoreWork.TweakChange, () => System.Threading.Tasks.Task.Run(enabled ? install : remove));
+            }
+            catch (Exception ex)
+            {
+                ThemedMessageBox.Show(ex.Message, LanguageService.T("Net_ErrorTitle"), MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+            finally
+            {
+                button.IsChecked = await System.Threading.Tasks.Task.Run(detect);
+                button.IsEnabled = true;
+            }
         }
 
         private void BtnVisualAppearance_Click(object sender, RoutedEventArgs e) => ConfirmAndApplyVisual(1, 1);
