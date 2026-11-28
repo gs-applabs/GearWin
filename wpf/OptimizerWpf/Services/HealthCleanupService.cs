@@ -313,10 +313,32 @@ namespace OptimizerWpf.Services
         // οδηγία χρήστη: "άσε τα as they are") - μόνο ανάγνωση μεγέθους εδώ, επαναχρησιμοποιεί το ίδιο
         // DetectBrowsers() ώστε να μετρά ΑΚΡΙΒΩΣ τους ίδιους φακέλους που θα καθάριζε το υπάρχον κουμπί.
         public static Task<long> ScanBrowserCacheSizeAsync() => Task.Run(() =>
-            DetectBrowsers().Sum(BrowserCacheSize));
+            AllBrowserCacheDirectories(DetectBrowsers()).Sum(path => MaintenancePaths.MeasureFiles(path, TimeSpan.FromDays(2))));
+
+        // Same normalized root plan for aggregate estimate and aggregate cleaning.
+        internal static IReadOnlyList<string> UniqueCacheRoots(IEnumerable<string> paths)
+        {
+            var normalized = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var path in paths)
+            {
+                try
+                {
+                    if (Path.IsPathFullyQualified(path))
+                        normalized.Add(Path.TrimEndingDirectorySeparator(Path.GetFullPath(path)));
+                }
+                catch { }
+            }
+            var roots = new List<string>();
+            foreach (var path in normalized.OrderBy(x => x.Length).ThenBy(x => x, StringComparer.OrdinalIgnoreCase))
+                if (!roots.Any(root => MaintenancePaths.IsWithin(root, path))) roots.Add(path);
+            return roots;
+        }
+
+        internal static IReadOnlyList<string> AllBrowserCacheDirectories(IEnumerable<BrowserCacheEntry> browsers) =>
+            UniqueCacheRoots(browsers.SelectMany(BrowserCacheDirectories));
 
         internal static long BrowserCacheSize(BrowserCacheEntry browser) =>
-            BrowserCacheDirectories(browser).Distinct(StringComparer.OrdinalIgnoreCase)
+            UniqueCacheRoots(BrowserCacheDirectories(browser))
                 .Sum(path => MaintenancePaths.MeasureFiles(path, TimeSpan.FromDays(2)));
 
         internal static IEnumerable<string> BrowserCacheDirectories(BrowserCacheEntry browser)
@@ -348,7 +370,7 @@ namespace OptimizerWpf.Services
             QuickCleanService.RunExclusiveAsync(() => ClearBrowserCacheCore(browser));
 
         internal static long ClearBrowserCacheCore(BrowserCacheEntry browser) =>
-            BrowserCacheDirectories(browser).Distinct(StringComparer.OrdinalIgnoreCase)
+            UniqueCacheRoots(BrowserCacheDirectories(browser))
                 .Sum(path => MaintenancePaths.CleanFiles(path, TimeSpan.FromDays(2)));
 
         public static Task<WinREStatus> GetWinREStatusAsync() => Task.Run(() =>

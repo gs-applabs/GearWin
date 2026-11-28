@@ -101,7 +101,7 @@ namespace OptimizerWpf.Services
 
         private static ManagementObjectSearcher DeviceQuery(string query) =>
             new(new ManagementScope(@"root\CIMV2"), new ObjectQuery(query),
-                new EnumerationOptions { ReturnImmediately = true, Rewindable = false, Timeout = TimeSpan.FromSeconds(15) });
+                new System.Management.EnumerationOptions { ReturnImmediately = true, Rewindable = false, Timeout = TimeSpan.FromSeconds(15) });
 
         public static Task<IReadOnlyList<PnpDeviceInfo>> GetSystemDevicesAsync() => Task.Run(() =>
         {
@@ -337,6 +337,8 @@ namespace OptimizerWpf.Services
                 LastInstallLog = $"{candidate.Title} · SHA256: {sha256}";
                 if (!await VerifyAuthenticodeAsync(filePath)) { LastInstallLog += " · Signature not verified"; return false; }
 
+                using (var cabinet = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read))
+                    CatalogPackage.ValidateCabinet(cabinet);
                 var extractPath = Path.Combine(tempDir, "extracted");
                 SecureStorage.SecureDirectory(extractPath);
                 int expand = await RunCatalogCommandAsync("expand.exe", filePath, "-F:*", extractPath);

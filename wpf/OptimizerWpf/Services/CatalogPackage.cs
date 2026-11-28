@@ -160,6 +160,135 @@ internal static class CatalogPackage
         return false;
     }
 
+    // Conservative structural preflight based on MS-CAB (CFHEADER, CFFOLDER,
+    // CFFILE and CFDATA). This does not decompress or verify checksums; Windows
+    // remains responsible for decoding. Signature and post-extraction checks stay mandatory.
+    internal static void ValidateCabinet(Stream stream, long maxExpanded = 2 * MaxBytes)
+    {
+        if (!stream.CanSeek || stream.Position != 0 || stream.Length < 36 ||
+            stream.Length > MaxBytes || maxExpanded <= 0 || maxExpanded > 2 * MaxBytes)
+            throw new InvalidDataException("Invalid CAB size or stream.");
+        using var reader = new BinaryReader(stream, Encoding.UTF8, leaveOpen: true);
+        long end = stream.Length;
+        void Need(long count)
+        {
+            if (count < 0 || stream.Position > end || count > end - stream.Position)
+                throw new InvalidDataException("Truncated CAB structure.");
+        }
+        void Skip(long count) { Need(count); stream.Position += count; }
+        if (reader.ReadUInt32() != 0x4643534d) throw new InvalidDataException("Not a CAB.");
+        Skip(4);
+        long cabinetSize = reader.ReadUInt32();
+        if (cabinetSize < 36 || cabinetSize > end) throw new InvalidDataException("Invalid CAB declared size.");
+        end = cabinetSize; // signed CABs may have a trailing signature
+        Skip(4);
+        long fileTable = reader.ReadUInt32();
+        Skip(4);
+        int minor = reader.ReadByte(), major = reader.ReadByte();
+        int folderCount = reader.ReadUInt16(), fileCount = reader.ReadUInt16(), flags = reader.ReadUInt16();
+        Skip(2);
+        int cabinetIndex = reader.ReadUInt16();
+        if (minor != 3 || major != 1 || folderCount is < 1 or > 256 ||
+            fileCount is < 1 or > 4096 || (flags & ~4) != 0 || cabinetIndex != 0)
+            throw new InvalidDataException("Unsupported CAB layout or spanning.");
+        int folderReserve = 0, dataReserve = 0;
+        if ((flags & 4) != 0)
+        {
+            Need(4);
+            int headerReserve = reader.ReadUInt16();
+            folderReserve = reader.ReadByte();
+            dataReserve = reader.ReadByte();
+            Skip(headerReserve);
+        }
+        var folders = new (long Offset, int Blocks, int Compression)[folderCount];
+        for (int i = 0; i < folderCount; i++)
+        {
+            Need(8);
+            folders[i] = (reader.ReadUInt32(), reader.ReadUInt16(), reader.ReadUInt16());
+            if ((folders[i].Compression & 15) > 3) throw new InvalidDataException("Unsupported CAB compression.");
+            Skip(folderReserve);
+        }
+        if (fileTable < stream.Position || fileTable > end) throw new InvalidDataException("Invalid CAB file table.");
+        stream.Position = fileTable;
+        var entries = new List<(int Folder, long Offset, long Size)>();
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var leaves = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        long declaredTotal = 0;
+        for (int i = 0; i < fileCount; i++)
+        {
+            Need(16);
+            long size = reader.ReadUInt32(), offset = reader.ReadUInt32();
+            int folder = reader.ReadUInt16();
+            Skip(6);
+            if (folder >= folderCount || size > maxExpanded - declaredTotal)
+                throw new InvalidDataException("CAB file quota or folder exceeded.");
+            declaredTotal += size;
+            var name = new List<byte>();
+            while (true)
+            {
+                Need(1);
+                byte b = reader.ReadByte();
+                if (b == 0) break;
+                if (name.Count >= 240 || b < 32 || b >= 127)
+                    throw new InvalidDataException("Unsupported CAB filename.");
+                name.Add(b);
+            }
+            string path = Encoding.ASCII.GetString(name.ToArray()).Replace('/', '\\');
+            if (!SafeCabinetName(path) || !names.Add(path) || !leaves.Add(path.Split('\\')[^1]))
+                throw new InvalidDataException("Unsafe or ambiguous CAB filename.");
+            entries.Add((folder, offset, size));
+        }
+        foreach (var name in names)
+        {
+            int slash = name.IndexOf('\\');
+            while (slash >= 0)
+            {
+                if (names.Contains(name[..slash])) throw new InvalidDataException("Conflicting CAB paths.");
+                slash = name.IndexOf('\\', slash + 1);
+            }
+        }
+        long tableEnd = stream.Position, previousEnd = tableEnd, expanded = 0;
+        var sizes = new long[folderCount];
+        foreach (int i in Enumerable.Range(0, folderCount).OrderBy(i => folders[i].Offset))
+        {
+            var f = folders[i];
+            if (f.Offset < previousEnd || f.Offset > end) throw new InvalidDataException("Overlapping CAB folder data.");
+            stream.Position = f.Offset;
+            for (int j = 0; j < f.Blocks; j++)
+            {
+                Need(8);
+                Skip(4);
+                int packed = reader.ReadUInt16(), unpacked = reader.ReadUInt16();
+                if (packed == 0 || unpacked is < 1 or > 32768 || unpacked > maxExpanded - expanded ||
+                    ((f.Compression & 15) == 0 && packed != unpacked))
+                    throw new InvalidDataException("Invalid CAB block or expanded quota exceeded.");
+                expanded += unpacked;
+                sizes[i] += unpacked;
+                Skip(dataReserve + packed);
+            }
+            previousEnd = stream.Position;
+        }
+        foreach (var entry in entries)
+            if (entry.Offset > sizes[entry.Folder] || entry.Size > sizes[entry.Folder] - entry.Offset)
+                throw new InvalidDataException("CAB file exceeds folder data.");
+    }
+
+    internal static bool SafeCabinetName(string path)
+    {
+        if (string.IsNullOrEmpty(path) || path.Length > 240) return false;
+        foreach (string part in path.Split('\\', '/'))
+        {
+            if (part.Length == 0 || part.EndsWith('.') || part.EndsWith(' ') ||
+                part.Any(c => c < 32 || c >= 127 || c is ':' or '*' or '?' or '"' or '<' or '>' or '|'))
+                return false;
+            string stem = part.Split('.')[0].TrimEnd(' ').ToUpperInvariant();
+            if (stem is "CON" or "PRN" or "AUX" or "NUL" or "CONIN$" or "CONOUT$" ||
+                (stem.Length == 4 && (stem.StartsWith("COM") || stem.StartsWith("LPT")) &&
+                    stem[3] is >= '0' and <= '9')) return false;
+        }
+        return true;
+    }
+
     internal static string? SelectInf(string directory, string hardwareId)
     {
         var files = new List<string>();

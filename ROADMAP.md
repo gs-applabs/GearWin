@@ -1,5 +1,12 @@
 # ROADMAP
 
+## Current P2 follow-up: CAB preflight / shared browser plan — 2026-11-28
+
+- Parent 75e51e9061bd5ccce60b28748e401562e4dcc518 installer CI 46106288722 failed to compile: job 140859683226 CS0104 DriverService EnumerationOptions ambiguous System.Management/System.IO. Qualified System.Management type. Offline clone job passed, installer E2E skipped; audit 46106288660 pending at inspection.
+- RQ05/15: CAB preflight before expand.exe, after signature check. MS-CAB structural bounds on folder/file tables, names, spanning, duplicate leaves, compressed ranges, declared uncompressed sizes, per-folder offsets and 2 GiB aggregate quota. Rejects non-ASCII names, ambiguous paths, spanning and unsupported layouts conservatively; real signed CAB compatibility still requires test. This is metadata validation, NOT a filesystem quota, decompression sandbox or proof of valid compressed bytes. Post-extraction checks remain; no forced install termination. Reference: https://download.microsoft.com/download/4/D/A/4DA14F27-B4EF-4170-A6E6-5B1EF85B1BAA/%5BMS-CAB%5D.pdf .
+- RQ16: normalized browser cache root plan deduplicates same/nested roots with boundary-aware matching, shared between aggregate health scan, QuickClean estimate/execution and per-browser paths. No change to age policy or profile data exclusions; overlap outside browser category and alternate cleanup paths still open.
+- 17 new deterministic cases (573 cumulative authored, not passed). Remaining RQ15 partial scan reporting/progress/cancel, RQ16 wider dedupe, RQ17 SSD identity, RQ13 opt-in usage suggestions, RQ14 automatic profile ownership, RQ12 migration, P3 UI/i18n and P4/P5. User requests implementation first then consolidated checks; automatic CI may trigger meanwhile. No merge or release, version metadata still 7.0.0.
+
 ## Current P2 follow-up: cleanup protection and WUA outcomes — 2026-11-28
 
 - RQ16: shared MaintenancePaths estimate and cleanup skip known GearWin/Opsis/PowerToys components and user shortcut extensions (.lnk/.url/.website), including final pre-delete check. Registry review normalizes expanded paths and uses boundary-aware matching; protected suite MUI entries excluded from scan/delete. This is conservative component-based protection, not an exhaustive product inventory or hardlink/reparse race guarantee. Other cleanup paths and cross-category overlap still require review.

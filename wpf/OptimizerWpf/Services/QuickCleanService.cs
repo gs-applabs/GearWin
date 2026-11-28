@@ -63,7 +63,7 @@ namespace OptimizerWpf.Services
                 new("DeliveryOptimization", LanguageService.T("QuickClean_DeliveryOptimization"), MaintenancePaths.MeasureFiles(DeliveryOptimizationDir, TimeSpan.FromDays(7)), false),
                 new("ShaderCache", LanguageService.T("QuickClean_ShaderCache"), ShaderCacheDirs().Sum(dir => MaintenancePaths.MeasureFiles(dir, TimeSpan.FromDays(2))), false),
                 new("LauncherCache", LanguageService.T("QuickClean_LauncherCache"), LauncherCacheDirs().Sum(dir => MaintenancePaths.MeasureFiles(dir, TimeSpan.FromDays(2))), false),
-                new("BrowserCache", LanguageService.T("QuickClean_BrowserCache"), HealthCleanupService.DetectBrowsers().Sum(BrowserCacheSize), false),
+                new("BrowserCache", LanguageService.T("QuickClean_BrowserCache"), HealthCleanupService.AllBrowserCacheDirectories(HealthCleanupService.DetectBrowsers()).Sum(path => MaintenancePaths.MeasureFiles(path, TimeSpan.FromDays(2))), false),
             });
             return (IReadOnlyList<QuickCleanItem>)items;
         }));
@@ -137,17 +137,13 @@ namespace OptimizerWpf.Services
                         }
                         break;
                     case "BrowserCache":
-                        foreach (var browser in HealthCleanupService.DetectBrowsers())
-                        {
-                            freed += HealthCleanupService.ClearBrowserCacheCore(browser);
-                        }
+                        foreach (var path in HealthCleanupService.AllBrowserCacheDirectories(HealthCleanupService.DetectBrowsers()))
+                            freed += MaintenancePaths.CleanFiles(path, TimeSpan.FromDays(2));
                         break;
                 }
             }
             return freed;
         }
-
-        private static long BrowserCacheSize(BrowserCacheEntry browser) => HealthCleanupService.BrowserCacheSize(browser);
 
         // ΔΙΟΡΘΩΣΗ (εξονυχιστικός έλεγχος εντόπισε): Directory.EnumerateFiles(dir, "*",
         // SearchOption.AllDirectories) είναι ΤΕΜΠΕΛΗΣ (lazy) - το UnauthorizedAccessException από έναν

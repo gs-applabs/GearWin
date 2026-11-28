@@ -101,6 +101,16 @@ public class MaintenanceSafetyTests
         Assert.Equal(expected, WindowsUpdateService.ExactOperationSuccess(aggregate, item, hresult));
 
     [Fact]
+    public void AggregateBrowserPlanDeduplicatesOnlyActualNestedRoots()
+    {
+        var roots = HealthCleanupService.UniqueCacheRoots(new[] {
+            @"C:\Cache\Nested", @"C:\Cache\", @"c:\cache", @"C:\Cache2", "relative" });
+        Assert.Equal(2, roots.Count);
+        Assert.Contains(roots, path => string.Equals(path, @"C:\Cache", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(roots, path => string.Equals(path, @"C:\Cache2", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
     public void CleanupPreservesRecentAndLockedFilesAndCountsRemovedBytes()
     {
         var root = System.IO.Path.Combine(System.IO.Path.GetTempPath(), System.Guid.NewGuid().ToString("N"));
