@@ -14,7 +14,8 @@ namespace OptimizerWpf.Views
         {
             InitializeComponent();
             ThemeManager.AttachWindow(this);
-            MainTabs.SelectedIndex = initialTabIndex;
+            // Three existing tabs: instructions, license, version history.
+            MainTabs.SelectedIndex = initialTabIndex >= 0 && initialTabIndex < MainTabs.Items.Count ? initialTabIndex : 0;
         }
 
         private void BtnClose_Click(object sender, RoutedEventArgs e) => Close();

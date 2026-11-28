@@ -102,6 +102,7 @@
                                 Margin="0,0,0,8" Click="ExportApps_Click"/>
                     </WrapPanel>
                     <TextBlock x:Name="TxtTransferStatus" Style="{StaticResource SubTextStyle}" TextWrapping="Wrap"/>
+                    <TextBlock x:Name="TxtAppsExportStatus" Style="{StaticResource SubTextStyle}" TextWrapping="Wrap" Margin="0,4,0,0"/>
                 </StackPanel>
             </Border>
     </StackPanel>

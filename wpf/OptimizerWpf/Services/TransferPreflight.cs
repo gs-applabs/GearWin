@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Security;
+using System.Threading;
 
 namespace OptimizerWpf.Services
 {
@@ -10,8 +11,8 @@ namespace OptimizerWpf.Services
 
     public static class TransferPreflight
     {
-        internal static System.Threading.Tasks.Task<TransferCheck> InspectAsync(string sourcePath, string targetPath) =>
-            GearWinCore.RunAsync(CoreWork.TransferScan, () => System.Threading.Tasks.Task.Run(() => Inspect(sourcePath, targetPath)));
+        internal static System.Threading.Tasks.Task<TransferCheck> InspectAsync(string sourcePath, string targetPath, CancellationToken ct = default) =>
+            GearWinCore.RunAsync(CoreWork.TransferScan, () => System.Threading.Tasks.Task.Run(() => Inspect(sourcePath, targetPath, ct: ct), ct), ct: ct);
 
         private static bool HasUnredirectedAncestors(string path)
         {
@@ -20,8 +21,9 @@ namespace OptimizerWpf.Services
             return true;
         }
 
-        public static TransferCheck Inspect(string sourcePath, string targetPath, int maxEntries = 100000)
+        public static TransferCheck Inspect(string sourcePath, string targetPath, int maxEntries = 100000, CancellationToken ct = default)
         {
+            ct.ThrowIfCancellationRequested();
             static TransferCheck Fail(string reason) => new(false, 0, 0, 0, reason);
             if (maxEntries < 1 || string.IsNullOrWhiteSpace(sourcePath) || string.IsNullOrWhiteSpace(targetPath))
                 return Fail("Select source and destination folders.");
@@ -46,10 +48,12 @@ namespace OptimizerWpf.Services
                 int entries = 0, skipped = 0;
                 while (stack.Count > 0)
                 {
+                    ct.ThrowIfCancellationRequested();
                     string directory = stack.Pop();
                     if (!HasUnredirectedAncestors(directory)) return new(false, files, bytes, skipped, "Folder changed or redirected during scan.");
                     foreach (string path in Directory.EnumerateFileSystemEntries(directory))
                     {
+                        ct.ThrowIfCancellationRequested();
                         if (++entries > maxEntries)
                             return new(false, files, bytes, skipped, "Scan limit reached. Inspect the folder manually.");
                         var attributes = File.GetAttributes(path);
@@ -62,9 +66,14 @@ namespace OptimizerWpf.Services
                         }
                     }
                 }
+                ct.ThrowIfCancellationRequested();
+                // Recheck target ancestors after the potentially long source enumeration.
+                if (!Directory.Exists(target) || !HasUnredirectedAncestors(target))
+                    return new(false, files, bytes, skipped, "Destination folder changed or redirected during scan.");
                 string? root = Path.GetPathRoot(target);
                 if (root is null) return Fail("Unknown destination volume.");
                 var free = new DriveInfo(root).AvailableFreeSpace;
+                ct.ThrowIfCancellationRequested();
                 if (bytes > free)
                     return new(false, files, bytes, skipped, "Insufficient available destination space.");
                 if (skipped != 0)

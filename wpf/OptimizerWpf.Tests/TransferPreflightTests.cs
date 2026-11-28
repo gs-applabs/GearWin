@@ -29,6 +29,36 @@ namespace OptimizerWpf.Tests
         }
 
         [Fact]
+        public void CanceledPreflightDoesNotPublishSuccessEvenForInvalidPaths()
+        {
+            using var cancel = new System.Threading.CancellationTokenSource();
+            cancel.Cancel();
+            Assert.Throws<System.OperationCanceledException>(() =>
+                TransferPreflight.Inspect("", "", ct: cancel.Token));
+        }
+
+        [Fact]
+        public void EntryLimitReportsPartialScanWithoutWritingDestination()
+        {
+            var root = Path.Combine(Path.GetTempPath(), "gearwin-limit-" + Guid.NewGuid().ToString("N"));
+            var src = Path.Combine(root, "src");
+            var dst = Path.Combine(root, "dst");
+            try
+            {
+                Directory.CreateDirectory(src);
+                Directory.CreateDirectory(dst);
+                File.WriteAllText(Path.Combine(src, "one"), "1");
+                File.WriteAllText(Path.Combine(src, "two"), "22");
+                var report = TransferPreflight.Inspect(src, dst, 1);
+                Assert.False(report.Ready);
+                Assert.Equal(1, report.FileCount);
+                Assert.Contains("limit", report.Message);
+                Assert.Empty(Directory.GetFileSystemEntries(dst));
+            }
+            finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+        }
+
+        [Fact]
         public void DriveRootSourceOverlapsAnyFolderOnThatDrive()
         {
             // Regression: "C:\\" keeps its trailing separator, so the overlap check used to look for "C:\\\\" and miss it.

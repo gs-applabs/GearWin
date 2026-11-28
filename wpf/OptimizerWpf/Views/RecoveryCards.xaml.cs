@@ -203,10 +203,13 @@ namespace OptimizerWpf.Views
         }
 
 
+        private System.Threading.CancellationTokenSource? _transferCheck;
+
         private void OnTransferLanguageChanged()
         {
             if (Dispatcher.CheckAccess()) TranslateTransferUi();
-            else Dispatcher.BeginInvoke(new System.Action(TranslateTransferUi));
+            else if (!Dispatcher.HasShutdownStarted && !Dispatcher.HasShutdownFinished)
+                Dispatcher.BeginInvoke(new System.Action(() => { if (IsLoaded) TranslateTransferUi(); }));
         }
 
         private void TranslateTransferUi()
@@ -218,7 +221,8 @@ namespace OptimizerWpf.Views
                 : "Read-only check of paths, links and free space before a transfer. No copying or test writes to your SSD.";
             BtnChooseFrom.Content = greek ? "Φάκελος πηγής…" : "Source folder…";
             BtnChooseTo.Content = greek ? "Φάκελος προορισμού…" : "Destination folder…";
-            BtnTransferCheck.Content = greek ? "Έλεγχος πριν από τη μεταφορά" : "Check before transfer";
+            BtnTransferCheck.Content = _transferCheck != null ? LanguageService.T("Cancel") :
+                greek ? "Έλεγχος πριν από τη μεταφορά" : "Check before transfer";
             BtnAppsExport.Content = greek ? "Εξαγωγή εγκατεστημένων εφαρμογών (JSON)" : "Export installed apps (JSON)";
         }
 
@@ -233,30 +237,45 @@ namespace OptimizerWpf.Views
 
         private void ChooseTransferFrom_Click(object sender, RoutedEventArgs e)
         {
-            if (ChooseFolder() is string path) TxtTransferFrom.Text = path;
+            if (ChooseFolder() is string path) { TxtTransferFrom.Text = path; TxtTransferStatus.Text = ""; }
         }
 
         private void ChooseTransferTo_Click(object sender, RoutedEventArgs e)
         {
-            if (ChooseFolder() is string path) TxtTransferTo.Text = path;
+            if (ChooseFolder() is string path) { TxtTransferTo.Text = path; TxtTransferStatus.Text = ""; }
         }
 
         private async void CheckTransfer_Click(object sender, RoutedEventArgs e)
         {
-            BtnTransferCheck.IsEnabled = false;
+            if (_transferCheck != null) { _transferCheck.Cancel(); return; }
+            using var cancel = new System.Threading.CancellationTokenSource();
+            _transferCheck = cancel;
+            BtnChooseFrom.IsEnabled = BtnChooseTo.IsEnabled = false;
+            TranslateTransferUi();
             try
             {
                 var from = TxtTransferFrom.Text;
                 var to = TxtTransferTo.Text;
                 TxtTransferStatus.Text = Translation("Έλεγχος φακέλων…", "Checking folders…");
-                var result = await TransferPreflight.InspectAsync(from, to);
+                var result = await TransferPreflight.InspectAsync(from, to, cancel.Token);
+                cancel.Token.ThrowIfCancellationRequested();
                 TxtTransferStatus.Text = (result.Ready
                     ? Translation("Έλεγχος ολοκληρώθηκε: ", "Preflight passed: ")
                     : Translation("Ο έλεγχος δεν ολοκληρώθηκε: ", "Preflight blocked: ")) +
-                    $"{result.FileCount:N0} files, {result.ByteCount:N0} bytes. {result.Message}";
+                    Translation($"{result.FileCount:N0} αρχεία, {result.ByteCount:N0} bytes, {result.SkippedLinks:N0} παραλειφθέντες σύνδεσμοι. ",
+                        $"{result.FileCount:N0} files, {result.ByteCount:N0} bytes, {result.SkippedLinks:N0} skipped links. ") + result.Message;
+            }
+            catch (System.OperationCanceledException) when (cancel.IsCancellationRequested)
+            {
+                TxtTransferStatus.Text = Translation("Ο έλεγχος ακυρώθηκε.", "Preflight canceled.");
             }
             catch (System.Exception ex) { TxtTransferStatus.Text = ex.Message; }
-            finally { BtnTransferCheck.IsEnabled = true; }
+            finally
+            {
+                _transferCheck = null;
+                BtnChooseFrom.IsEnabled = BtnChooseTo.IsEnabled = true;
+                TranslateTransferUi();
+            }
         }
 
         private async void ExportApps_Click(object sender, RoutedEventArgs e)
@@ -280,7 +299,7 @@ namespace OptimizerWpf.Views
             BtnAppsExport.IsEnabled = false;
             try
             {
-                TxtTransferStatus.Text = Translation("Απογραφή εφαρμογών…", "Reading installed applications…");
+                TxtAppsExportStatus.Text = Translation("Απογραφή εφαρμογών…", "Reading installed applications…");
                 var inventory = await GearWinCore.RunAsync(CoreWork.TransferScan, () => System.Threading.Tasks.Task.Run(GearWin.Migration.ApplicationDiscovery.InspectHost));
                 var options = new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web)
                 {
@@ -291,13 +310,13 @@ namespace OptimizerWpf.Views
                 string json = System.Text.Json.JsonSerializer.Serialize(inventory, options);
                 await GearWinCore.RunAsync(CoreWork.Backup, () => System.Threading.Tasks.Task.Run(() =>
                     AppSettingsService.WriteIfChanged(Path.GetFullPath(picker.FileName), json, null)));
-                TxtTransferStatus.Text = Translation(
+                TxtAppsExportStatus.Text = Translation(
                     $"Εξήχθησαν {inventory.Applications.Count:N0} εφαρμογές: {picker.FileName}",
                     $"Exported {inventory.Applications.Count:N0} applications: {picker.FileName}");
             }
             catch (System.Exception ex)
             {
-                TxtTransferStatus.Text = ex.Message;
+                TxtAppsExportStatus.Text = ex.Message;
             }
             finally { BtnAppsExport.IsEnabled = true; }
         }
@@ -309,8 +328,17 @@ namespace OptimizerWpf.Views
             _ = LoadRestorePointsAsync();
             _ = LoadBackupTargetDrivesAsync();
             TranslateTransferUi();
-            Loaded += (_, _) => { LanguageService.Changed -= OnTransferLanguageChanged; LanguageService.Changed += OnTransferLanguageChanged; };
-            Unloaded += (_, _) => LanguageService.Changed -= OnTransferLanguageChanged;
+            Loaded += (_, _) =>
+            {
+                LanguageService.Changed -= OnTransferLanguageChanged;
+                LanguageService.Changed += OnTransferLanguageChanged;
+                TranslateTransferUi();
+            };
+            Unloaded += (_, _) =>
+            {
+                LanguageService.Changed -= OnTransferLanguageChanged;
+                _transferCheck?.Cancel();
+            };
         }
     }
 }
