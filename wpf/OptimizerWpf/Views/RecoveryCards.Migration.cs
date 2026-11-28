@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
@@ -16,6 +17,7 @@ namespace OptimizerWpf.Views
             BtnExportTargetProfile.Content = LanguageService.T("Migration_ExportProfile");
             BtnCreateMigrationPlan.Content = LanguageService.T("Migration_CreatePlan");
             ChkCompareDestination.Content = LanguageService.T("Migration_CompareDestination");
+            ChkVerifyLocalWindows.Content = LanguageService.T("Migration_VerifyLocalWindows");
         }
 
         private static string? SelectMigrationInput(string title)
@@ -65,8 +67,10 @@ namespace OptimizerWpf.Views
             if (manifest == null) return;
             var inventory = SelectMigrationInput(Translation("Επιλέξτε απογραφή πηγής", "Select source inventory"));
             if (inventory == null) return;
-            var target = SelectMigrationInput(Translation("Επιλέξτε προφίλ προορισμού", "Select destination profile"));
-            if (target == null) return;
+            bool verifyLocal = ChkVerifyLocalWindows.IsChecked == true;
+            // Live verification must use this PC, not an imported remote profile.
+            string? target = verifyLocal ? null : SelectMigrationInput(Translation("Επιλέξτε προφίλ προορισμού", "Select destination profile"));
+            if (!verifyLocal && target == null) return;
             string? destinationInventory = null;
             if (ChkCompareDestination.IsChecked == true)
             {
@@ -89,10 +93,18 @@ namespace OptimizerWpf.Views
 
                 TxtMigrationPlanStatus.Text = Translation("Δημιουργία προεπισκόπησης…", "Creating preview…");
                 var report = await GearWinCore.RunAsync(CoreWork.TransferScan, () => Task.Run(() =>
-                    MigrationDocuments.CreatePlan(MigrationDocuments.ReadTarget(target),
+                    MigrationDocuments.CreatePlan(target == null ? PackageDiscovery.InspectHost() : MigrationDocuments.ReadTarget(target),
                         MigrationDocuments.Read<PackageManifest>(manifest),
                         MigrationDocuments.Read<ApplicationInventory>(inventory),
                         destinationInventory == null ? null : MigrationDocuments.Read<ApplicationInventory>(destinationInventory))));
+                if (verifyLocal && report.Applications.Any(a => a.Status == PlanStatus.CommandPreview && a.Candidate?.Manager == PackageManager.Winget))
+                {
+                    using var verify = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(75));
+                    IReadOnlyList<InstalledWindowsPackage>? installed = null;
+                    try { installed = await WingetService.ReadMigrationInstalledAsync(verify.Token); }
+                    catch (OperationCanceledException) when (verify.IsCancellationRequested) { }
+                    report = report with { Applications = PackageVerifier.VerifyWindowsInstalled(report.Applications, installed) };
+                }
                 await WriteMigrationDocumentAsync(fullOutput, report);
                 var previews = report.Applications.Count(a => a.Status == PlanStatus.CommandPreview);
                 var manual = report.Applications.Count(a => a.Status == PlanStatus.Manual);
@@ -118,7 +130,14 @@ namespace OptimizerWpf.Views
                         DestinationMatchStatus.NotConfirmed => Translation(" · Μη επιβεβαιωμένο", " · Not confirmed"),
                         _ => ""
                     };
-                    return $"{status}: {a.Name} — {a.Candidate?.PackageId ?? "—"}{match}";
+                    var verification = a.Verification?.Status switch
+                    {
+                        VerificationStatus.InstalledOnDestination => " · " + LanguageService.T("Migration_InstalledLocal"),
+                        VerificationStatus.NotConfirmed => " · " + LanguageService.T("Migration_LocalUnconfirmed"),
+                        VerificationStatus.Unsupported => " · " + LanguageService.T("Migration_LocalUnsupported"),
+                        _ => ""
+                    };
+                    return $"{status}: {a.Name} — {a.Candidate?.PackageId ?? "—"}{match}{verification}";
                 }).ToList();
                 if (report.Applications.Count > limit)
                     lines.Add(Translation("Οι υπόλοιπες εγγραφές βρίσκονται στο πλήρες JSON.", "Remaining entries are in the full JSON."));

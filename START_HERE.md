@@ -2,6 +2,12 @@
 
 Updated 2026-11-28. This is the single current entry point for a new ChatGPT/Claude Code session. Repository: gs-applabs/GearWin. Active branch: release/7.1.0-ultra. Draft integration PR: #6 (base release/7.0.0-validation). Resolve live branch HEAD first; last fully validated source 7960011c034d9e5a49605b2d34e73a0e37f6ca61; current HEAD includes newer history/product reconciliation. Master audit reference: c025e12d3e4cc8d3dc2be63d27f30b0aa8f34132. Never reset or blindly merge. No final release yet.
 
+## ACTIVE CHECKPOINT — H01 local installed package verification
+
+H01/M04/E02: Windows GUI optional live installed-package check uses actual current PC profile, one existing WinGet inventory query under UpdateScan lease and bounded timeout/cancellation, no new source-agreement acceptance; strict parser requires explicit known source and exact ID, common core verification preserves command preview and destination-inventory evidence separately. Missing/ambiguous results remain unconfirmed; never executes imported commands. Four UI keys ×14 (56 strings), all 20 new localization keys covered. Six additional deterministic cases (774 cumulative authored, not passed on this candidate). Windows CLI live verification, remote availability, complete localization/dynamic messages and actual native acceptance remain open. No new timers.
+
+Exact parent e07d7a3487ca0543ce84c800161d7f7ea9836b83 installer 46133953638 and audit 46133953634 in progress at inspection. 3713ab8 runs cancelled. 8946a85 6/6 installer jobs, 1125 desktop +56 migration PASS. No release or merge.
+
 ## ACTIVE CHECKPOINT — E02 fourteen-language transfer and Store labels
 
 E02/E05/M01/H01/M05: added 16 new UI keys × 14 languages (224 localized strings) to the existing LanguageService dictionaries, no parallel localization engine. Transfer card labels/help, migration plan labels/help, Store failure/unconfirmed, clipboard capture and recovery export status now use common T(). One deterministic coverage case (768 cumulative authored). Remaining dynamic transfer/migration report messages, backup/clone safety prompts, other tools, technical/provider diagnostics and native RTL/visual review remain open; translations authored, no independent native-speaker review or CI on candidate.

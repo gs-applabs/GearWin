@@ -4,6 +4,30 @@ namespace GearWin.Migration.Tests;
 
 public sealed class PackageVerificationTests
 {
+    [Theory]
+    [InlineData("winget", "Vendor.App", VerificationStatus.InstalledOnDestination)]
+    [InlineData("msstore", "Vendor.App", VerificationStatus.NotConfirmed)]
+    [InlineData("winget", "Vendor.App.Other", VerificationStatus.NotConfirmed)]
+    [InlineData("", "Vendor.App", VerificationStatus.NotConfirmed)]
+    public void WindowsInstalledEvidenceRequiresExactIdAndExplicitSource(string source, string id, VerificationStatus expected)
+    {
+        var plan = new[] { new ApplicationPlan("Example", PlanStatus.CommandPreview,
+            new(PackageManager.Winget, "vendor.app"), null, "") };
+        var verified = PackageVerifier.VerifyWindowsInstalled(plan, [new(id, source, "2.0")]);
+        Assert.Equal(expected, Assert.Single(verified).Verification?.Status);
+        Assert.Equal(PlanStatus.CommandPreview, Assert.Single(verified).Status);
+    }
+
+    [Fact]
+    public void UnavailableOrAmbiguousWindowsInventoryNeverConfirmsInstallation()
+    {
+        var plan = new[] { new ApplicationPlan("Example", PlanStatus.CommandPreview,
+            new(PackageManager.Winget, "Vendor.App", "msstore"), null, "") };
+        Assert.Equal(VerificationStatus.NotConfirmed, Assert.Single(PackageVerifier.VerifyWindowsInstalled(plan, null)).Verification?.Status);
+        Assert.Equal(VerificationStatus.NotConfirmed, Assert.Single(PackageVerifier.VerifyWindowsInstalled(plan,
+            [new("Vendor.App", "msstore", "1.0"), new("Vendor.App", "msstore", "2.0")])).Verification?.Status);
+    }
+
     [Fact]
     public void AptVerificationRequiresAnExactNameAndRequestedArchitecture()
     {

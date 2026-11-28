@@ -113,6 +113,7 @@
                         <Button x:Name="BtnCreateMigrationPlan" Style="{StaticResource FlatButtonStyle}" Padding="12,8" Margin="0,0,0,8" Click="CreateMigrationPlan_Click"/>
                     </WrapPanel>
                     <CheckBox x:Name="ChkCompareDestination" Margin="0,0,0,8"/>
+                    <CheckBox x:Name="ChkVerifyLocalWindows" Margin="0,0,0,8"/>
                     <TextBlock x:Name="TxtMigrationPlanStatus" Style="{StaticResource SubTextStyle}" TextWrapping="Wrap"/>
                     <ListBox x:Name="ListMigrationPreview" MaxHeight="220" Margin="0,8,0,0" Visibility="Collapsed"
                              ScrollViewer.HorizontalScrollBarVisibility="Disabled" VirtualizingPanel.IsVirtualizing="True"

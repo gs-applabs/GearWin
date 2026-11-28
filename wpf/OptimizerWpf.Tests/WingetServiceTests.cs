@@ -12,6 +12,21 @@ namespace OptimizerWpf.Tests;
 // μόνο του το Store γι' αυτή την πηγή πακέτων.
 public class WingetServiceTests
 {
+        [Fact]
+        public void StrictInstalledInventoryRequiresExplicitKnownSource()
+        {
+            string Row(string name, string id, string version, string source) =>
+                name.PadRight(25) + id.PadRight(25) + version.PadRight(15) + source;
+            var header = Row("Name", "Id", "Version", "Source");
+            var sample = header + "\n" + new string('-', header.Length) + "\n" +
+                Row("Example", "Vendor.App", "1.0", "winget") + "\n" +
+                Row("Unknown", "Vendor.Other", "2.0", "");
+            Assert.Single(WingetService.ParseWingetTable(sample, requireExplicitSource: true));
+            var noSource = Row("Name", "Id", "Version", "").TrimEnd();
+            Assert.Empty(WingetService.ParseWingetTable(noSource + "\n" + new string('-', noSource.Length) + "\n" +
+                Row("Example", "Vendor.App", "1.0", ""), requireExplicitSource: true));
+        }
+
     // Ίδια λογική στοίχισης στηλών με το πραγματικό winget upgrade output - κάθε στήλη με σταθερό
     // πλάτος ώστε οι θέσεις να είναι προβλέψιμες (το ParseWingetTable διαβάζει με βάση τη θέση
     // χαρακτήρα κάθε επικεφαλίδας μέσα στη γραμμή τίτλου, όχι διαχωριστικά tab/κόμμα).

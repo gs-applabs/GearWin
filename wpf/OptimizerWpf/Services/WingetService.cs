@@ -808,6 +808,27 @@ $out | ConvertTo-Json -Compress";
         internal static Task<(string Output, int ExitCode, bool Started)> ListInstalledWithinLeaseAsync() =>
             RunToolAsync("winget.exe", "list --accept-source-agreements --disable-interactivity", TimeSpan.FromSeconds(60));
 
+        // Explicit local migration verification: one inventory query instead
+        // of a process per candidate. Do not silently accept new agreements.
+        internal static async Task<IReadOnlyList<GearWin.Migration.InstalledWindowsPackage>?> ReadMigrationInstalledAsync(System.Threading.CancellationToken ct)
+        {
+            return await GearWinCore.RunAsync(CoreWork.UpdateScan, async () =>
+            {
+                var prior = ActiveScanToken.Value;
+                ActiveScanToken.Value = ct;
+                try
+                {
+                    var (output, exitCode, started) = await RunToolAsync("winget.exe",
+                        "list --disable-interactivity", TimeSpan.FromSeconds(60), closeInput: true);
+                    if (!started || exitCode != 0) return null;
+                    return (IReadOnlyList<GearWin.Migration.InstalledWindowsPackage>)ParseWingetTable(output, requireExplicitSource: true)
+                        .Where(row => row.Source is "winget" or "msstore")
+                        .Select(row => new GearWin.Migration.InstalledWindowsPackage(row.Id, row.Source, row.CurrentVersion)).ToArray();
+                }
+                finally { ActiveScanToken.Value = prior; }
+            }, ct: ct);
+        }
+
         private static Task<(string Output, int ExitCode, bool Started)> RunToolAsync(string fileName, string arguments) =>
             RunToolAsync(fileName, arguments, TimeSpan.FromSeconds(30));
 
@@ -892,7 +913,7 @@ $out | ConvertTo-Json -Compress";
         // internal (όχι private) - ίδιο μοτίβο InternalsVisibleTo με το ThemedMessageBox.TxtMessage
         // (βλ. OptimizerWpf.csproj), ώστε το OptimizerWpf.Tests να μπορεί να το δοκιμάσει απευθείας
         // χωρίς πραγματική κλήση winget.exe (βλ. WingetServiceTests.cs).
-        internal static IReadOnlyList<WingetUpdate> ParseWingetTable(string rawText)
+        internal static IReadOnlyList<WingetUpdate> ParseWingetTable(string rawText, bool requireExplicitSource = false)
         {
             var result = new List<WingetUpdate>();
             // winget draws its table with ANSI escape/progress codes mixed in on some terminals -
@@ -933,6 +954,8 @@ $out | ConvertTo-Json -Compress";
 
                 if (fields.TryGetValue("Id", out var id) && !string.IsNullOrEmpty(id))
                 {
+                    if (requireExplicitSource && (!fields.TryGetValue("Source", out var explicitSource) ||
+                        explicitSource is not ("winget" or "msstore"))) continue;
                     // ΔΙΟΡΘΩΣΗ (GEARWIN.MD: "κάποιες ενημερώσεις αποτυγχάνουν και ανοίγει το παράθυρο
                     // του msstore") - η στήλη "Source" διαβαζόταν από τον πίνακα και μετά πετιόταν,
                     // αντικαθιστώντας ΠΑΝΤΑ με "winget" - γραμμές με πραγματική πηγή "msstore" (το

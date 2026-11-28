@@ -44,6 +44,10 @@ namespace OptimizerWpf.Services
         {
             ["el"] = new()
             {
+                ["Migration_VerifyLocalWindows"] = "Έλεγχος εγκατεστημένων πακέτων σε αυτόν τον υπολογιστή (WinGet)",
+                ["Migration_InstalledLocal"] = "Εγκατεστημένο τοπικά",
+                ["Migration_LocalUnconfirmed"] = "Τοπική εγκατάσταση μη επιβεβαιωμένη",
+                ["Migration_LocalUnsupported"] = "Δεν υποστηρίζεται τοπικός έλεγχος",
                 ["Transfer_Title"] = "Έλεγχος φακέλων και λίστα εφαρμογών",
                 ["Transfer_Help"] = "Έλεγχος διαδρομών, συνδέσμων και ελεύθερου χώρου πριν από τη μεταφορά. Δεν γίνεται αντιγραφή ή δοκιμαστική εγγραφή στον SSD.",
                 ["Transfer_SourceFolder"] = "Φάκελος πηγής…",
@@ -1899,6 +1903,10 @@ namespace OptimizerWpf.Services
             },
             ["en"] = new()
             {
+                ["Migration_VerifyLocalWindows"] = "Check installed packages on this PC (WinGet)",
+                ["Migration_InstalledLocal"] = "Installed locally",
+                ["Migration_LocalUnconfirmed"] = "Local installation not confirmed",
+                ["Migration_LocalUnsupported"] = "Local check unsupported",
                 ["Transfer_Title"] = "Folder check and application inventory",
                 ["Transfer_Help"] = "Read-only check of paths, links and free space before a transfer. No copying or test writes to your SSD.",
                 ["Transfer_SourceFolder"] = "Source folder…",
@@ -3741,6 +3749,10 @@ namespace OptimizerWpf.Services
             },
             ["de"] = new()
             {
+                ["Migration_VerifyLocalWindows"] = "Installierte Pakete auf diesem PC prüfen (WinGet)",
+                ["Migration_InstalledLocal"] = "Lokal installiert",
+                ["Migration_LocalUnconfirmed"] = "Lokale Installation nicht bestätigt",
+                ["Migration_LocalUnsupported"] = "Lokale Prüfung nicht unterstützt",
                 ["Transfer_Title"] = "Ordnerprüfung und Anwendungsinventar",
                 ["Transfer_Help"] = "Nur-Lese-Prüfung von Pfaden, Verknüpfungen und freiem Speicher vor der Übertragung. Keine Kopien oder Testschreibvorgänge auf der SSD.",
                 ["Transfer_SourceFolder"] = "Quellordner…",
@@ -5583,6 +5595,10 @@ namespace OptimizerWpf.Services
             },
             ["fr"] = new()
             {
+                ["Migration_VerifyLocalWindows"] = "Vérifier les paquets installés sur ce PC (WinGet)",
+                ["Migration_InstalledLocal"] = "Installé localement",
+                ["Migration_LocalUnconfirmed"] = "Installation locale non confirmée",
+                ["Migration_LocalUnsupported"] = "Vérification locale non prise en charge",
                 ["Transfer_Title"] = "Vérification des dossiers et inventaire des applications",
                 ["Transfer_Help"] = "Vérification en lecture seule des chemins, liens et de l’espace libre avant transfert. Aucune copie ni écriture de test sur le SSD.",
                 ["Transfer_SourceFolder"] = "Dossier source…",
@@ -7425,6 +7441,10 @@ namespace OptimizerWpf.Services
             },
             ["es"] = new()
             {
+                ["Migration_VerifyLocalWindows"] = "Comprobar paquetes instalados en este PC (WinGet)",
+                ["Migration_InstalledLocal"] = "Instalado localmente",
+                ["Migration_LocalUnconfirmed"] = "Instalación local sin confirmar",
+                ["Migration_LocalUnsupported"] = "Comprobación local no compatible",
                 ["Transfer_Title"] = "Comprobación de carpetas e inventario de aplicaciones",
                 ["Transfer_Help"] = "Comprobación de solo lectura de rutas, enlaces y espacio libre antes de transferir. Sin copias ni escrituras de prueba en el SSD.",
                 ["Transfer_SourceFolder"] = "Carpeta de origen…",
@@ -9267,6 +9287,10 @@ namespace OptimizerWpf.Services
             },
             ["ko"] = new()
             {
+                ["Migration_VerifyLocalWindows"] = "이 PC에 설치된 패키지 확인 (WinGet)",
+                ["Migration_InstalledLocal"] = "로컬에 설치됨",
+                ["Migration_LocalUnconfirmed"] = "로컬 설치 미확인",
+                ["Migration_LocalUnsupported"] = "로컬 확인 미지원",
                 ["Transfer_Title"] = "폴더 검사 및 앱 목록",
                 ["Transfer_Help"] = "전송 전 경로, 링크, 여유 공간을 읽기 전용으로 검사합니다. 복사하거나 SSD에 시험 쓰기를 하지 않습니다.",
                 ["Transfer_SourceFolder"] = "원본 폴더…",
@@ -11108,6 +11132,10 @@ namespace OptimizerWpf.Services
             },
             ["zh"] = new()
             {
+                ["Migration_VerifyLocalWindows"] = "检查此电脑已安装的软件包 (WinGet)",
+                ["Migration_InstalledLocal"] = "已在本机安装",
+                ["Migration_LocalUnconfirmed"] = "未确认本机安装",
+                ["Migration_LocalUnsupported"] = "不支持本机检查",
                 ["Transfer_Title"] = "文件夹检查和应用清单",
                 ["Transfer_Help"] = "传输前只读检查路径、链接和可用空间。不复制文件，也不对 SSD 进行测试写入。",
                 ["Transfer_SourceFolder"] = "源文件夹…",
@@ -12950,6 +12978,10 @@ namespace OptimizerWpf.Services
             },
             ["it"] = new()
             {
+                ["Migration_VerifyLocalWindows"] = "Verifica pacchetti installati su questo PC (WinGet)",
+                ["Migration_InstalledLocal"] = "Installato localmente",
+                ["Migration_LocalUnconfirmed"] = "Installazione locale non confermata",
+                ["Migration_LocalUnsupported"] = "Verifica locale non supportata",
                 ["Transfer_Title"] = "Controllo cartelle e inventario applicazioni",
                 ["Transfer_Help"] = "Controllo in sola lettura di percorsi, collegamenti e spazio libero prima del trasferimento. Nessuna copia o scrittura di prova sull’SSD.",
                 ["Transfer_SourceFolder"] = "Cartella di origine…",
@@ -14792,6 +14824,10 @@ namespace OptimizerWpf.Services
             },
             ["ru"] = new()
             {
+                ["Migration_VerifyLocalWindows"] = "Проверить установленные пакеты на этом ПК (WinGet)",
+                ["Migration_InstalledLocal"] = "Установлено локально",
+                ["Migration_LocalUnconfirmed"] = "Локальная установка не подтверждена",
+                ["Migration_LocalUnsupported"] = "Локальная проверка не поддерживается",
                 ["Transfer_Title"] = "Проверка папок и список приложений",
                 ["Transfer_Help"] = "Проверка путей, ссылок и свободного места перед переносом только для чтения. Без копирования и пробной записи на SSD.",
                 ["Transfer_SourceFolder"] = "Исходная папка…",
@@ -16634,6 +16670,10 @@ namespace OptimizerWpf.Services
             },
             ["ja"] = new()
             {
+                ["Migration_VerifyLocalWindows"] = "この PC のインストール済みパッケージを確認 (WinGet)",
+                ["Migration_InstalledLocal"] = "ローカルにインストール済み",
+                ["Migration_LocalUnconfirmed"] = "ローカルのインストールを確認できません",
+                ["Migration_LocalUnsupported"] = "ローカル確認は非対応",
                 ["Transfer_Title"] = "フォルダーの確認とアプリ一覧",
                 ["Transfer_Help"] = "転送前にパス、リンク、空き容量を読み取り専用で確認します。コピーや SSD への試験書き込みは行いません。",
                 ["Transfer_SourceFolder"] = "転送元フォルダー…",
@@ -18476,6 +18516,10 @@ namespace OptimizerWpf.Services
             },
             ["pt"] = new()
             {
+                ["Migration_VerifyLocalWindows"] = "Verificar pacotes instalados neste PC (WinGet)",
+                ["Migration_InstalledLocal"] = "Instalado localmente",
+                ["Migration_LocalUnconfirmed"] = "Instalação local não confirmada",
+                ["Migration_LocalUnsupported"] = "Verificação local não suportada",
                 ["Transfer_Title"] = "Verificação de pastas e inventário de aplicações",
                 ["Transfer_Help"] = "Verificação apenas de leitura de caminhos, ligações e espaço livre antes da transferência. Sem cópias nem escritas de teste no SSD.",
                 ["Transfer_SourceFolder"] = "Pasta de origem…",
@@ -20318,6 +20362,10 @@ namespace OptimizerWpf.Services
             },
             ["tr"] = new()
             {
+                ["Migration_VerifyLocalWindows"] = "Bu bilgisayarda yüklü paketleri denetle (WinGet)",
+                ["Migration_InstalledLocal"] = "Yerel olarak yüklü",
+                ["Migration_LocalUnconfirmed"] = "Yerel kurulum doğrulanamadı",
+                ["Migration_LocalUnsupported"] = "Yerel denetim desteklenmiyor",
                 ["Transfer_Title"] = "Klasör denetimi ve uygulama envanteri",
                 ["Transfer_Help"] = "Aktarım öncesinde yolları, bağlantıları ve boş alanı salt okunur olarak denetler. SSD’ye kopyalama veya deneme yazması yapılmaz.",
                 ["Transfer_SourceFolder"] = "Kaynak klasör…",
@@ -22160,6 +22208,10 @@ namespace OptimizerWpf.Services
             },
             ["ar"] = new()
             {
+                ["Migration_VerifyLocalWindows"] = "التحقق من الحزم المثبتة على هذا الكمبيوتر (WinGet)",
+                ["Migration_InstalledLocal"] = "مثبت محليًا",
+                ["Migration_LocalUnconfirmed"] = "لم يتم تأكيد التثبيت المحلي",
+                ["Migration_LocalUnsupported"] = "التحقق المحلي غير مدعوم",
                 ["Transfer_Title"] = "فحص المجلدات وجرد التطبيقات",
                 ["Transfer_Help"] = "فحص المسارات والروابط والمساحة المتاحة قبل النقل للقراءة فقط. لا نسخ ولا كتابة تجريبية على SSD.",
                 ["Transfer_SourceFolder"] = "مجلد المصدر…",
@@ -24001,6 +24053,10 @@ namespace OptimizerWpf.Services
             },
             ["hi"] = new()
             {
+                ["Migration_VerifyLocalWindows"] = "इस PC पर इंस्टॉल पैकेज जाँचें (WinGet)",
+                ["Migration_InstalledLocal"] = "स्थानीय रूप से इंस्टॉल है",
+                ["Migration_LocalUnconfirmed"] = "स्थानीय इंस्टॉलेशन की पुष्टि नहीं हुई",
+                ["Migration_LocalUnsupported"] = "स्थानीय जाँच समर्थित नहीं है",
                 ["Transfer_Title"] = "फ़ोल्डर जाँच और ऐप सूची",
                 ["Transfer_Help"] = "स्थानांतरण से पहले पथ, लिंक और खाली स्थान की केवल पढ़ने वाली जाँच। SSD पर कॉपी या परीक्षण लेखन नहीं होता।",
                 ["Transfer_SourceFolder"] = "स्रोत फ़ोल्डर…",

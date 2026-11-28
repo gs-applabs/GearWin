@@ -11,8 +11,35 @@ public enum VerificationStatus { FoundInLocalMetadata, NotConfirmed, Unsupported
 
 public sealed record PackageVerification(VerificationStatus Status, string? Version, string? Architecture, string Detail);
 
+public sealed record InstalledWindowsPackage(string Id, string Source, string? Version);
+
 public static partial class PackageVerifier
 {
+    // Match only explicit installed WinGet records. Imported inventories are
+    // advisory, not live installed-package evidence.
+    public static IReadOnlyList<ApplicationPlan> VerifyWindowsInstalled(IReadOnlyList<ApplicationPlan> plan,
+        IEnumerable<InstalledWindowsPackage>? inventory)
+    {
+        var index = (inventory ?? []).Where(p => (p.Source is "winget" or "msstore") &&
+            !string.IsNullOrWhiteSpace(p.Id))
+            .ToLookup(p => (p.Source, p.Id.ToUpperInvariant()));
+        return plan.Select(entry =>
+        {
+            if (entry is not { Status: PlanStatus.CommandPreview, Candidate: { } candidate }) return entry;
+            if (candidate.Manager != PackageManager.Winget)
+                return entry with { Verification = new(VerificationStatus.Unsupported, null, null,
+                    "This backend is not part of Windows installed WinGet verification.") };
+            var source = candidate.Source ?? "winget";
+            var matches = index[(source, candidate.PackageId.ToUpperInvariant())].Take(2).ToArray();
+            var result = inventory == null ? NotConfirmed("Installed WinGet inventory unavailable.") :
+                matches.Length == 1 ? new PackageVerification(VerificationStatus.InstalledOnDestination,
+                    string.IsNullOrWhiteSpace(matches[0].Version) || matches[0].Version == "Unknown" || matches[0].Version == "?"
+                        ? null : matches[0].Version, null, "Exact installed WinGet identity and source observed. Availability and compatibility were not checked.") :
+                NotConfirmed(matches.Length > 1 ? "Multiple installed records matched." : "No exact installed WinGet record was confirmed.");
+            return entry with { Verification = result };
+        }).ToArray();
+    }
+
     private sealed record Query(string Executable, IReadOnlyList<string> Arguments);
     private sealed record QueryResult(string? Output, string? Error = null);
     private static readonly Query FlatpakList = new("/usr/bin/flatpak",

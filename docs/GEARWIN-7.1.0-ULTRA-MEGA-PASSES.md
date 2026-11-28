@@ -1075,3 +1075,10 @@ Exact parent f920ce4cb598eac43efbcb7d821b607bd424456a installer 46126641205 and 
 E02/E05/M01/H01/M05: added 16 new UI keys × 14 languages (224 localized strings) to the existing LanguageService dictionaries, no parallel localization engine. Transfer card labels/help, migration plan labels/help, Store failure/unconfirmed, clipboard capture and recovery export status now use common T(). One deterministic coverage case (768 cumulative authored). Remaining dynamic transfer/migration report messages, backup/clone safety prompts, other tools, technical/provider diagnostics and native RTL/visual review remain open; translations authored, no independent native-speaker review or CI on candidate.
 
 Exact parent 3713ab8c43d03e524fd555f1ad47299c21ba2927 installer and audit cancelled; preceding 1c83db1/f920ce4 runs cancelled/no jobs at inspection. 8946a85 installer 46125940898 six jobs SUCCESS; 1125 desktop +56 migration PASS. No merge/release.
+
+
+## H01 — local Windows installed package evidence (2026-11-28)
+
+H01/M04/E02: Windows GUI optional live installed-package check uses actual current PC profile, one existing WinGet inventory query under UpdateScan lease and bounded timeout/cancellation, no new source-agreement acceptance; strict parser requires explicit known source and exact ID, common core verification preserves command preview and destination-inventory evidence separately. Missing/ambiguous results remain unconfirmed; never executes imported commands. Four UI keys ×14 (56 strings), all 20 new localization keys covered. Six additional deterministic cases (774 cumulative authored, not passed on this candidate). Windows CLI live verification, remote availability, complete localization/dynamic messages and actual native acceptance remain open. No new timers.
+
+Exact parent e07d7a3487ca0543ce84c800161d7f7ea9836b83 installer 46133953638 and audit 46133953634 in progress at inspection. 3713ab8 runs cancelled. 8946a85 6/6 installer jobs, 1125 desktop +56 migration PASS. No release or merge.
