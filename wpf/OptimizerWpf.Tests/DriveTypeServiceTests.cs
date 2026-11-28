@@ -55,6 +55,24 @@ public class DriveTypeServiceTests
     public void SmartInstanceMustMatchExactIdentity(string? pnp, string? instance, bool expected) =>
         Assert.Equal(expected, DriveTypeService.MatchesSmartInstance(pnp, instance));
 
+    [Theory]
+    [InlineData(11, false, "SSD 970", true, PhysicalDriveKind.Ssd, false, true)]
+    [InlineData(11, null, "Samsung SSD 870 EVO", true, PhysicalDriveKind.Ssd, true, true)]
+    [InlineData(17, true, "Samsung SSD 970", true, PhysicalDriveKind.Unknown, false, true)]
+    [InlineData(17, null, null, true, PhysicalDriveKind.Nvme, false, false)]
+    [InlineData(7, true, "SSD", true, PhysicalDriveKind.Usb, false, true)]
+    [InlineData(8, false, "SSD", true, PhysicalDriveKind.Unknown, false, false)]
+    [InlineData(16, false, "SSD", true, PhysicalDriveKind.Unknown, false, false)]
+    [InlineData(11, false, "SSD", false, PhysicalDriveKind.Unknown, false, false)]
+    public void HomeMetadataUsesOneObservationAndRejectsChangedMapping(int bus, bool? seek, string? model,
+        bool sameDisk, PhysicalDriveKind expected, bool estimated, bool keepModel)
+    {
+        var result = DriveTypeService.ComposeHomeMetadata(bus, seek, model, sameDisk);
+        Assert.Equal(expected, result.Kind);
+        Assert.Equal(estimated, result.Estimated);
+        Assert.Equal(keepModel ? model : null, result.Model);
+    }
+
     [Fact]
     public void NativeDescriptorsRejectTruncationAndInvalidValues()
     {

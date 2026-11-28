@@ -73,6 +73,42 @@ namespace OptimizerWpf.Services
             catch { return PhysicalDriveKind.Unknown; }
         }
 
+        // One volume mapping and descriptor observation for the Home card.
+        // WMI model failure must not discard a valid native classification.
+        internal static HomeDiskMetadataService.Snapshot ReadHomeMetadata(string driveLetter)
+        {
+            var unknown = new HomeDiskMetadataService.Snapshot(null, PhysicalDriveKind.Unknown, false);
+            try
+            {
+                var key = HomeDiskMetadataService.NormalizeDrive(driveLetter);
+                if (key == null) return unknown;
+                var info = new DriveInfo(key + "\\");
+                if (info.DriveType is not (DriveType.Fixed or DriveType.Removable) || !info.IsReady) return unknown;
+                var number = StorageTemperatureService.ResolveDiskNumber(key);
+                if (number == null) return unknown;
+                var traits = StorageTemperatureService.ReadDeviceTraits(number.Value);
+                if (traits == null || !IsDirectStorageBus(traits.Value.Bus)) return unknown;
+                string? model = null;
+                try { model = ReadIdentity(number.Value)?.Model; }
+                catch { /* native type is still usable */ }
+                return ComposeHomeMetadata(traits.Value.Bus, traits.Value.SeekPenalty, model,
+                    StorageTemperatureService.ResolveDiskNumber(key) == number);
+            }
+            catch { return unknown; }
+        }
+
+        internal static HomeDiskMetadataService.Snapshot ComposeHomeMetadata(int bus, bool? seek, string? model, bool sameDisk)
+        {
+            if (!sameDisk || !IsDirectStorageBus(bus))
+                return new(null, PhysicalDriveKind.Unknown, false);
+            var kind = Classify(bus, seek);
+            // Contradictory NVMe/seek evidence is unknown, not a model-based override.
+            if (kind != PhysicalDriveKind.Unknown || seek.HasValue)
+                return new(model, kind, false);
+            var guess = GuessFromModelName(model);
+            return new(model, guess, guess != PhysicalDriveKind.Unknown);
+        }
+
         public static string? GetBusTypeName(string driveLetter)
         {
             var number = StorageTemperatureService.ResolveDiskNumber(driveLetter);
@@ -116,7 +152,8 @@ namespace OptimizerWpf.Services
                 var traits = StorageTemperatureService.ReadDeviceTraits(number.Value);
                 // Do not feed a virtual/RAID device's name into the model heuristic.
                 if (traits == null || !IsDirectStorageBus(traits.Value.Bus)) return null;
-                return ReadIdentity(number.Value)?.Model;
+                var model = ReadIdentity(number.Value)?.Model;
+                return StorageTemperatureService.ResolveDiskNumber(driveLetter) == number ? model : null;
             }
             catch { return null; }
         }
@@ -157,7 +194,7 @@ namespace OptimizerWpf.Services
                                 if (row["PredictFailure"] is bool failure) healthy = !failure;
                             }
                         }
-                        if (matched == 1) return healthy;
+                        if (matched == 1) return StorageTemperatureService.ResolveDiskNumber(driveLetter) == number ? healthy : null;
                     }
                     catch { /* try only an explicit storage association below */ }
                 }
@@ -186,7 +223,7 @@ namespace OptimizerWpf.Services
                         }
                     }
                 }
-                return result;
+                return StorageTemperatureService.ResolveDiskNumber(driveLetter) == number ? result : null;
             }
             catch { return null; }
         }

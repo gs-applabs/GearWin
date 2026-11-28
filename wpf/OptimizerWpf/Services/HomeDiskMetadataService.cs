@@ -5,24 +5,13 @@ using System.Threading.Tasks;
 namespace OptimizerWpf.Services;
 
 // Only one disk metadata query at a time; a new selection never queues behind it.
-// Cache has a strict key bound (one drive letter), no background eviction timer.
+// Cache has a strict key bound (26 drive letters), no background eviction timer.
 internal static class HomeDiskMetadataService
 {
     internal sealed record Snapshot(string? Model, PhysicalDriveKind Kind, bool Estimated);
     private static readonly object Gate = new();
     private static readonly DriveMetadataSlot<Snapshot> Metadata = new(drive =>
-        Task.Run(() =>
-        {
-            var model = DriveTypeService.GetDiskModel(drive);
-            var kind = DriveTypeService.Detect(drive);
-            bool estimated = false;
-            if (kind == PhysicalDriveKind.Unknown)
-            {
-                kind = DriveTypeService.GuessFromModelName(model);
-                estimated = kind != PhysicalDriveKind.Unknown;
-            }
-            return new Snapshot(model, kind, estimated);
-        }));
+        Task.Run(() => DriveTypeService.ReadHomeMetadata(drive)));
 
     internal static string? NormalizeDrive(string? drive)
     {
