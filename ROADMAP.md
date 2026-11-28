@@ -1,5 +1,12 @@
 # ROADMAP
 
+## ACTIVE — shared desktop registration traversal and manual-profile recovery (2026-11-28)
+
+- DUP02: SystemInstallProbe.ReadRegistrations is now the shared read-only uninstall registry traversal for suite detection, BloatwareService and AppIconService (also RecommendedInventoryService through existing icon evidence). Explicit 64/32 machine views, default current-user view, consumer precedence preserved, lazy projection, deterministic disposal even on early return. Bloatware keeps strict scan failure and exact machine MSI policy, display-name dedupe preserved; icon/suite evidence remains best effort and does not prove absence when entries are inaccessible. No raw uninstall commands executed; no new cache/timer, no registry writes. Migration.ApplicationDiscovery remains separate to preserve portable core/export IDs, view coverage and incomplete warnings; do not merge blindly.
+- DUP07: Office/Gaming UI shares one recovery/readback helper; removed duplicate button disable. Gaming journal undo now uses existing awaited PowerModeService.ApplyManualProfileAsync with core admission instead of direct synchronous disable + duplicate settings write. Manual profile semantics unchanged; native stop/recovery and multi-view behavior remain open.
+- Four new registry view/order deterministic cases (624 cumulative authored, not passed). Parent bdd4ab9c installer 46108697026 in progress; offline clone job 140867195749 passed; audit 46108697024 pending at inspection. Last certified app snapshot 76bd8e5b installer CI success (1003 desktop + 42 migration). No release, no merge. Next: WUA policy overlap, cleaning categories, migration/UI, native and combined acceptance. 
+
+
 ## ACTIVE — duplicate-code consolidation pass (2026-11-28)
 
 - Exact parent d7bf15e947d5693a4591646b92da1e29462001eb, tree 6dc0125316f6343acd1f30223708b7f802adbcca. Downloaded real CI source artifact 15248441469 (76bd8e5b) and audit ZIP artifact 15248925171 (d7bf15e9). Source ZIP SHA256 ceb100bbac678d79abbd38b8fb307d32fb8d452c229d390f154d213abb8169e7 matches manifest; all 488 tracked paths present, 483 hashes match raw or normalized CRLF->LF, only known four docs + scanner differ. Whole source symbol search corroborates no application callers of detached driver API, old QuickClean DirSize only three tests, no callers of two obsolete browser size helpers. This is repository reachability evidence, not proof of no external reflection/plugin consumers.

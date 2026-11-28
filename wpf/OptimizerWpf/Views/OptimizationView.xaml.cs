@@ -223,7 +223,6 @@ namespace OptimizerWpf.Views
             if (gamingWasOn) ToggleGamingMode.IsChecked = false;
             ToggleOfficeMode.IsEnabled = false;
             ToggleGamingMode.IsEnabled = false;
-            ToggleOfficeMode.IsEnabled = false;
             try
             {
                 if (isOn)
@@ -245,17 +244,7 @@ namespace OptimizerWpf.Views
             }
             catch (Exception ex)
             {
-                try
-                {
-                    var mode = await Task.Run(PowerModeService.ReadActiveProfile);
-                    AppSettingsService.Current.OfficeModeActive = mode == "Office";
-                    AppSettingsService.Current.GamingModeActive = mode == "Gaming";
-                    AppSettingsService.Save();
-                }
-                catch { /* retain last known state; original failure is still displayed */ }
-                ToggleOfficeMode.IsChecked = AppSettingsService.Current.OfficeModeActive;
-                ToggleGamingMode.IsChecked = AppSettingsService.Current.GamingModeActive;
-                StatusService.SetIdle(ex.Message);
+                await RecoverManualProfileUiAsync(ex);
             }
             finally { ToggleOfficeMode.IsEnabled = true; ToggleGamingMode.IsEnabled = true; }
         }
@@ -278,12 +267,8 @@ namespace OptimizerWpf.Views
                     if (guard == RestoreGuardResult.Failed)
                         throw new InvalidOperationException(LanguageService.T("Health_DeletePartialFailed"));
                     await PowerModeService.ApplyManualProfileAsync("Gaming", true);
-                    ChangeJournalService.Record(LanguageService.T("Optimization_GamingMode") + ": " + LanguageService.T("Journal_On"), () =>
-                    {
-                        PowerModeService.DisableGamingMode();
-                        AppSettingsService.Current.GamingModeActive = false;
-                        AppSettingsService.Save();
-                    });
+                    ChangeJournalService.Record(LanguageService.T("Optimization_GamingMode") + ": " + LanguageService.T("Journal_On"),
+                        new Func<Task>(() => PowerModeService.ApplyManualProfileAsync("Gaming", false)));
                     TxtGamingModeStatus.Text = guard == RestoreGuardResult.Created ? LanguageService.T("Opt_RestorePointCreated") : "";
                     if (AppSettingsService.Current.GamingModeFreeRam) await FreeRamAsync();
                     StatusService.SetIdle(LanguageService.T("Opt_GamingModeEnabled"));
@@ -298,19 +283,24 @@ namespace OptimizerWpf.Views
             }
             catch (Exception ex)
             {
-                try
-                {
-                    var mode = await Task.Run(PowerModeService.ReadActiveProfile);
-                    AppSettingsService.Current.OfficeModeActive = mode == "Office";
-                    AppSettingsService.Current.GamingModeActive = mode == "Gaming";
-                    AppSettingsService.Save();
-                }
-                catch { /* retain last known state; original failure is still displayed */ }
-                ToggleOfficeMode.IsChecked = AppSettingsService.Current.OfficeModeActive;
-                ToggleGamingMode.IsChecked = AppSettingsService.Current.GamingModeActive;
-                StatusService.SetIdle(ex.Message);
+                await RecoverManualProfileUiAsync(ex);
             }
             finally { ToggleGamingMode.IsEnabled = true; ToggleOfficeMode.IsEnabled = true; }
+        }
+
+        private async Task RecoverManualProfileUiAsync(Exception failure)
+        {
+            try
+            {
+                var mode = await Task.Run(PowerModeService.ReadActiveProfile);
+                AppSettingsService.Current.OfficeModeActive = mode == "Office";
+                AppSettingsService.Current.GamingModeActive = mode == "Gaming";
+                AppSettingsService.Save();
+            }
+            catch { /* retain last known state; original failure is still displayed */ }
+            ToggleOfficeMode.IsChecked = AppSettingsService.Current.OfficeModeActive;
+            ToggleGamingMode.IsChecked = AppSettingsService.Current.GamingModeActive;
+            StatusService.SetIdle(failure.Message);
         }
 
         private void ChkGamingFreeRam_Click(object sender, RoutedEventArgs e)

@@ -1,6 +1,6 @@
 # CURRENT CHECKPOINT — 2026-11-28
 
-Read [START_HERE.md](START_HERE.md) and [ROADMAP.md](ROADMAP.md). Duplicate consolidation: removed unused detached driver path, test-only recursive cleanup traversal, unused browser estimates; shared installed-icon registry reader. Parent source/audit artifacts verified; exact latest CI pending. No new feature engine, no release.
+Read [START_HERE.md](START_HERE.md) and [ROADMAP.md](ROADMAP.md). Shared desktop registration traversal, manual-profile recovery and coordinated gaming undo. Four new tests; no new service, no release. Exact new head pending CI.
 
 ---
 

@@ -295,31 +295,20 @@ try {{
 
         public static Task<IReadOnlyList<InstalledApp>> LoadInstalledAppsAsync() => Task.Run(() =>
         {
-            var apps = new List<InstalledApp>();
-            foreach (var (hive, subPath) in new[]
-                     {
-                         (Registry.LocalMachine, @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
-                         (Registry.LocalMachine, @"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"),
-                         (Registry.CurrentUser, @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
-                     })
+            // Preserve the existing machine-first display-name selection and
+            // strict scan failure; a partial registry read must not look complete.
+            var entries = SystemInstallProbe.ReadRegistrations<InstalledApp>((hive, name, sub) =>
             {
-                using var uninstallKey = hive.OpenSubKey(subPath);
-                if (uninstallKey == null) continue;
-                foreach (var name in uninstallKey.GetSubKeyNames())
-                {
-                    using var sub = uninstallKey.OpenSubKey(name);
-                    var displayName = sub?.GetValue("DisplayName") as string;
-                    var uninstallString = sub?.GetValue("UninstallString") as string;
-                    if (string.IsNullOrEmpty(displayName) || string.IsNullOrEmpty(uninstallString)) continue;
-                    if (sub!.GetValue("SystemComponent") != null) continue;
-                    if (apps.Any(a => a.DisplayName == displayName)) continue;
-                    var product = SafeUninstallService.MatchMachineMsi(name, uninstallString,
-                        ReferenceEquals(hive, Registry.LocalMachine), sub.GetValue("WindowsInstaller") is int flag && flag == 1);
-                    apps.Add(new InstalledApp(displayName, sub.GetValue("Publisher") as string, uninstallString)
-                        { MachineProductCode = product, UsageExecutable = AppUsageReview.ParseDisplayIcon(sub.GetValue("DisplayIcon") as string) });
-                }
-            }
-            return (IReadOnlyList<InstalledApp>)apps.OrderBy(a => a.DisplayName).ToList();
+                var displayName = sub.GetValue("DisplayName") as string;
+                var uninstallString = sub.GetValue("UninstallString") as string;
+                if (string.IsNullOrEmpty(displayName) || string.IsNullOrEmpty(uninstallString) ||
+                    sub.GetValue("SystemComponent") != null) return null;
+                var product = SafeUninstallService.MatchMachineMsi(name, uninstallString,
+                    hive == RegistryHive.LocalMachine, sub.GetValue("WindowsInstaller") is int flag && flag == 1);
+                return new InstalledApp(displayName, sub.GetValue("Publisher") as string, uninstallString)
+                    { MachineProductCode = product, UsageExecutable = AppUsageReview.ParseDisplayIcon(sub.GetValue("DisplayIcon") as string) };
+            }, strict: true);
+            return (IReadOnlyList<InstalledApp>)entries.DistinctBy(app => app.DisplayName).OrderBy(a => a.DisplayName).ToList();
         });
 
         // Exact-name candidates are advisory only, never automatic deletion targets.

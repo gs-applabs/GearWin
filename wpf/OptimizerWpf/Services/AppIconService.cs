@@ -7,7 +7,6 @@ using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
-using Microsoft.Win32;
 
 namespace OptimizerWpf.Services
 {
@@ -100,40 +99,22 @@ namespace OptimizerWpf.Services
             catch { return null; }
         }
 
+        private sealed record IconEvidence(string Title, string Path);
+
         internal static IReadOnlyList<(string Title, string Path)> ReadInstalledIconEntries(string? appTitle = null)
         {
-            var entries = new List<(string Title, string Path)>();
-            var machineViews = Environment.Is64BitOperatingSystem
-                ? new[] { RegistryView.Registry64, RegistryView.Registry32 } : new[] { RegistryView.Default };
-            var views = machineViews.Select(view => (RegistryHive.LocalMachine, view))
-                .Append((RegistryHive.CurrentUser, RegistryView.Default));
-            foreach (var (hive, view) in views)
+            var entries = SystemInstallProbe.ReadRegistrations<IconEvidence>((hive, name, key) =>
             {
-                try
-                {
-                    using var root = RegistryKey.OpenBaseKey(hive, view);
-                    using var key = root.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall");
-                    if (key == null) continue;
-                    foreach (var name in key.GetSubKeyNames())
-                    {
-                        try
-                        {
-                            using var sub = key.OpenSubKey(name);
-                            var title = sub?.GetValue("DisplayName") as string;
-                            if (string.IsNullOrWhiteSpace(title) ||
-                                appTitle != null && !MatchesInstalledTitle(title, appTitle)) continue;
-                            var path = ParseInstalledIconPath(sub?.GetValue("DisplayIcon") as string);
-                            if (path == null || !MaintenancePaths.IsOrdinaryLocalPath(path, allowRemovable: true) ||
-                                !File.Exists(path)) continue;
-                            entries.Add((title, path));
-                            if (appTitle != null) return entries;
-                        }
-                        catch { /* inaccessible entry is not positive installed evidence */ }
-                    }
-                }
-                catch { /* inaccessible registry view is not proof of absence */ }
-            }
-            return entries;
+                var title = key.GetValue("DisplayName") as string;
+                if (string.IsNullOrWhiteSpace(title) ||
+                    appTitle != null && !MatchesInstalledTitle(title, appTitle)) return null;
+                var path = ParseInstalledIconPath(key.GetValue("DisplayIcon") as string);
+                if (path == null || !MaintenancePaths.IsOrdinaryLocalPath(path, allowRemovable: true) ||
+                    !File.Exists(path)) return null;
+                return new IconEvidence(title, path);
+            });
+            if (appTitle != null) entries = entries.Take(1);
+            return entries.Select(row => (row.Title, row.Path)).ToArray();
         }
 
         public static string? FindInstalledIconPath(string appTitle) =>

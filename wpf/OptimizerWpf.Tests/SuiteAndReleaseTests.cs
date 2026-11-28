@@ -37,6 +37,26 @@ namespace OptimizerWpf.Tests
         public IEnumerable<UninstallEntry> UninstallEntries() => Entries;
     }
 
+    public class RegistryTraversalTests
+    {
+        [Theory]
+        [InlineData(true, false, 3)]
+        [InlineData(true, true, 3)]
+        [InlineData(false, false, 2)]
+        [InlineData(false, true, 2)]
+        public void RegistryLocationsPreserveConsumerPrecedenceWithoutDuplicateViews(bool is64Bit, bool userFirst, int count)
+        {
+            var locations = SystemInstallProbe.RegistryLocations(is64Bit, userFirst);
+            Assert.Equal(count, locations.Length);
+            Assert.Equal(count, locations.Distinct().Count());
+            Assert.Equal(userFirst ? Microsoft.Win32.RegistryHive.CurrentUser : Microsoft.Win32.RegistryHive.LocalMachine, locations[0].Hive);
+            Assert.Single(locations.Where(x => x.Hive == Microsoft.Win32.RegistryHive.CurrentUser));
+            var machine = locations.Where(x => x.Hive == Microsoft.Win32.RegistryHive.LocalMachine).Select(x => x.View).ToArray();
+            Assert.Equal(is64Bit ? new[] { Microsoft.Win32.RegistryView.Registry64, Microsoft.Win32.RegistryView.Registry32 }
+                : new[] { Microsoft.Win32.RegistryView.Default }, machine);
+        }
+    }
+
     public class ReleaseVersionTests
     {
         [Theory]

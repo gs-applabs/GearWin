@@ -86,38 +86,58 @@ namespace OptimizerWpf.Services
             catch { return null; }
         }
 
-        public IEnumerable<UninstallEntry> UninstallEntries()
+        public IEnumerable<UninstallEntry> UninstallEntries() =>
+            ReadRegistrations((hive, name, key) =>
+                key.GetValue("DisplayName") is string dn && dn.Length > 0
+                    ? new UninstallEntry(dn, key.GetValue("DisplayVersion") as string, key.GetValue("InstallLocation") as string)
+                    : null, userFirst: true, strict: false);
+
+        // Only registry traversal is shared. Each consumer chooses its own
+        // evidence and trust policy. No registry handles escape the projection.
+        internal static (RegistryHive Hive, RegistryView View)[] RegistryLocations(bool is64Bit, bool userFirst)
+        {
+            var machine = is64Bit
+                ? new[] { (RegistryHive.LocalMachine, RegistryView.Registry64), (RegistryHive.LocalMachine, RegistryView.Registry32) }
+                : new[] { (RegistryHive.LocalMachine, RegistryView.Default) };
+            var user = (RegistryHive.CurrentUser, RegistryView.Default);
+            return userFirst ? machine.Prepend(user).ToArray() : machine.Append(user).ToArray();
+        }
+
+        internal static IEnumerable<T> ReadRegistrations<T>(Func<RegistryHive, string, RegistryKey, T?> project,
+            bool userFirst = false, bool strict = false) where T : class
         {
             const string sub = @"Software\Microsoft\Windows\CurrentVersion\Uninstall";
-            var views = new (RegistryHive Hive, RegistryView View)[]
-            {
-                (RegistryHive.CurrentUser, RegistryView.Default),
-                (RegistryHive.LocalMachine, RegistryView.Registry64),
-                (RegistryHive.LocalMachine, RegistryView.Registry32),
-            };
-            foreach (var (hive, view) in views)
+            foreach (var (hive, view) in RegistryLocations(Environment.Is64BitOperatingSystem, userFirst))
             {
                 RegistryKey? baseKey = null, root = null;
                 try
                 {
-                    baseKey = RegistryKey.OpenBaseKey(hive, view);
-                    root = baseKey.OpenSubKey(sub, writable: false);
-                    if (root == null) continue;
-                    foreach (var name in root.GetSubKeyNames())
+                    string[] names;
+                    try
                     {
-                        UninstallEntry? e = null;
+                        baseKey = RegistryKey.OpenBaseKey(hive, view);
+                        root = baseKey.OpenSubKey(sub, writable: false);
+                        if (root == null) continue;
+                        names = root.GetSubKeyNames();
+                    }
+                    catch (Exception ex) when (!strict && IsAccessFailure(ex)) { continue; }
+                    foreach (var name in names)
+                    {
+                        T? entry = null;
                         try
                         {
-                            using var k = root.OpenSubKey(name, writable: false);
-                            if (k?.GetValue("DisplayName") is string dn && dn.Length > 0)
-                                e = new UninstallEntry(dn, k.GetValue("DisplayVersion") as string, k.GetValue("InstallLocation") as string);
+                            using var key = root.OpenSubKey(name, writable: false);
+                            if (key != null) entry = project(hive, name, key);
                         }
-                        catch { }
-                        if (e != null) yield return e;
+                        catch (Exception ex) when (!strict && IsAccessFailure(ex)) { }
+                        if (entry != null) yield return entry;
                     }
                 }
                 finally { root?.Dispose(); baseKey?.Dispose(); }
             }
         }
+
+        private static bool IsAccessFailure(Exception ex) =>
+            ex is IOException or UnauthorizedAccessException or System.Security.SecurityException;
     }
 }
