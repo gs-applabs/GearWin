@@ -41,6 +41,25 @@ public sealed class MigrationDocumentsTests
     }
 
     [Fact]
+    public void ByteLimitCountsMultibyteCharacters()
+    {
+        var path = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllText(path, "αβγ", new System.Text.UTF8Encoding(false));
+            Assert.Equal("αβγ", BoundedText.ReadFile(path, 6));
+            Assert.Throws<IOException>(() => BoundedText.ReadFile(path, 5));
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void OversizedExportCannotCreateUnreadableMigrationDocument()
+    {
+        Assert.Throws<IOException>(() => MigrationDocuments.SerializeFile(new string('x', 16 * 1024 * 1024)));
+    }
+
+    [Fact]
     public void WrongTargetSchemaIsRejected()
     {
         var path = Path.GetTempFileName();

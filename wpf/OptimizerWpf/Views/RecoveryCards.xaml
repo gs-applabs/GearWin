@@ -109,6 +109,13 @@
                         <Button x:Name="BtnCreateMigrationPlan" Style="{StaticResource FlatButtonStyle}" Padding="12,8" Margin="0,0,0,8" Click="CreateMigrationPlan_Click"/>
                     </WrapPanel>
                     <TextBlock x:Name="TxtMigrationPlanStatus" Style="{StaticResource SubTextStyle}" TextWrapping="Wrap"/>
+                    <ListBox x:Name="ListMigrationPreview" MaxHeight="220" Margin="0,8,0,0" Visibility="Collapsed"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled" VirtualizingPanel.IsVirtualizing="True"
+                             VirtualizingPanel.VirtualizationMode="Recycling">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate><TextBlock Text="{Binding}" TextWrapping="Wrap"/></DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
                 </StackPanel>
             </Border>
     </StackPanel>

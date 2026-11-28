@@ -16,7 +16,7 @@ public sealed record PackageCandidate(PackageManager Manager, string PackageId, 
 public sealed record ApplicationIdentity(InventorySource Kind, string? Id = null, string? Name = null, string? Publisher = null)
 {
     internal ApplicationIdentity Normalize() => new(Kind,
-        Kind == InventorySource.WindowsRegistry ? Id?.ToUpperInvariant() : Id,
+        Kind is InventorySource.WindowsRegistry or InventorySource.WindowsStorePackage ? Id?.ToUpperInvariant() : Id,
         Name?.ToUpperInvariant(), Publisher?.ToUpperInvariant());
 
     internal static IEnumerable<ApplicationIdentity> KeysFor(InstalledApplication application)

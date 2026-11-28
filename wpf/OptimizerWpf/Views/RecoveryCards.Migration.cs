@@ -40,7 +40,7 @@ namespace OptimizerWpf.Views
 
         private static Task WriteMigrationDocumentAsync<T>(string path, T document) =>
             GearWinCore.RunAsync(CoreWork.Backup, () => Task.Run(() =>
-                AppSettingsService.WriteIfChanged(Path.GetFullPath(path), MigrationDocuments.Serialize(document), null)));
+                AppSettingsService.WriteIfChanged(Path.GetFullPath(path), MigrationDocuments.SerializeFile(document), null)));
 
         private async void ExportTargetProfile_Click(object sender, RoutedEventArgs e)
         {
@@ -72,6 +72,8 @@ namespace OptimizerWpf.Views
             if (output == null) return;
 
             BtnExportTargetProfile.IsEnabled = BtnCreateMigrationPlan.IsEnabled = false;
+            ListMigrationPreview.ItemsSource = null;
+            ListMigrationPreview.Visibility = Visibility.Collapsed;
             try
             {
                 var fullOutput = Path.GetFullPath(output);
@@ -93,6 +95,24 @@ namespace OptimizerWpf.Views
                 TxtMigrationPlanStatus.Text = Translation(
                     $"Προεπισκοπήσεις: {previews}, χειροκίνητα: {manual}, χωρίς αντιστοίχιση: {unresolved}, προειδοποιήσεις απογραφής: {warnings}. ",
                     $"Previews: {previews}, manual: {manual}, unresolved: {unresolved}, inventory warnings: {warnings}. ") + fullOutput;
+                // Keep the visual tree bounded; the saved JSON contains every entry.
+                const int limit = 200;
+                var lines = report.Applications.Take(limit).Select(a =>
+                {
+                    var status = a.Status switch
+                    {
+                        PlanStatus.CommandPreview => Translation("Προεπισκόπηση", "Preview"),
+                        PlanStatus.Manual => Translation("Χειροκίνητα", "Manual"),
+                        _ => Translation("Χωρίς αντιστοίχιση", "Unresolved")
+                    };
+                    return $"{status}: {a.Name} — {a.Candidate?.PackageId ?? "—"}";
+                }).ToList();
+                if (report.Applications.Count > limit)
+                    lines.Add(Translation("Οι υπόλοιπες εγγραφές βρίσκονται στο πλήρες JSON.", "Remaining entries are in the full JSON."));
+                if (warnings > 0)
+                    lines.Add(Translation("Διαβάστε τις προειδοποιήσεις στο πλήρες JSON.", "Read inventory warnings in the full JSON."));
+                ListMigrationPreview.ItemsSource = lines;
+                ListMigrationPreview.Visibility = lines.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
             }
             catch (Exception ex) { TxtMigrationPlanStatus.Text = ex.Message; }
             finally { BtnExportTargetProfile.IsEnabled = BtnCreateMigrationPlan.IsEnabled = true; }

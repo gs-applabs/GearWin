@@ -98,6 +98,35 @@ public sealed class ApplicationInventoryTests
         Assert.Equal("vlc", Assert.Single(PackagePlanner.CreatePlan(target, manifest, source)).Candidate?.PackageId);
     }
 
+    [Fact]
+    public void StoreFamilyIdentityIsStableAcrossArchitectureAndSupportsExplicitMapping()
+    {
+        var inventory = new ApplicationInventory(1, "windows", [], []);
+        inventory = ApplicationDiscovery.AddStorePackages(inventory, [
+            ("Vendor.App", "Vendor.App_1.2.3.4_x64__abcdefghijklm"),
+            ("Vendor.App", "Vendor.App_1.2.3.4_arm64__abcdefghijklm"),
+            ("Wrong", "Vendor.App_1.2.3.4_x64__abcdefghijklm")
+        ]);
+        var app = Assert.Single(inventory.Applications);
+        Assert.Equal(InventorySource.WindowsStorePackage, app.Kind);
+        Assert.Equal("Vendor.App_abcdefghijklm", app.Id);
+        Assert.Equal("1.2.3.4", app.Version);
+        Assert.Equal(2, inventory.Warnings.Count);
+        var target = new PackageProfile("linux", "x64", "debian", "13", null, [new(PackageManager.Apt, "apt-get")], null);
+        var manifest = new PackageManifest(1, [
+            new("Example", [new(PackageManager.Apt, "example")],
+                [new(InventorySource.WindowsStorePackage, Id: "VENDOR.APP_ABCDEFGHIJKLM")])
+        ]);
+        Assert.Equal("example", Assert.Single(PackagePlanner.CreatePlan(target, manifest, inventory)).Candidate?.PackageId);
+        Assert.Equal(PlanStatus.Unresolved, Assert.Single(PackagePlanner.CreatePlan(target, new PackageManifest(1, []), inventory)).Status);
+    }
+
+    [Fact]
+    public void StoreSupplementCannotBeAddedToLinuxInventory()
+    {
+        Assert.Throws<ArgumentException>(() => ApplicationDiscovery.AddStorePackages(new ApplicationInventory(1, "linux", [], []), []));
+    }
+
     private static string Entry(string name) => $"[Desktop Entry]\nType=Application\nName={name}\n";
 
     private static void WriteEntry(string dataDirectory, string relativePath, string content)

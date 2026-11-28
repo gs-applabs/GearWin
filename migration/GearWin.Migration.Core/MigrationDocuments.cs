@@ -26,6 +26,14 @@ public static class MigrationDocuments
 
     public static string Serialize<T>(T value) => JsonSerializer.Serialize(value, Json);
 
+    public static string SerializeFile<T>(T value)
+    {
+        string json = Serialize(value);
+        if (System.Text.Encoding.UTF8.GetByteCount(json) > MaxJsonBytes)
+            throw new IOException("Migration document exceeds the 16 MiB input limit.");
+        return json;
+    }
+
     public static PackageProfile ReadTarget(string path)
     {
         var document = Read<ProfileDocument>(path);

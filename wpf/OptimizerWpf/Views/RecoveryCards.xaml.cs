@@ -302,12 +302,25 @@ namespace OptimizerWpf.Views
             {
                 TxtAppsExportStatus.Text = Translation("Απογραφή εφαρμογών…", "Reading installed applications…");
                 var inventory = await GearWinCore.RunAsync(CoreWork.TransferScan, () => System.Threading.Tasks.Task.Run(GearWin.Migration.ApplicationDiscovery.InspectHost));
-                string json = GearWin.Migration.MigrationDocuments.Serialize(inventory);
+                // The existing Store scanner acquires its own core lease; do not nest
+                // it inside TransferScan. A failure is an explicit inventory warning.
+                try
+                {
+                    var store = await BloatwareService.ScanUwpAppsAsync();
+                    inventory = GearWin.Migration.ApplicationDiscovery.AddStorePackages(inventory,
+                        store.Select(a => (a.Name, a.PackageFullName)));
+                }
+                catch (System.Exception ex)
+                {
+                    System.Diagnostics.Trace.TraceWarning("Store inventory: " + ex.Message);
+                    inventory = inventory with { Warnings = inventory.Warnings.Concat(new[] { "Store inventory failed or was unavailable." }).ToArray() };
+                }
+                string json = GearWin.Migration.MigrationDocuments.SerializeFile(inventory);
                 await GearWinCore.RunAsync(CoreWork.Backup, () => System.Threading.Tasks.Task.Run(() =>
                     AppSettingsService.WriteIfChanged(Path.GetFullPath(picker.FileName), json, null)));
                 TxtAppsExportStatus.Text = Translation(
-                    $"Εξήχθησαν {inventory.Applications.Count:N0} εφαρμογές: {picker.FileName}",
-                    $"Exported {inventory.Applications.Count:N0} applications: {picker.FileName}");
+                    $"Εξήχθησαν {inventory.Applications.Count:N0} εγγραφές, προειδοποιήσεις: {inventory.Warnings.Count:N0}. {picker.FileName}",
+                    $"Exported {inventory.Applications.Count:N0} entries, warnings: {inventory.Warnings.Count:N0}. {picker.FileName}");
             }
             catch (System.Exception ex)
             {

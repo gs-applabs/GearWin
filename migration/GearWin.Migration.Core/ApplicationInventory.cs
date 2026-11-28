@@ -3,7 +3,7 @@ using Microsoft.Win32;
 
 namespace GearWin.Migration;
 
-public enum InventorySource { LinuxDesktop, WindowsRegistry }
+public enum InventorySource { LinuxDesktop, WindowsRegistry, WindowsStorePackage }
 
 public sealed record InstalledApplication(InventorySource Kind, string Id, string Name,
     string? Version = null, string? Publisher = null);
@@ -144,7 +144,7 @@ public static class ApplicationDiscovery
         RegistryView[] views = Environment.Is64BitOperatingSystem
             ? [RegistryView.Registry64, RegistryView.Registry32] : [RegistryView.Default];
         var applications = new List<InstalledApplication>();
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var seen = new HashSet<(string Id, string Name, string Publisher, string Version)>();
         bool incomplete = false;
 
         foreach (RegistryHive hive in new[] { RegistryHive.CurrentUser, RegistryHive.LocalMachine })
@@ -162,11 +162,13 @@ public static class ApplicationDiscovery
                     {
                         using var app = root.OpenSubKey(id);
                         if (app?.GetValue("DisplayName") is not string name || string.IsNullOrWhiteSpace(name) ||
-                            app.GetValue("SystemComponent") is 1 || app.GetValue("ParentKeyName") is string || !seen.Add(id))
+                            app.GetValue("SystemComponent") is 1 || app.GetValue("ParentKeyName") is string)
                             continue;
 
-                        applications.Add(new(InventorySource.WindowsRegistry, id, name.Trim(),
-                            app.GetValue("DisplayVersion") as string, app.GetValue("Publisher") as string));
+                        var version = app.GetValue("DisplayVersion") as string;
+                        var publisher = app.GetValue("Publisher") as string;
+                        if (!seen.Add(RegistrationKey(id, name, publisher, version))) continue;
+                        applications.Add(new(InventorySource.WindowsRegistry, id, name.Trim(), version, publisher));
                     }
                     catch (IOException) { incomplete = true; }
                     catch (UnauthorizedAccessException) { incomplete = true; }
@@ -179,7 +181,46 @@ public static class ApplicationDiscovery
         }
 
         return new(PackagePlanner.SchemaVersion, "windows", Sort(applications),
-            incomplete ? ["Some Windows application registrations could not be read."] : []);
+            incomplete
+                ? ["Some Windows application registrations could not be read.", WindowsRegistryScope]
+                : [WindowsRegistryScope]);
+    }
+
+    private const string WindowsRegistryScope = "Registry inventory does not include all Store/MSIX or standalone portable applications.";
+
+    private static (string Id, string Name, string Publisher, string Version) RegistrationKey(
+        string id, string name, string? publisher, string? version) =>
+        (id.ToUpperInvariant(), name.Trim().ToUpperInvariant(),
+            publisher?.Trim().ToUpperInvariant() ?? "", version?.Trim().ToUpperInvariant() ?? "");
+
+    // The Windows UI supplies already validated current-user Store package records
+    // from its existing UWP scanner. Never infer a WinGet ID from a package family.
+    public static ApplicationInventory AddStorePackages(ApplicationInventory inventory,
+        IEnumerable<(string Name, string FullName)> packages)
+    {
+        if (inventory.OperatingSystem != "windows" || inventory.SchemaVersion != PackagePlanner.SchemaVersion)
+            throw new ArgumentException("Expected a Windows inventory.");
+        var apps = inventory.Applications.ToList();
+        var seen = new HashSet<string>(apps.Where(a => a.Kind == InventorySource.WindowsStorePackage)
+            .Select(a => a.Id + "\\n" + a.Version), StringComparer.OrdinalIgnoreCase);
+        var warnings = inventory.Warnings.ToList();
+        bool invalid = false;
+        foreach (var package in packages)
+        {
+            var parts = package.FullName.Split('_');
+            if (parts.Length != 5 || string.IsNullOrWhiteSpace(package.Name) ||
+                string.IsNullOrWhiteSpace(parts[0]) || !Version.TryParse(parts[1], out _) ||
+                parts[4].Length != 13 || !parts[4].All(char.IsAsciiLetterOrDigit) ||
+                !string.Equals(parts[0], package.Name, StringComparison.OrdinalIgnoreCase))
+            { invalid = true; continue; }
+
+            string family = parts[0] + "_" + parts[4];
+            if (seen.Add(family + "\\n" + parts[1]))
+                apps.Add(new(InventorySource.WindowsStorePackage, family, package.Name, parts[1]));
+        }
+        if (invalid) warnings.Add("Some Store package identities could not be interpreted.");
+        warnings.Add("Store supplement covers current-user removable Store apps only; other MSIX, system apps and portable apps are not fully inventoried.");
+        return inventory with { Applications = Sort(apps), Warnings = warnings.ToArray() };
     }
 
     private static InstalledApplication[] Sort(IEnumerable<InstalledApplication> applications) => applications
