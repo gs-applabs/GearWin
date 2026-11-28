@@ -33,36 +33,47 @@ internal static class CoreFeatureLifecycle
         main.Dispatcher.VerifyAccess();
         var wanted = FeatureDemand.From(AppSettingsService.Current);
         var previous = _applied;
-        _applied = wanted;
+        _applied = wanted; // preference transitions, not evidence of running services
 
         if (previous?.Updates == true && !wanted.Updates) UpdateNotificationService.InvalidateAutomaticScan();
-        ApplyChange(previous?.UpdateTimer, wanted.UpdateTimer, UpdateNotificationService.Start, UpdateNotificationService.Stop);
-        if (wanted.Updates && previous?.Updates != true) _ = UpdateNotificationService.StartupCheckAsync();
-        if (wanted.LowDisk && previous?.LowDisk != true) UpdateNotificationService.RequestLowDiskCheck();
-        ApplyChange(previous?.Release, wanted.Release, ReleaseCheckService.Start, ReleaseCheckService.Stop);
-        ApplyChange(previous?.Alerts, wanted.Alerts, AlertService.Start, AlertService.Stop);
-        ApplyChange(previous?.AutoGaming, wanted.AutoGaming, AutoGamingModeService.Start, AutoGamingModeService.Stop);
+        if (previous?.LowDisk == true && !wanted.LowDisk) UpdateNotificationService.InvalidateLowDiskCheck();
+        bool updateWasRunning = UpdateNotificationService.IsRunning;
+        ApplyChange(updateWasRunning, wanted.UpdateTimer, UpdateNotificationService.Start, UpdateNotificationService.Stop);
+        if (UpdateNotificationService.IsRunning)
+        {
+            if (wanted.Updates && (!updateWasRunning || previous?.Updates != true)) _ = UpdateNotificationService.StartupCheckAsync();
+            if (wanted.LowDisk && (!updateWasRunning || previous?.LowDisk != true)) UpdateNotificationService.RequestLowDiskCheck();
+        }
+        ApplyChange(ReleaseCheckService.IsRunning, wanted.Release, ReleaseCheckService.Start, ReleaseCheckService.Stop);
+        ApplyChange(AlertService.IsRunning, wanted.Alerts, AlertService.Start, AlertService.Stop);
+        ApplyChange(AutoGamingModeService.IsRunning, wanted.AutoGaming, AutoGamingModeService.Start, AutoGamingModeService.Stop);
         ApplyChange(DesktopWidgetService.IsRunning, wanted.Widget, DesktopWidgetService.Start, () => DesktopWidgetService.Stop());
         ApplyChange(ClipboardManagerService.IsRunning, wanted.Clipboard, () => ClipboardManagerService.Start(main), ClipboardManagerService.Stop);
     }
 
-    private static void ApplyChange(bool? previous, bool wanted, Action start, Action stop)
+    internal static void Reconcile(bool running, bool wanted, Action start, Action stop)
     {
-        if (previous == wanted) return;
-        try { if (wanted) start(); else if (previous == true) stop(); }
+        if (running == wanted) return;
+        if (wanted) start(); else stop();
+    }
+
+    private static void ApplyChange(bool running, bool wanted, Action start, Action stop)
+    {
+        try { Reconcile(running, wanted, start, stop); }
         catch (Exception ex) { System.Diagnostics.Trace.TraceError(ex.Message); StatusService.Report(ex.Message); }
     }
 
     internal static void Stop()
     {
-        var previous = _applied;
         _main = null;
         _applied = null;
-        if (previous?.UpdateTimer == true) ApplyChange(true, false, UpdateNotificationService.Start, UpdateNotificationService.Stop);
-        if (previous?.Release == true) ApplyChange(true, false, ReleaseCheckService.Start, ReleaseCheckService.Stop);
-        if (previous?.Alerts == true) ApplyChange(true, false, AlertService.Start, AlertService.Stop);
-        if (previous?.AutoGaming == true) ApplyChange(true, false, AutoGamingModeService.Start, AutoGamingModeService.Stop);
-        if (previous?.Widget == true) ApplyChange(true, false, DesktopWidgetService.Start, () => DesktopWidgetService.Stop());
-        if (previous?.Clipboard == true) ApplyChange(true, false, () => { }, ClipboardManagerService.Stop);
+        // Shutdown uses actual service ownership, even if a preference change
+        // or a partially failed start left the desired state out of sync.
+        ApplyChange(UpdateNotificationService.IsRunning, false, UpdateNotificationService.Start, UpdateNotificationService.Stop);
+        ApplyChange(ReleaseCheckService.IsRunning, false, ReleaseCheckService.Start, ReleaseCheckService.Stop);
+        ApplyChange(AlertService.IsRunning, false, AlertService.Start, AlertService.Stop);
+        ApplyChange(true, false, AutoGamingModeService.Start, AutoGamingModeService.Stop);
+        ApplyChange(DesktopWidgetService.IsRunning, false, DesktopWidgetService.Start, () => DesktopWidgetService.Stop());
+        ApplyChange(ClipboardManagerService.IsRunning, false, () => { }, ClipboardManagerService.Stop);
     }
 }

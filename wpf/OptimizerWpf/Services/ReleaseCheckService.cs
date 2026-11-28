@@ -22,6 +22,7 @@ namespace OptimizerWpf.Services
         public static readonly TimeSpan BusyRetry = TimeSpan.FromMinutes(30);
 
         private static DispatcherTimer? _timer;
+        internal static bool IsRunning => _timer != null;
         private static bool _inFlight;
         private static CancellationTokenSource? _requestLifetime;
 

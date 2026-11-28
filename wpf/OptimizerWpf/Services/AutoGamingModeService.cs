@@ -17,6 +17,7 @@ namespace OptimizerWpf.Services
     public static class AutoGamingModeService
     {
         private static DispatcherTimer? _timer;
+        internal static bool IsRunning => _timer != null;
         private static bool _isActive;
         private static IntPtr _lastFullscreenHwnd;
         private static int _consecutiveFullscreenTicks;

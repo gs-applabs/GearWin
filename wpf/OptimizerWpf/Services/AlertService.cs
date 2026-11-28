@@ -20,6 +20,7 @@ namespace OptimizerWpf.Services
         public static readonly TimeSpan Cooldown = TimeSpan.FromHours(6);
 
         private static DispatcherTimer? _timer;
+        internal static bool IsRunning => _timer != null;
         private static int _inFlight;
         private static int _generation;
         private static readonly Dictionary<string, DateTime> _lastFired = new();

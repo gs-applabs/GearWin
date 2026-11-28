@@ -29,6 +29,7 @@ Updated 2026-11-28. This is the single current entry point for a new ChatGPT/Cla
 - New SDK source targets .NET 11, global.json 11.0.100; dependency alignment and build workflows updated. Validate exact head including all preceding changes. AppVeyor config only, no verified execution. Existing base branch and master remain untouched.
 
 ## Next execution order
+- P1: actual-running feature reconciliation, one-in-flight low-disk background check and generation guards, 14 pure cases. Current pass 24 new fixtures; latest confirmed 843 .NET/32 Python. Let current CI finish before more commits. Check actual native hardware/Tray 24h/second provider and P2 work.
 - P1: Tray icon/menu/bitmap ownership and popup lifetime hardened; optional release HTTP/startup delay cancellation, six tooltip cases authored. Native sensor lifetime and lifecycle retry still open. Check latest CI, do not claim tray leak fixed.
 - P0: built-in shell verbs now protected per-user journal plus installed ShellContextHelper.ps1; no raw script interpolation, no recursive/automatic permission grants, no legacy key deletion. Seven fixtures pending; actual PowerShell policy/ACL/UAC/shell visibility and legacy review remain open. Check CI before more commits.
 - P0: new custom verbs use protected per-user index, typed ownership, direct executable path only; legacy menus preserved and require manual review. 16 fixtures pending. Built-in verbs, shell empty-key visibility, safe structured args, real UI validation remain open.

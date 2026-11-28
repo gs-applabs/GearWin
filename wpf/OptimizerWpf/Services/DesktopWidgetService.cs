@@ -14,9 +14,17 @@ namespace OptimizerWpf.Services
         public static void Start()
         {
             if (_window != null) return;
-            _window = new Views.DesktopWidgetWindow();
-            _window.Closed += (_, _) => _window = null;
-            _window.Show();
+            if (!AppSettingsService.Current.DesktopWidgetEnabled) return;
+            var window = new Views.DesktopWidgetWindow();
+            _window = window;
+            window.Closed += (_, _) => { if (ReferenceEquals(_window, window)) _window = null; };
+            try { window.Show(); }
+            catch
+            {
+                if (ReferenceEquals(_window, window)) _window = null;
+                try { window.Close(); } catch { }
+                throw;
+            }
         }
 
         // persistDisabled=true όταν ο χρήστης κλείνει το widget ΑΠΕΥΘΕΙΑΣ από το δικό του κουμπί ✕

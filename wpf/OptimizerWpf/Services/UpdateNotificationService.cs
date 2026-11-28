@@ -21,6 +21,7 @@ namespace OptimizerWpf.Services
     public static class UpdateNotificationService
     {
         private static DispatcherTimer? _timer;
+        internal static bool IsRunning => _timer != null;
         private static bool _checkInFlight;
         private static int _generation;
         private static System.Threading.CancellationTokenSource? _startupWait;
@@ -63,7 +64,7 @@ namespace OptimizerWpf.Services
             // πραγματική σάρωση μόνο όταν έχει περάσει το πραγματικό διάστημα (UpdateCheckIntervalHours,
             // προεπιλογή 6 ώρες) - φθηνός έλεγχος ρολογιού συχνά, ακριβή σάρωση winget/οδηγών σπάνια.
             _timer = new DispatcherTimer { Interval = TimeSpan.FromMinutes(2) };
-            _timer.Tick += async (_, _) => await RunCheckIfDueAsync();
+            _timer.Tick += OnTick;
             _timer.Start();
         }
 
@@ -103,6 +104,8 @@ namespace OptimizerWpf.Services
             {
                 if (ReferenceEquals(_startupWait, wait)) _startupWait = null;
                 _checkInFlight = false;
+                if (wait.IsCancellationRequested && generation != _generation && IsRunning && !_stopped && AppSettingsService.Current.UpdateNotificationsEnabled)
+                    _ = StartupCheckAsync();
             }
         }
 
@@ -112,12 +115,14 @@ namespace OptimizerWpf.Services
             _startupWait?.Cancel();
         }
 
+        private static async void OnTick(object? sender, EventArgs e) => await RunCheckIfDueAsync();
+
         public static void Stop()
         {
             _stopped = true;
             InvalidateAutomaticScan();
-            _timer?.Stop();
-            _timer = null;
+            InvalidateLowDiskCheck();
+            if (_timer != null) { _timer.Stop(); _timer.Tick -= OnTick; _timer = null; }
         }
 
         private static async Task RunCheckIfDueAsync()
@@ -258,37 +263,68 @@ namespace OptimizerWpf.Services
         // αποφεύγει σκάγιασμα πολλαπλών toast στην ίδια στιγμή).
         internal static void RequestLowDiskCheck()
         {
-            if (_stopped || !AppSettingsService.Current.LowDiskNotificationsEnabled) return;
-            // Low disk alerts do not require a winget, driver, or WUA scan.
-            if (Environment.TickCount64 - _lastLowDiskCheck < 300000 && _lastLowDiskCheck != 0) return;
-            _lastLowDiskCheck = Environment.TickCount64;
-            try { CheckLowDiskSpace(); } catch (Exception ex) { System.Diagnostics.Trace.TraceError(ex.Message); }
+            if (_stopped || !AppSettingsService.Current.LowDiskNotificationsEnabled || _lowDiskInFlight) return;
+            var last = AppSettingsService.Current.LastLowDiskNotifyAt;
+            if (last.HasValue && DateTime.Now - last.Value < TimeSpan.FromHours(24)) return;
+            long now = Environment.TickCount64;
+            if (_lastLowDiskCheck != 0 && SharedTelemetryService.IsFresh(now, _lastLowDiskCheck, 300000)) return;
+            _lastLowDiskCheck = now;
+            _lowDiskInFlight = true;
+            _ = CheckLowDiskAsync(_lowDiskGeneration, Math.Clamp(AppSettingsService.Current.LowDiskThresholdPercent, 1, 50));
         }
 
         private static long _lastLowDiskCheck;
-        private static void CheckLowDiskSpace()
+        private static bool _lowDiskInFlight;
+        private static int _lowDiskGeneration;
+
+        internal static void InvalidateLowDiskCheck()
         {
-            if (!AppSettingsService.Current.LowDiskNotificationsEnabled) return;
-            var last = AppSettingsService.Current.LastLowDiskNotifyAt;
-            if (last.HasValue && DateTime.Now - last.Value < TimeSpan.FromHours(24)) return;
+            _lowDiskGeneration++;
+            _lastLowDiskCheck = 0;
+        }
 
-            var thresholdPercent = Math.Clamp(AppSettingsService.Current.LowDiskThresholdPercent, 1, 50);
-            foreach (var drive in System.IO.DriveInfo.GetDrives())
+        internal static bool LowDiskEligible(long free, long total, int threshold) =>
+            total > 0 && free >= 0 && free <= total && (double)free / total * 100.0 < threshold;
+
+        internal static bool CanPublishLowDisk(int requestGeneration, int currentGeneration, bool enabled, bool stopped) =>
+            requestGeneration == currentGeneration && enabled && !stopped;
+
+        private static async Task CheckLowDiskAsync(int generation, int threshold)
+        {
+            try
             {
-                if (!drive.IsReady || drive.DriveType != System.IO.DriveType.Fixed || drive.TotalSize <= 0) continue;
-                var freePercent = (double)drive.AvailableFreeSpace / drive.TotalSize * 100.0;
-                if (freePercent >= thresholdPercent) continue;
-
-                AppSettingsService.Current.LastLowDiskNotifyAt = DateTime.Now;
+                var result = await Task.Run(() =>
+                {
+                    using var lease = GearWinCore.TryEnterBackground(CoreWork.Diagnostics);
+                    if (lease == null) return ((string Name, long Free, long Total)?)null;
+                    foreach (var drive in DriveInfo.GetDrives())
+                    {
+                        try
+                        {
+                            if (drive.DriveType != DriveType.Fixed || !drive.IsReady) continue;
+                            long free = drive.AvailableFreeSpace, total = drive.TotalSize;
+                            if (LowDiskEligible(free, total, threshold))
+                                return (drive.Name.TrimEnd('\\'), free, total);
+                        }
+                        catch (IOException) { }
+                        catch (UnauthorizedAccessException) { }
+                    }
+                    return null;
+                });
+                var settings = AppSettingsService.Current;
+                if (!CanPublishLowDisk(generation, _lowDiskGeneration, settings.LowDiskNotificationsEnabled, _stopped) ||
+                    result == null || !LowDiskEligible(result.Value.Free, result.Value.Total,
+                        Math.Clamp(settings.LowDiskThresholdPercent, 1, 50))) return;
+                var last = settings.LastLowDiskNotifyAt;
+                if (last.HasValue && DateTime.Now - last.Value < TimeSpan.FromHours(24)) return;
+                settings.LastLowDiskNotifyAt = DateTime.Now;
                 AppSettingsService.Save();
-                var freeGb = drive.AvailableFreeSpace / 1024.0 / 1024 / 1024;
-                var driveName = drive.Name.TrimEnd('\\');
-                TrayIconService.ShowNotificationBalloon(
-                    LanguageService.T("LowDisk_Title"),
-                    string.Format(LanguageService.T("LowDisk_Body"), driveName, freeGb.ToString("0.#")),
+                TrayIconService.ShowNotificationBalloon(LanguageService.T("LowDisk_Title"),
+                    string.Format(LanguageService.T("LowDisk_Body"), result.Value.Name, (result.Value.Free / 1073741824.0).ToString("0.#")),
                     () => TrayIconService.OpenTab("Optimization#1"));
-                return;
             }
+            catch (Exception ex) { System.Diagnostics.Trace.TraceWarning("Low disk query: " + ex.Message); }
+            finally { _lowDiskInFlight = false; }
         }
     }
 }
