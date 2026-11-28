@@ -182,7 +182,8 @@ namespace OptimizerWpf.Views
             BtnApplyGameSettings.IsEnabled = true;
             BtnSaveGameProfile.IsEnabled = true;
             BtnLoadGameProfile.IsEnabled = GameProfileService.HasProfile(dlg.FileName);
-            TxtGameSettingsStatus.Text = "";
+            TxtGameSettingsStatus.Text = !BtnLoadGameProfile.IsEnabled && GameProfileService.HasLegacyProfile(dlg.FileName)
+                ? (LanguageService.Current == "el" ? "Παλιό προφίλ: ελέγξτε τις τιμές και αποθηκεύστε ξανά. Το παλιό αρχείο διατηρείται." : "Legacy profile: review settings and save again. Old file retained.") : "";
         }
 
         // ── Παιχνίδια: Προφίλ ανά παιχνίδι (REQ-590-06) ──────────────────────────────────
@@ -197,14 +198,14 @@ namespace OptimizerWpf.Views
             {
                 GpuPreference = (GpuPreference)CmbGpuPref.SelectedIndex,
                 DisableFullscreenOptimizations = ChkDisableFso.IsChecked == true,
-                GlobalTweaks = _gameTweakRows.Where(r => r.Tweak.Id != null).ToDictionary(r => r.Tweak.Id!, r => r.IsOn),
+                GlobalTweaks = _gameTweakRows.Where(r => r.Tweak.Id != null && r.HasKnownState).ToDictionary(r => r.Tweak.Id!, r => r.IsOn),
             };
             var ok = GameProfileService.Save(exe, data);
             TxtGameSettingsStatus.Text = LanguageService.T(ok ? "Games_ProfileSaved" : "Autostart_Failed");
             if (ok) BtnLoadGameProfile.IsEnabled = true;
         }
 
-        private void BtnLoadGameProfile_Click(object sender, RoutedEventArgs e)
+        private async void BtnLoadGameProfile_Click(object sender, RoutedEventArgs e)
         {
             var exe = TxtGameExe.Text;
             if (string.IsNullOrEmpty(exe)) return;
@@ -213,16 +214,29 @@ namespace OptimizerWpf.Views
 
             if (data.GpuPreference is { } gpu) CmbGpuPref.SelectedIndex = (int)gpu;
             if (data.DisableFullscreenOptimizations is { } fso) ChkDisableFso.IsChecked = fso;
-            GamingTweaksService.SetGpuPreference(exe, data.GpuPreference);
-            GamingTweaksService.SetFullscreenOptimizationsDisabled(exe, data.DisableFullscreenOptimizations == true);
-
-            foreach (var row in _gameTweakRows)
+            BtnLoadGameProfile.IsEnabled = false;
+            int failed = 0;
+            try
             {
-                if (row.Tweak.Id == null || !data.GlobalTweaks.TryGetValue(row.Tweak.Id, out var wantOn) || wantOn == row.IsOn) continue;
-                try { if (wantOn) row.Tweak.OnAction(); else row.Tweak.OffAction(); row.IsOn = wantOn; row.RecordChange(wantOn); }
-                catch { /* ένα αποτυχημένο tweak δεν ακυρώνει την εφαρμογή των υπολοίπων */ }
+                failed += await GearWinCore.RunAsync(CoreWork.TweakChange, () => System.Threading.Tasks.Task.Run(() =>
+                {
+                    int errors = 0;
+                    if (data.GpuPreference.HasValue && !GamingTweaksService.SetGpuPreference(exe, data.GpuPreference)) errors++;
+                    if (data.DisableFullscreenOptimizations.HasValue && !GamingTweaksService.SetFullscreenOptimizationsDisabled(exe, data.DisableFullscreenOptimizations.Value)) errors++;
+                    return errors;
+                }));
+                foreach (var row in _gameTweakRows)
+                {
+                    if (row.Tweak.Id == null || !data.GlobalTweaks.TryGetValue(row.Tweak.Id, out var wantOn)) continue;
+                    if (row.HasKnownState && wantOn == row.IsOn) continue;
+                    try { await row.ApplyRequestedAsync(wantOn); }
+                    catch (Exception ex) { failed++; System.Diagnostics.Trace.TraceWarning("Game profile: " + ex.Message); }
+                }
             }
-            TxtGameSettingsStatus.Text = LanguageService.T("Games_ProfileApplied");
+            catch (Exception ex) { failed++; System.Diagnostics.Trace.TraceWarning("Game profile: " + ex.Message); }
+            finally { BtnLoadGameProfile.IsEnabled = true; }
+            TxtGameSettingsStatus.Text = failed == 0 ? LanguageService.T("Games_ProfileApplied") :
+                (LanguageService.Current == "el" ? $"Μερική εφαρμογή προφίλ: {failed} αποτυχίες." : $"Profile partially applied: {failed} failures.");
         }
 
         // ── Παιχνίδια: GPU driver freshness hint ─────────────────────────────────────────

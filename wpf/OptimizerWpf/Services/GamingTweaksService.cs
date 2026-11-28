@@ -21,6 +21,54 @@ namespace OptimizerWpf.Services
 
         public static string BuildGpuPreferenceValue(GpuPreference p) => $"GpuPreference={(int)p};";
 
+        // Preserve the text of unrelated/unknown options, even non-boolean
+        // ones. Refuse ambiguous duplicate target fields instead of guessing.
+        internal static string? ReplaceOption(string? current, string key, string? value)
+        {
+            if (current?.Length > 16384 || current?.Contains('\0') == true)
+                throw new ArgumentException("Invalid DirectX value.");
+            var parts = (current ?? "").Split(';').ToList();
+            int found = -1;
+            for (int i = 0; i < parts.Count; i++)
+            {
+                var kv = parts[i].Split('=', 2);
+                if (!kv[0].Trim().Equals(key, StringComparison.OrdinalIgnoreCase)) continue;
+                if (kv.Length != 2 || found >= 0) throw new ArgumentException("Ambiguous DirectX option.");
+                found = i;
+            }
+            if (found >= 0)
+            {
+                if (value == null) parts.RemoveAt(found);
+                else parts[found] = key + "=" + value;
+            }
+            else if (value != null)
+            {
+                if (parts.Count > 0 && parts[^1].Length == 0) parts.Insert(parts.Count - 1, key + "=" + value);
+                else parts.Add(key + "=" + value);
+            }
+            else return current;
+            string result = string.Join(";", parts);
+            if (result.Trim(';').Length == 0) return null;
+            return result.EndsWith(";") ? result : result + ";";
+        }
+
+        private static string? ReadString(RegistryKey key, string name)
+        {
+            var raw = key.GetValue(name, null, RegistryValueOptions.DoNotExpandEnvironmentNames);
+            if (raw == null && !key.GetValueNames().Contains(name, StringComparer.OrdinalIgnoreCase)) return null;
+            if (raw is not string text || key.GetValueKind(name) != RegistryValueKind.String)
+                throw new InvalidOperationException("Unsupported gaming registry value type.");
+            return text;
+        }
+
+        private static void WriteString(RegistryKey key, string name, string? value)
+        {
+            if (ReadString(key, name) == value) return;
+            if (value == null) key.DeleteValue(name, false);
+            else key.SetValue(name, value, RegistryValueKind.String);
+            if (ReadString(key, name) != value) throw new InvalidOperationException("Gaming setting readback failed.");
+        }
+
         public static GpuPreference? ParseGpuPreference(string? value)
         {
             if (string.IsNullOrWhiteSpace(value)) return null;
@@ -61,8 +109,10 @@ namespace OptimizerWpf.Services
             {
                 using var k = Registry.CurrentUser.CreateSubKey(GpuKey);
                 if (k == null) return false;
-                if (pref == null || pref == GpuPreference.Auto) k.DeleteValue(exePath, throwOnMissingValue: false);
-                else k.SetValue(exePath, BuildGpuPreferenceValue(pref.Value), RegistryValueKind.String);
+                _ = GameProfileService.CanonicalExe(exePath);
+                if (pref.HasValue && !Enum.IsDefined(pref.Value)) return false;
+                WriteString(k, exePath, ReplaceOption(ReadString(k, exePath), "GpuPreference",
+                    pref == null || pref == GpuPreference.Auto ? null : ((int)pref.Value).ToString(System.Globalization.CultureInfo.InvariantCulture)));
                 return true;
             }
             catch { return false; }
@@ -80,9 +130,10 @@ namespace OptimizerWpf.Services
             {
                 using var k = Registry.CurrentUser.CreateSubKey(LayersKey);
                 if (k == null) return false;
-                var next = SetLayerFlag(k.GetValue(exePath) as string, DisableFso, disabled);
-                if (next == null) k.DeleteValue(exePath, throwOnMissingValue: false);
-                else k.SetValue(exePath, next, RegistryValueKind.String);
+                _ = GameProfileService.CanonicalExe(exePath);
+                var current = ReadString(k, exePath);
+                if (HasLayerFlag(current, DisableFso) == disabled) return true;
+                WriteString(k, exePath, SetLayerFlag(current, DisableFso, disabled));
                 return true;
             }
             catch { return false; }
@@ -155,9 +206,7 @@ namespace OptimizerWpf.Services
         private static void SetGlobalDx(string setting, bool on)
         {
             using var k = Registry.CurrentUser.CreateSubKey(GpuKey) ?? throw new InvalidOperationException(GpuKey);
-            var d = ParseDxGlobal(k.GetValue(DxGlobalName) as string);
-            d[setting] = on;
-            k.SetValue(DxGlobalName, BuildDxGlobal(d), RegistryValueKind.String);
+            WriteString(k, DxGlobalName, ReplaceOption(ReadString(k, DxGlobalName), setting, on ? "1" : "0"));
         }
     }
 }
