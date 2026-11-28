@@ -11,6 +11,32 @@ namespace OptimizerWpf.Views
     public partial class ClipboardHistoryWindow : Window
     {
         private List<string> _all = new();
+        private static ClipboardHistoryWindow? _active;
+
+        // All three entry points use the same dispatcher-owned popup.
+        internal static void ShowFor(Window? owner = null)
+        {
+            var dispatcher = owner?.Dispatcher ?? Application.Current?.Dispatcher;
+            if (dispatcher == null || dispatcher.HasShutdownStarted || dispatcher.HasShutdownFinished) return;
+            if (!dispatcher.CheckAccess()) { dispatcher.Invoke(() => ShowFor(owner)); return; }
+            if (_active is { IsVisible: true } current && !current._closeRequested)
+            {
+                current.Activate();
+                current.TxtSearch.Focus();
+                return;
+            }
+            if (_active != null) return;
+            var popup = new ClipboardHistoryWindow();
+            if (owner?.IsVisible == true) popup.Owner = owner;
+            _active = popup;
+            try { popup.Show(); }
+            catch (System.InvalidOperationException ex)
+            {
+                if (ReferenceEquals(_active, popup)) _active = null;
+                popup.CloseOnce();
+                System.Diagnostics.Trace.TraceWarning("Clipboard popup: " + ex.Message);
+            }
+        }
 
         public ClipboardHistoryWindow()
         {
@@ -18,7 +44,14 @@ namespace OptimizerWpf.Views
             ThemeManager.AttachWindow(this);
             ChkCaptureEnabled.Content = LanguageService.Current == "el" ? "Καταγραφή ιστορικού στο παρασκήνιο" : "Capture clipboard history in background";
             ChkCaptureEnabled.IsChecked = AppSettingsService.Current.ClipboardHistoryEnabled;
-            Closed += (_, _) => ClipboardManagerService.ReleaseInactiveHistory();
+            Closed += (_, _) =>
+            {
+                _closeRequested = true;
+                if (ReferenceEquals(_active, this)) _active = null;
+                ListHistory.ItemsSource = null;
+                _all.Clear();
+                ClipboardManagerService.ReleaseInactiveHistory();
+            };
         }
 
         private void Window_Loaded(object sender, RoutedEventArgs e)
@@ -67,7 +100,7 @@ namespace OptimizerWpf.Views
         {
             if (sender is not FrameworkElement { Tag: string text }) return;
             ClipboardManagerService.CopyToClipboard(text);
-            Close();
+            CloseOnce();
         }
 
         private void BtnRemoveItem_Click(object sender, RoutedEventArgs e)

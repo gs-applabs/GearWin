@@ -277,7 +277,7 @@ public partial class App : Application
 
         Services.ClipboardManagerService.HotkeyPressed += () =>
         {
-            main.Dispatcher.Invoke(() => new Views.ClipboardHistoryWindow().Show());
+            main.Dispatcher.Invoke(() => Views.ClipboardHistoryWindow.ShowFor());
         };
         // One preference-driven lifecycle, deferred until the initial shell can render.
         main.Dispatcher.BeginInvoke(new Action(() =>

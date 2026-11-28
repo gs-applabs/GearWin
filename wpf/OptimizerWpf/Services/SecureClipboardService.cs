@@ -14,6 +14,9 @@ namespace OptimizerWpf.Services
         private const int ClearAfterSeconds = 30;
         private static DispatcherTimer? _timer;
 
+        internal static bool ShouldClear(uint ownedSequence, uint currentSequence) =>
+            ownedSequence != 0 && ownedSequence == currentSequence;
+
         public static void SetSensitiveText(string text)
         {
             var data = new DataObject();
@@ -24,14 +27,30 @@ namespace OptimizerWpf.Services
             data.SetData("ExcludeClipboardContentFromMonitorProcessing", new System.IO.MemoryStream(BitConverter.GetBytes(1)));
             Clipboard.SetDataObject(data, copy: true);
 
+            // Track ownership by clipboard generation, never retain a password
+            // in a timer closure or clear a later copy of the same text.
             _timer?.Stop();
-            _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(ClearAfterSeconds) };
-            _timer.Tick += (_, _) =>
+            _timer = null;
+            uint sequence = ClipboardManagerService.GetClipboardSequenceNumber();
+            if (sequence == 0) return;
+            var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(ClearAfterSeconds) };
+            _timer = timer;
+            EventHandler? tick = null;
+            tick = (_, _) =>
             {
-                _timer?.Stop();
-                try { if (Clipboard.ContainsText() && Clipboard.GetText() == text) Clipboard.Clear(); } catch { /* το πρόχειρο κλειδωμένο από άλλη εφαρμογή */ }
+                timer.Stop();
+                timer.Tick -= tick;
+                if (!ReferenceEquals(_timer, timer)) return;
+                _timer = null;
+                try
+                {
+                    if (ShouldClear(sequence, ClipboardManagerService.GetClipboardSequenceNumber()))
+                        Clipboard.Clear();
+                }
+                catch { /* clipboard locked by another application */ }
             };
-            _timer.Start();
+            timer.Tick += tick;
+            timer.Start();
         }
     }
 }

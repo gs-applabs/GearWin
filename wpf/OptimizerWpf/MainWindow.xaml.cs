@@ -1069,7 +1069,7 @@ public partial class MainWindow : Window
         if (key == "Suite_Title") { Views.StartupGuideCoordinator.ShowSuite(this); return; }
         if (key == "Clipboard_Title")
         {
-            new ClipboardHistoryWindow { Owner = this }.Show();
+            ClipboardHistoryWindow.ShowFor(this);
             return;
         }
         if (window != null) window.ShowDialog();

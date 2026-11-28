@@ -14,6 +14,8 @@ namespace OptimizerWpf.Views
 
         private readonly ObservableCollection<PasswordRow> _all = new();
         private readonly ObservableCollection<PasswordRow> _filtered = new();
+        private bool _closed;
+        private bool _loadedOnce;
 
         public PasswordManagerWindow()
         {
@@ -22,10 +24,19 @@ namespace OptimizerWpf.Views
             ListCredentials.ItemsSource = _filtered;
             BtnRemoveLock.Visibility = PasswordVaultLock.IsSet ? Visibility.Visible : Visibility.Collapsed;
             // 6.9.0: με ενεργό κλείδωμα ο κωδικός ζητείται ΠΡΙΝ γίνει οποιαδήποτε σάρωση των κωδικών του browser
+            Closed += (_, _) =>
+            {
+                _closed = true;
+                ListCredentials.ItemsSource = null;
+                _filtered.Clear();
+                _all.Clear();
+            };
             Loaded += (_, _) =>
             {
+                if (_closed || _loadedOnce) return;
+                _loadedOnce = true;
                 if (PasswordVaultLock.IsSet && !AskUnlock()) { Close(); return; }
-                _ = ScanAsync();
+                if (!_closed) _ = ScanAsync();
             };
         }
 
@@ -84,19 +95,26 @@ namespace OptimizerWpf.Views
         private async Task ScanAsync()
         {
             TxtStatus.Text = LanguageService.T("PwdMgr_Scanning");
-            StatusService.SetBusy(LanguageService.T("PwdMgr_Scanning"));
-
-            var (credentials, browsers) = await PasswordVaultService.ScanAllAsync();
-
-            _all.Clear();
-            foreach (var c in credentials.OrderBy(c => c.Origin, StringComparer.OrdinalIgnoreCase))
-                _all.Add(new PasswordRow(c.Browser, c.Origin, c.Username, c.Password));
-            ApplyFilter();
-
-            StatusService.SetIdle(LanguageService.T("Ready"));
-            TxtStatus.Text = _all.Count == 0
-                ? LanguageService.T("PwdMgr_NoneFound")
-                : string.Format(LanguageService.T("PwdMgr_FoundFormat"), _all.Count, string.Join(", ", browsers.Select(b => b.Split(' ')[0]).Distinct()));
+            using var busy = StatusService.BeginScope(LanguageService.T("PwdMgr_Scanning"));
+            try
+            {
+                var (credentials, browsers) = await PasswordVaultService.ScanAllAsync();
+                if (_closed) return;
+                _all.Clear();
+                foreach (var c in credentials.OrderBy(c => c.Origin, StringComparer.OrdinalIgnoreCase))
+                    _all.Add(new PasswordRow(c.Browser, c.Origin, c.Username, c.Password));
+                ApplyFilter();
+                TxtStatus.Text = _all.Count == 0
+                    ? LanguageService.T("PwdMgr_NoneFound")
+                    : string.Format(LanguageService.T("PwdMgr_FoundFormat"), _all.Count, string.Join(", ", browsers.Select(b => b.Split(' ')[0]).Distinct()));
+                busy.End(LanguageService.T("Ready"));
+            }
+            catch (Exception)
+            {
+                // Do not publish sensitive exception details.
+                if (!_closed) TxtStatus.Text = LanguageService.T("Opt_ScanFailed");
+                busy.End(LanguageService.T("Opt_ScanFailed"));
+            }
         }
 
         private void ApplyFilter()

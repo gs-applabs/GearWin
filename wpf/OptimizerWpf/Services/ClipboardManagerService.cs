@@ -15,11 +15,9 @@ namespace OptimizerWpf.Services
     // AddClipboardFormatListener (ειδοποίηση WM_CLIPBOARDUPDATE σε κάθε αλλαγή clipboard, system-wide -
     // ΔΕΝ χρειάζεται polling).
     //
-    // ΣΗΜΕΙΩΣΗ ΕΙΛΙΚΡΙΝΕΙΑΣ (ίδιο πνεύμα με το Advanced_AutologonWarning's plaintext password note): το
-    // ιστορικό αποθηκεύεται ΤΟΠΙΚΑ σε απλό JSON αρχείο, ΧΩΡΙΣ κρυπτογράφηση - ό,τι αντιγράφετε
-    // (συμπεριλαμβανομένων τυχόν κωδικών) μπορεί να παραμείνει εκεί μεταξύ επανεκκινήσεων μέχρι να το
-    // καθαρίσετε. Ίδια συμπεριφορά με το εγγενές Win+V clipboard history των Windows - όχι ασυνήθιστο,
-    // αλλά αναφέρεται ρητά στο UI. Μόνο ΚΕΙΜΕΝΟ παρακολουθείται (όχι εικόνες/αρχεία) για απλότητα.
+    // History is stored locally with current-user DPAPI; older plaintext files
+    // may still exist until replaced or cleared. Unmarked sensitive text can
+    // still enter history. Capture is opt-in and limited to text.
     public static class ClipboardManagerService
     {
         private const int WM_HOTKEY = 0x0312;
@@ -38,6 +36,7 @@ namespace OptimizerWpf.Services
         [DllImport("user32.dll")] private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
         [DllImport("user32.dll")] private static extern bool AddClipboardFormatListener(IntPtr hwnd);
         [DllImport("user32.dll")] private static extern bool RemoveClipboardFormatListener(IntPtr hwnd);
+        [DllImport("user32.dll")] internal static extern uint GetClipboardSequenceNumber();
 
         private static readonly string StorePath = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "OptimizerWpf", "ClipboardHistory.json");
@@ -124,14 +123,16 @@ namespace OptimizerWpf.Services
         {
             try
             {
-                if (!Clipboard.ContainsText()) return;
-                // ΙΔΙΩΤΙΚΟΤΗΤΑ: οι password managers (και το δικό μας Password Manager/Wi-Fi viewer) σημαίνουν ό,τι
-                // αντιγράφουν με τα επίσημα formats "ExcludeClipboardContentFromMonitorProcessing" /
-                // "CanIncludeInClipboardHistory"=0 ώστε να ΜΗΝ καταγράφεται. Το ιστορικό μας τα αγνοούσε και έγραφε
-                // κωδικούς σε απλό κείμενο στο δίσκο (ClipboardHistory.json). Τώρα τα σέβεται.
-                if (IsMarkedSensitive()) return;
-                var text = Clipboard.GetText();
-                if (string.IsNullOrWhiteSpace(text) || text.Length > MaxTextLength || text == _lastSeen) return;
+                // Read marker and text from the same clipboard object and reject
+                // changes while reading. Unknown/failed privacy metadata is not
+                // permission to retain a copy.
+                uint sequence = GetClipboardSequenceNumber();
+                if (sequence == 0) return;
+                var data = Clipboard.GetDataObject();
+                if (data == null || !MayCapture(data)) return;
+                var text = data.GetData(DataFormats.UnicodeText) as string;
+                if (GetClipboardSequenceNumber() != sequence ||
+                    string.IsNullOrWhiteSpace(text) || text.Length > MaxTextLength || text == _lastSeen) return;
                 _lastSeen = text;
 
                 lock (Lock)
@@ -147,16 +148,26 @@ namespace OptimizerWpf.Services
             catch { }
         }
 
-        private static bool IsMarkedSensitive()
+        internal static bool MayCapture(IDataObject data)
         {
             try
             {
-                if (Clipboard.ContainsData("ExcludeClipboardContentFromMonitorProcessing")) return true;
-                if (Clipboard.GetData("CanIncludeInClipboardHistory") is System.IO.MemoryStream ms && ms.Length >= 4)
-                    return BitConverter.ToInt32(ms.ToArray(), 0) == 0;
+                if (data.GetDataPresent("ExcludeClipboardContentFromMonitorProcessing", false)) return false;
+                foreach (string marker in new[] { "CanIncludeInClipboardHistory", "CanUploadToCloudClipboard" })
+                {
+                    if (!data.GetDataPresent(marker, false)) continue;
+                    var value = data.GetData(marker, false);
+                    byte[]? bytes = value switch
+                    {
+                        MemoryStream stream when stream.Length == sizeof(int) => stream.ToArray(),
+                        byte[] raw when raw.Length == sizeof(int) => raw,
+                        _ => null
+                    };
+                    if (bytes == null || BitConverter.ToInt32(bytes, 0) != 1) return false;
+                }
+                return data.GetDataPresent(DataFormats.UnicodeText);
             }
-            catch { }
-            return false;
+            catch { return false; }
         }
 
         public static void CopyToClipboard(string text)

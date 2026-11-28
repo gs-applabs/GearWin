@@ -77,7 +77,7 @@ namespace OptimizerWpf.Services
             // ΝΕΟ - ρητό αίτημα χρήστη: "θα είναι χρηστικό εκεί ή να έχει δικό του ξεχωριστό μενού" -
             // και τα δύο: κύρια πρόσβαση μέσω global hotkey (Win+Shift+V, βλ. App.xaml.cs), ΚΑΙ εδώ ως
             // εναλλακτική για όποιον προτιμά το ποντίκι.
-            _clipboardHistoryItem = new ToolStripMenuItem(LanguageService.T("Clipboard_Title"), null, (_, _) => mainWindow.Dispatcher.Invoke(() => new Views.ClipboardHistoryWindow().Show()));
+            _clipboardHistoryItem = new ToolStripMenuItem(LanguageService.T("Clipboard_Title"), null, (_, _) => mainWindow.Dispatcher.Invoke(() => Views.ClipboardHistoryWindow.ShowFor()));
             menu.Items.Add(_clipboardHistoryItem);
             _guideItem = new ToolStripMenuItem(LanguageService.T("Guide_MenuItem"), null, (_, _) => ShowFromTray(m => Views.StartupGuideCoordinator.ShowWelcome(m)));
             menu.Items.Add(_guideItem);

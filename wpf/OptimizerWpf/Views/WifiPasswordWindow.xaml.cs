@@ -13,30 +13,49 @@ namespace OptimizerWpf.Views
         private void NestedScroll_PreviewMouseWheel(object sender, System.Windows.Input.MouseWheelEventArgs e) => NestedScrollHelper.Forward(sender, e);
 
         private readonly ObservableCollection<WifiPasswordRow> _rows = new();
+        private bool _closed;
+        private bool _loadedOnce;
 
         public WifiPasswordWindow()
         {
             InitializeComponent();
             ThemeManager.AttachWindow(this);
             ListWifiProfiles.ItemsSource = _rows;
-            _ = ScanAsync();
+            Closed += (_, _) =>
+            {
+                _closed = true;
+                ListWifiProfiles.ItemsSource = null;
+                _rows.Clear();
+            };
+            Loaded += (_, _) =>
+            {
+                if (_closed || _loadedOnce) return;
+                _loadedOnce = true;
+                _ = ScanAsync();
+            };
         }
 
         private async Task ScanAsync()
         {
             TxtStatus.Text = LanguageService.T("WifiPwd_Scanning");
-            StatusService.SetBusy(LanguageService.T("WifiPwd_Scanning"));
-
-            var profiles = await WifiPasswordService.GetProfilesAsync();
-
-            _rows.Clear();
-            foreach (var p in profiles.OrderBy(p => p.Name, StringComparer.OrdinalIgnoreCase))
-                _rows.Add(new WifiPasswordRow(p.Name, p.Password));
-
-            StatusService.SetIdle(LanguageService.T("Ready"));
-            TxtStatus.Text = _rows.Count == 0
-                ? LanguageService.T("WifiPwd_NoneFound")
-                : string.Format(LanguageService.T("WifiPwd_FoundFormat"), _rows.Count);
+            using var busy = StatusService.BeginScope(LanguageService.T("WifiPwd_Scanning"));
+            try
+            {
+                var profiles = await WifiPasswordService.GetProfilesAsync();
+                if (_closed) return;
+                _rows.Clear();
+                foreach (var p in profiles.OrderBy(p => p.Name, StringComparer.OrdinalIgnoreCase))
+                    _rows.Add(new WifiPasswordRow(p.Name, p.Password));
+                TxtStatus.Text = _rows.Count == 0
+                    ? LanguageService.T("WifiPwd_NoneFound")
+                    : string.Format(LanguageService.T("WifiPwd_FoundFormat"), _rows.Count);
+                busy.End(LanguageService.T("Ready"));
+            }
+            catch (Exception)
+            {
+                if (!_closed) TxtStatus.Text = LanguageService.T("Opt_ScanFailed");
+                busy.End(LanguageService.T("Opt_ScanFailed"));
+            }
         }
 
         private void BtnToggleReveal_Click(object sender, RoutedEventArgs e)
