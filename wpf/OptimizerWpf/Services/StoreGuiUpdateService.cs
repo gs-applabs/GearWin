@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -7,157 +8,173 @@ using System.Windows.Automation;
 
 namespace OptimizerWpf.Services
 {
-    public enum StoreUpdateOutcome { Updated, AlreadyCurrent, Failed, TimedOut }
+    public enum StoreUpdateOutcome { Updated, AlreadyCurrent, Failed, TimedOut, Unconfirmed }
 
-    // Port του Invoke-WmtStoreGuiUpdate / Close-WmtStoreGui του WMT 6.7 (reference/WMT-GUI.ps1 ~39237-39584).
-    // Το "store.exe install/updates" και το "winget upgrade --source msstore" δεν ενημερώνουν αξιόπιστα Store
-    // apps (για αυτό το GearWin πριν απλώς άνοιγε το Store και δεν επιβεβαίωνε τίποτα). Το WMT κάνει αυτό που
-    // θα έκανε ο χρήστης: ανοίγει Downloads & updates, βρίσκει τη γραμμή της εφαρμογής (AutomationId
-    // "ProductTitle"), πατά το "ActionButton" της, παρακολουθεί τη γραμμή μέχρι να ολοκληρωθεί.
-    // ΠΡΟΣΑΡΜΟΓΗ: το WMT ταιριάζει αγγλικά κείμενα κατάστασης (", Update available") - εδώ προστέθηκαν και τα
-    // ελληνικά (η γλώσσα του χρήστη), και αν το κείμενο κατάστασης δεν αναγνωρίζεται (άλλη γλώσσα) η γραμμή
-    // κρίνεται από αλλαγή ονόματος/εξαφάνιση, όχι από το κείμενο. Αποτέλεσμα που δεν επιβεβαιώνεται
-    // επιστρέφεται ως TimedOut (ο caller το δείχνει ως "ανοίχτηκε στο Store"), ΠΟΤΕ ως ψεύτικη επιτυχία.
+    // Interactive fallback only. Never invoke an ambiguous row, a generic
+    // enabled button, or an update-all action. Missing rows are not proof.
     public static class StoreGuiUpdateService
     {
         private const string StoreUri = "ms-windows-store://downloadsandupdates";
         private const RegexOptions Opt = RegexOptions.IgnoreCase | RegexOptions.CultureInvariant;
+        private static readonly Regex UpdateAvailable = new(@",\s*(Update available|Διαθέσιμη ενημέρωση)(?:\s*[,.;]|\s*$)", Opt);
+        private static readonly Regex Active = new(@",\s*(Downloading|Installing|Pending|Queued|Starting|Acquiring|Processing|Updating|Downloaded|Λήψη|Γίνεται λήψη|Εγκατάσταση|Γίνεται εγκατάσταση|Σε αναμονή|Σε ουρά|Εκκίνηση|Επεξεργασία|Ενημέρωση σε εξέλιξη|Γίνεται ενημέρωση)(?:\b|\s|$)", Opt);
+        private static readonly Regex Finished = new(@",\s*(Modified moments ago|Updated|Installed|Ενημερώθηκε|Εγκαταστάθηκε|Τροποποιήθηκε)(?:\b|\s|$)", Opt);
 
-        private static readonly Regex UpdateAvailable = new(@",\s*(Update available|Διαθέσιμη ενημέρωση)", Opt);
-        private static readonly Regex Active = new(@",\s*(Downloading|Installing|Pending|Queued|Starting|Acquiring|Processing|Updating|Downloaded|Λήψη|Γίνεται λήψη|Εγκατάσταση|Γίνεται εγκατάσταση|Σε αναμονή|Σε ουρά|Εκκίνηση|Επεξεργασία|Ενημέρωση σε εξέλιξη|Γίνεται ενημέρωση)", Opt);
-        private static readonly Regex Finished = new(@",\s*(Modified moments ago|Updated|Installed|Ενημερώθηκε|Εγκαταστάθηκε|Τροποποιήθηκε)", Opt);
+        internal enum RowState { Unknown, Available, Active, Finished }
+        internal static RowState ClassifyRow(string name)
+        {
+            if (UpdateAvailable.IsMatch(name)) return RowState.Available;
+            if (Active.IsMatch(name)) return RowState.Active;
+            if (Finished.IsMatch(name)) return RowState.Finished;
+            return RowState.Unknown;
+        }
+
+        internal static int SelectUniqueTitleIndex(IReadOnlyList<string> titles, string wanted)
+        {
+            if (string.IsNullOrWhiteSpace(wanted)) return -1;
+            int match = -1;
+            for (int i = 0; i < titles.Count; i++)
+            {
+                if (!string.Equals(titles[i].Trim(), wanted.Trim(), StringComparison.OrdinalIgnoreCase)) continue;
+                if (match >= 0) return -1;
+                match = i;
+            }
+            return match;
+        }
+
+        internal static bool ConfirmedTransition(RowState before, RowState after, string previous, string current) =>
+            before is RowState.Available or RowState.Active && after == RowState.Finished &&
+            !string.Equals(previous, current, StringComparison.Ordinal);
 
         public static Task<StoreUpdateOutcome> UpdateAsync(string packageName, Action<string>? log, CancellationToken ct, int timeoutSeconds = 300) =>
-            Task.Run(() => UpdateBlocking(packageName, log, ct, Math.Max(30, timeoutSeconds)), ct);
+            Task.Run(() => UpdateBlocking(packageName, log, ct, Math.Clamp(timeoutSeconds, 30, 600)), ct);
 
         private static AutomationElement? FindStoreWindow() =>
-            AutomationElement.RootElement
-                .FindAll(TreeScope.Children, Condition.TrueCondition)
-                .Cast<AutomationElement>()
-                .FirstOrDefault(w => w.Current.Name == "Microsoft Store");
-
-        private static bool NameMatches(string title, string wanted) =>
-            title.Equals(wanted, StringComparison.OrdinalIgnoreCase)
-            || (wanted.Length >= 4 && (title.Contains(wanted, StringComparison.OrdinalIgnoreCase) || wanted.Contains(title, StringComparison.OrdinalIgnoreCase)));
+            AutomationElement.RootElement.FindAll(TreeScope.Children, Condition.TrueCondition)
+                .Cast<AutomationElement>().FirstOrDefault(w => w.Current.Name == "Microsoft Store");
 
         private static AutomationElement? FindRow(AutomationElement storeWindow, string wanted)
         {
             var titleCond = new PropertyCondition(AutomationElement.AutomationIdProperty, "ProductTitle");
             var all = storeWindow.FindAll(TreeScope.Descendants, titleCond).Cast<AutomationElement>().ToList();
-            var title = all.FirstOrDefault(t => t.Current.Name.Equals(wanted, StringComparison.OrdinalIgnoreCase))
-                        ?? all.FirstOrDefault(t => NameMatches(t.Current.Name, wanted));
-            if (title == null) return null;
-            try
+            int index = SelectUniqueTitleIndex(all.Select(t => t.Current.Name).ToArray(), wanted);
+            if (index < 0) return null;
+            // Accept the nearest custom ancestor only if it represents one
+            // product and one action, not the entire list or a toolbar.
+            var parent = all[index];
+            for (int depth = 0; depth < 4; depth++)
             {
-                var row = TreeWalker.ControlViewWalker.GetParent(title);
-                return row != null && row.Current.ControlType == ControlType.Custom ? row : null;
+                parent = TreeWalker.ControlViewWalker.GetParent(parent);
+                if (parent == null || parent.Equals(storeWindow)) return null;
+                if (parent.Current.ControlType != ControlType.Custom) continue;
+                var titles = parent.FindAll(TreeScope.Descendants, titleCond);
+                if (titles.Count != 1) return null;
+                var actions = parent.FindAll(TreeScope.Descendants, new PropertyCondition(AutomationElement.AutomationIdProperty, "ActionButton"));
+                if (actions.Count == 1) return parent;
+                if (actions.Count > 1) return null;
             }
-            catch { return null; }
+            return null;
+        }
+
+        private static void Wait(CancellationToken ct, int milliseconds)
+        {
+            if (ct.WaitHandle.WaitOne(milliseconds)) ct.ThrowIfCancellationRequested();
         }
 
         private static StoreUpdateOutcome UpdateBlocking(string wanted, Action<string>? log, CancellationToken ct, int timeoutSeconds)
         {
             wanted = (wanted ?? "").Trim();
             if (wanted.Length == 0) return StoreUpdateOutcome.Failed;
-
-            try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(StoreUri) { UseShellExecute = true }); }
-            catch (Exception ex) { log?.Invoke($"Store open failed: {ex.Message}"); return StoreUpdateOutcome.Failed; }
-
-            var started = DateTime.UtcNow;
-            var deadline = started.AddSeconds(timeoutSeconds);
-            DateTime? windowMissingSince = null;
-            var invoked = false;
-            var checkInvoked = false;
-            string preInvokeName = "";
-            DateTime invokedAt = DateTime.MinValue;
-            var lastStatus = "";
-            var seenRowAfterInvoke = false;
-
-            while (DateTime.UtcNow < deadline)
+            ct.ThrowIfCancellationRequested();
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            bool navigated = false, started = false, observedActive = false;
+            TimeSpan invokedAt = TimeSpan.Zero;
+            string initialName = "", lastStatus = "";
+            RowState initialState = RowState.Unknown;
+            while (clock.Elapsed < TimeSpan.FromSeconds(timeoutSeconds))
             {
                 ct.ThrowIfCancellationRequested();
                 try
                 {
                     var win = FindStoreWindow();
-                    if (win == null)
+                    var row = win == null ? null : FindRow(win, wanted);
+                    if (!started && row == null && !navigated)
                     {
-                        windowMissingSince ??= DateTime.UtcNow;
-                        if ((DateTime.UtcNow - windowMissingSince.Value).TotalSeconds >= 20) { log?.Invoke("Store window unavailable"); return StoreUpdateOutcome.Failed; }
-                        Thread.Sleep(500);
-                        continue;
+                        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(StoreUri) { UseShellExecute = true })?.Dispose();
+                        navigated = true;
+                        log?.Invoke("Store: locating selected update");
                     }
-                    windowMissingSince = null;
-
-                    var row = FindRow(win, wanted);
-                    var rowName = row?.Current.Name ?? "";
-                    var actionBtn = row?.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.AutomationIdProperty, "ActionButton"));
-                    var actionEnabled = actionBtn != null && actionBtn.Current.IsEnabled;
-
-                    var updateAvail = row != null && UpdateAvailable.IsMatch(rowName);
-                    var active = row != null && !updateAvail && Active.IsMatch(rowName);
-                    var finished = row != null && Finished.IsMatch(rowName);
-
-                    if (!invoked)
+                    if (row != null)
                     {
-                        if (active) { invoked = true; invokedAt = DateTime.UtcNow; preInvokeName = rowName; log?.Invoke($"{wanted}: already updating"); }
-                        else if (row != null && !finished && (updateAvail || actionEnabled) && actionBtn != null && actionEnabled)
+                        string rowName = row.Current.Name;
+                        var state = ClassifyRow(rowName);
+                        if (!started && state == RowState.Active)
                         {
-                            // Σε μη αναγνωρισμένη γλώσσα το κείμενο κατάστασης δεν ταιριάζει - η παρουσία ενεργού ActionButton
-                            // σε γραμμή που δεν είναι ενεργή/τελειωμένη θεωρείται "διαθέσιμη ενημέρωση" (όπως θα πατούσε ο χρήστης).
-                            preInvokeName = rowName;
-                            ((InvokePattern)actionBtn.GetCurrentPattern(InvokePattern.Pattern)).Invoke();
-                            invoked = true; invokedAt = DateTime.UtcNow;
-                            log?.Invoke($"{wanted}: update button invoked");
-                            Thread.Sleep(1000);
-                            continue;
+                            started = observedActive = true;
+                            invokedAt = clock.Elapsed;
+                            initialName = rowName;
+                            initialState = state;
                         }
-                        else if (!checkInvoked && (DateTime.UtcNow - started).TotalSeconds >= 2)
+                        else if (!started && state == RowState.Available)
                         {
-                            var check = win.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.AutomationIdProperty, "CheckForUpdatesButton"));
-                            if (check != null && check.Current.IsEnabled)
-                                ((InvokePattern)check.GetCurrentPattern(InvokePattern.Pattern)).Invoke();
-                            checkInvoked = true;
+                            var action = row.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.AutomationIdProperty, "ActionButton"));
+                            if (action != null && action.Current.IsEnabled &&
+                                action.TryGetCurrentPattern(InvokePattern.Pattern, out object pattern))
+                            {
+                                ct.ThrowIfCancellationRequested();
+                                initialName = rowName;
+                                initialState = state;
+                                ((InvokePattern)pattern).Invoke();
+                                started = true;
+                                invokedAt = clock.Elapsed;
+                                log?.Invoke("Store: selected update requested");
+                            }
                         }
-                        else if (checkInvoked && (DateTime.UtcNow - started).TotalSeconds >= 15 && (row == null || finished))
+                        else if (started)
                         {
-                            log?.Invoke($"{wanted}: no update button found - already current");
-                            return StoreUpdateOutcome.AlreadyCurrent;
+                            if (state == RowState.Active) observedActive = true;
+                            if (ConfirmedTransition(initialState, state, initialName, rowName))
+                                return StoreUpdateOutcome.Updated;
+                            if (!observedActive && state == RowState.Available && rowName == initialName &&
+                                clock.Elapsed - invokedAt >= TimeSpan.FromSeconds(30))
+                                return StoreUpdateOutcome.Unconfirmed;
+                        }
+                        if (started && rowName != lastStatus)
+                        {
+                            lastStatus = rowName;
+                            log?.Invoke(rowName);
                         }
                     }
-                    else
-                    {
-                        if (row != null) seenRowAfterInvoke = true;
-                        if (active && rowName != lastStatus) { lastStatus = rowName; log?.Invoke(rowName); }
-
-                        if (finished) return StoreUpdateOutcome.Updated;
-                        // Η γραμμή εξαφανίστηκε από τη λίστα ενημερώσεων μετά το πάτημα = ενημερώθηκε.
-                        if (row == null && seenRowAfterInvoke && (DateTime.UtcNow - invokedAt).TotalSeconds >= 2) return StoreUpdateOutcome.Updated;
-                        if (!active && !updateAvail && (DateTime.UtcNow - invokedAt).TotalSeconds >= 2 && rowName != preInvokeName && !actionEnabled)
-                            return StoreUpdateOutcome.Updated;
-                        // Το κουμπί πατήθηκε αλλά τίποτα δεν άλλαξε για 20s: το Store απέρριψε/αγνόησε το πάτημα.
-                        if (row != null && rowName == preInvokeName && actionEnabled && (DateTime.UtcNow - invokedAt).TotalSeconds >= 20)
-                            return StoreUpdateOutcome.Failed;
-                    }
+                    // Store may be loading, virtualizing rows, or displaying a
+                    // different page. Absence, disappearance and old "Installed"
+                    // labels do not establish an update.
+                    if (!started && clock.Elapsed >= TimeSpan.FromSeconds(40))
+                        return StoreUpdateOutcome.Unconfirmed;
                 }
                 catch (OperationCanceledException) { throw; }
-                catch (Exception ex) { log?.Invoke($"UIA: {ex.Message}"); }
-
-                Thread.Sleep(750);
+                catch (Exception ex)
+                {
+                    if (lastStatus != ex.Message) { lastStatus = ex.Message; log?.Invoke("Store UI: " + ex.Message); }
+                    if (!started && clock.Elapsed >= TimeSpan.FromSeconds(40))
+                        return StoreUpdateOutcome.Unconfirmed;
+                }
+                Wait(ct, 750);
             }
             return StoreUpdateOutcome.TimedOut;
         }
 
-        // Close-WmtStoreGui: κλείνει το παράθυρο του Store (AutomationId "Close") αφού τελειώσουν όλες οι ενημερώσεις.
+        // Retained for compatibility; selected update flow no longer closes a
+        // window that may already belong to the user.
         public static void CloseStoreWindow()
         {
             try
             {
                 var win = FindStoreWindow();
                 var close = win?.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.AutomationIdProperty, "Close"));
-                if (close != null && close.Current.IsEnabled)
-                    ((InvokePattern)close.GetCurrentPattern(InvokePattern.Pattern)).Invoke();
+                if (close != null && close.Current.IsEnabled && close.TryGetCurrentPattern(InvokePattern.Pattern, out object pattern))
+                    ((InvokePattern)pattern).Invoke();
             }
-            catch { /* best-effort όπως στο WMT */ }
+            catch { }
         }
     }
 }

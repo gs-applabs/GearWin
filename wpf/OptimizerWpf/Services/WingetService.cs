@@ -48,22 +48,16 @@ namespace OptimizerWpf.Services
 
             var (wingetOutput, _, wingetStarted) = await RunToolAsync("winget.exe",
                 "upgrade --include-unknown --accept-source-agreements --disable-interactivity");
-            if (!wingetStarted)
-            {
-                // Ίδιο με το Get-Command winget.exe έλεγχο του ps1 - χωρίς winget, δεν έχει νόημα να
-                // προσπαθήσουμε τίποτα άλλο (τα άλλα 10 providers είναι ανεξάρτητα του winget, αλλά
-                // αυτό εδώ διατηρεί το ίδιο honest μήνυμα "δεν βρέθηκε" ως το πρωτεύον αποτέλεσμα).
-                return results;
-            }
-
-            foreach (var u in ParseWingetTable(wingetOutput))
-                if (seenIds.Add(u.Id)) results.Add(u);
+            // A missing WinGet must not suppress the independent Store and other providers.
+            if (wingetStarted)
+                foreach (var u in ParseWingetTable(wingetOutput))
+                    if (seenIds.Add($"{u.Source}:{u.Id}")) results.Add(u);
 
             // Microsoft Store CLI ("store updates") - αντικατέστησε το παλιό "winget upgrade --source
             // msstore" στο ps1 (v1.9.6): τεκμηριωμένα πιο αξιόπιστο, το ΙΔΙΟ εργαλείο που χρησιμοποιεί
             // το Store εσωτερικά.
             ActiveScanToken.Value.ThrowIfCancellationRequested();
-            foreach (var u in await ScanMsStoreAsync())
+            foreach (var u in AdditionalStoreRows(results, await ScanMsStoreAsync()))
             {
                 if (seenIds.Add($"{u.Source}:{u.Id}")) results.Add(u);
             }
@@ -174,10 +168,13 @@ namespace OptimizerWpf.Services
         public static Task<(bool Started, int ExitCode, string Output)> UpgradeAllSilentAsync() =>
             GearWinCore.RunAsync(CoreWork.SoftwareChange, UpgradeAllCoreAsync, CorePriority.Background);
 
+        // Store UI requires an interactive session; unattended upgrades must not select it.
+        internal const string NightlyWingetArguments = "upgrade --all --source winget --silent --accept-source-agreements --accept-package-agreements --disable-interactivity";
+
         private static async Task<(bool Started, int ExitCode, string Output)> UpgradeAllCoreAsync()
         {
             var (output, exitCode, started) = await RunToolAsync("winget.exe",
-                "upgrade --all --silent --accept-source-agreements --accept-package-agreements --disable-interactivity", TimeSpan.FromMinutes(90));
+                NightlyWingetArguments, TimeSpan.FromMinutes(90));
             return (started, exitCode, output);
         }
 
@@ -189,6 +186,14 @@ namespace OptimizerWpf.Services
         public static async Task<(bool Ok, string? Reason)> UpgradeDetailedAsync(string id, string source)
         {
             if (!IsSafePackageId(id, source)) return (false, "Unsafe package id rejected");
+            if (string.Equals(source, "msstore", StringComparison.OrdinalIgnoreCase))
+            {
+                // Legacy entry point has no reliable display title. Never treat a URI launch as success.
+                var outcome = await UpgradeStoreAsync(new WingetUpdate("", id, "", "", "msstore"),
+                    CancellationToken.None, allowUiFallback: false);
+                return (outcome is StoreUpdateOutcome.Updated or StoreUpdateOutcome.AlreadyCurrent,
+                    outcome is StoreUpdateOutcome.Updated or StoreUpdateOutcome.AlreadyCurrent ? null : "Store update not verified: " + outcome);
+            }
             if (source == "windowsupdate")
             {
                 var (ok, reboot, error) = await WindowsUpdateService.InstallAsync(id);
@@ -328,7 +333,7 @@ namespace OptimizerWpf.Services
         private static (string FileName, string Arguments) GetUpgradeCommandForSource(string source, string id) => source switch
         {
             "winget" => ("winget.exe", $"upgrade --id \"{id}\" --exact --silent --accept-source-agreements --accept-package-agreements --disable-interactivity"),
-            "msstore" => ("cmd.exe", "/c start ms-windows-store://downloadsandupdates"),
+            "msstore" => throw new InvalidOperationException("Use the verified Store update path."),
             "pip" => ("python.exe", $"-m pip --disable-pip-version-check --no-input install --upgrade \"{id}\""),
             "npm (global)" => ("cmd.exe", $"/c npm install -g \"{id}@latest\""),
             "npm" => ("cmd.exe", $"/c npm update \"{id}\""),
@@ -342,6 +347,92 @@ namespace OptimizerWpf.Services
             "composer" => ("cmd.exe", $"/c composer global update \"{id}\""),
             _ => ("winget.exe", $"upgrade --id \"{id}\" --exact --silent --accept-source-agreements --accept-package-agreements --disable-interactivity"),
         };
+
+        // Store CLI rows currently use the title as a synthetic ID. Only a
+        // distinct, syntactically valid Store product ID may drive WinGet.
+        internal static bool HasStoreProductId(WingetUpdate update) =>
+            string.Equals(update.Source, "msstore", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(update.Id, update.Name, StringComparison.OrdinalIgnoreCase) &&
+            Regex.IsMatch(update.Id, @"\A[A-Za-z0-9]{12,14}\z", RegexOptions.CultureInvariant);
+
+        internal static IEnumerable<WingetUpdate> AdditionalStoreRows(IEnumerable<WingetUpdate> existing, IEnumerable<WingetUpdate> discovered)
+        {
+            var names = existing.Where(u => string.Equals(u.Source, "msstore", StringComparison.OrdinalIgnoreCase))
+                .Select(u => u.Name.Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            foreach (var row in discovered)
+                if (names.Add(row.Name.Trim())) yield return row;
+        }
+
+        internal static string StoreUpgradeArguments(WingetUpdate update)
+        {
+            if (!HasStoreProductId(update)) throw new ArgumentException("Expected an exact Store product ID.");
+            return $"upgrade --id \"{update.Id}\" --exact --source msstore --silent --accept-source-agreements --accept-package-agreements --disable-interactivity";
+        }
+
+        internal static bool StoreVersionAtLeast(string? installed, string? expected) =>
+            Version.TryParse(installed, out var current) && Version.TryParse(expected, out var target) && current >= target;
+
+        internal static bool StoreVersionAdvanced(string? before, string? after) =>
+            Version.TryParse(before, out var oldVersion) && Version.TryParse(after, out var newVersion) && newVersion > oldVersion;
+
+        internal static string? ReadExactStoreVersion(string output, string productId)
+        {
+            var matches = ParseWingetTable(output).Where(row => string.Equals(row.Id, productId, StringComparison.OrdinalIgnoreCase))
+                .Take(2).ToArray();
+            return matches.Length == 1 && Version.TryParse(matches[0].CurrentVersion, out _) ? matches[0].CurrentVersion : null;
+        }
+
+        private static async Task<string?> ReadStoreVersionAsync(string id)
+        {
+            var (output, exitCode, started) = await RunToolAsync("winget.exe",
+                $"list --id \"{id}\" --exact --source msstore --accept-source-agreements --disable-interactivity",
+                TimeSpan.FromSeconds(30));
+            return started && exitCode == 0 ? ReadExactStoreVersion(output, id) : null;
+        }
+
+        // One core mutation lease for both the direct route and the interactive
+        // fallback. Do not retry an uncertain accepted/timeout operation.
+        internal static async Task<StoreUpdateOutcome> UpgradeStoreAsync(WingetUpdate update, CancellationToken ct,
+            bool allowUiFallback = true, Action<string>? log = null)
+        {
+            if (!IsSafePackageId(update.Id, "msstore")) return StoreUpdateOutcome.Failed;
+            using var lease = await GearWinCore.EnterAsync(CoreWork.SoftwareChange, ct: ct);
+            var prior = ActiveScanToken.Value;
+            ActiveScanToken.Value = ct;
+            try
+            {
+                if (HasStoreProductId(update))
+                {
+                    var before = await ReadStoreVersionAsync(update.Id);
+                    if (StoreVersionAtLeast(before, update.AvailableVersion)) return StoreUpdateOutcome.AlreadyCurrent;
+                    ct.ThrowIfCancellationRequested();
+                    log?.Invoke("Microsoft Store: exact WinGet upgrade");
+                    // Once the installer has started, allow it to finish rather than
+                    // killing its process tree on a user cancellation request.
+                    (string Output, int ExitCode, bool Started) attempt;
+                    ActiveScanToken.Value = CancellationToken.None;
+                    try { attempt = await RunToolAsync("winget.exe", StoreUpgradeArguments(update), TimeSpan.FromMinutes(5)); }
+                    finally { ActiveScanToken.Value = ct; }
+                    ct.ThrowIfCancellationRequested();
+                    if (attempt.Started)
+                    {
+                        var after = await ReadStoreVersionAsync(update.Id);
+                        if (StoreVersionAtLeast(after, update.AvailableVersion) || StoreVersionAdvanced(before, after))
+                            return StoreUpdateOutcome.Updated;
+                        if (attempt.ExitCode == 0 || attempt.ExitCode == -1)
+                            return StoreUpdateOutcome.Unconfirmed;
+                        // An explicit error may still have queued work; the UI
+                        // fallback may observe an active row but may only invoke
+                        // a uniquely identified, explicit available update.
+                        log?.Invoke("WinGet Store upgrade failed: " + (DescribeExitCode(attempt.ExitCode) ?? attempt.ExitCode.ToString()));
+                    }
+                }
+                if (!allowUiFallback || string.IsNullOrWhiteSpace(update.Name))
+                    return StoreUpdateOutcome.Unconfirmed;
+                return await StoreGuiUpdateService.UpdateAsync(update.Name, log, ct);
+            }
+            finally { ActiveScanToken.Value = prior; }
+        }
 
         // ===== Microsoft Store CLI ("store updates") =====
         private static async Task<List<WingetUpdate>> ScanMsStoreAsync()
@@ -365,23 +456,28 @@ namespace OptimizerWpf.Services
 
             // Ανάγνωση stdout/stderr ΤΑΥΤΟΧΡΟΝΑ με την αναμονή: πριν περιμέναμε πρώτα το exit και διαβάζαμε μετά —
             // αν η έξοδος ξεπερνούσε το buffer του pipe το store.exe μπλόκαρε και το scan κατέληγε σε timeout.
+            using var ownedProcess = process;
+            if (process == null) return list;
             Task<string> stdoutTask, stderrTask;
             try
             {
-                stdoutTask = process!.StandardOutput.ReadToEndAsync();
-                stderrTask = process.StandardError.ReadToEndAsync();
-                try { await process.StandardInput.WriteLineAsync("n"); process.StandardInput.Close(); } catch { }
-                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
-                await process.WaitForExitAsync(cts.Token);
+                using var cts = CancellationTokenSource.CreateLinkedTokenSource(ActiveScanToken.Value);
+                cts.CancelAfter(TimeSpan.FromSeconds(60));
+                stdoutTask = process.StandardOutput.ReadToEndAsync(cts.Token);
+                stderrTask = process.StandardError.ReadToEndAsync(cts.Token);
+                try { await process.StandardInput.WriteLineAsync("n".AsMemory(), cts.Token); process.StandardInput.Close(); }
+                catch (IOException) { }
+                await Task.WhenAll(stdoutTask, stderrTask, process.WaitForExitAsync(cts.Token));
+                if (process.ExitCode != 0) return list;
             }
             catch (OperationCanceledException)
             {
-                try { process!.Kill(true); } catch { }
+                try { process.Kill(true); } catch { }
+                ActiveScanToken.Value.ThrowIfCancellationRequested();
                 return list;
             }
 
             var raw = await stdoutTask;
-            _ = stderrTask;
             var clean = Regex.Replace(raw, @"\x1B\[[0-9;]*[a-zA-Z]", "");
             const char vertical = '│';
             string[]? headers = null;

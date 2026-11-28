@@ -558,9 +558,10 @@ namespace OptimizerWpf.Views
 
         private void BtnCheckMsStore_Click(object sender, RoutedEventArgs e)
         {
-            StatusService.SetBusy(LanguageService.T("Opt_TriggeringMsStoreScan"));
-            WingetService.TriggerMsStoreUpdateScanAndOpen();
-            StatusService.SetIdle(LanguageService.T("Ready"));
+            // Use the ordinary cancellable in-app scan; do not silently open
+            // the Store or initiate a separate bulk update.
+            if (AppScan.Busy || DriverScan.Busy) return;
+            BtnScanWinget_Click(sender, e);
         }
 
         private void ChkSelectAll_Click(object sender, RoutedEventArgs e)
@@ -620,7 +621,10 @@ namespace OptimizerWpf.Views
             void Ok(WingetUpdateRow r, string n) { succeeded.Add(n); (IsWindowsSource(r.Update) ? winOk : appOk).Add(n); }
             void Fail(WingetUpdateRow r, string n) { failed.Add(n); (IsWindowsSource(r.Update) ? winFail : appFail).Add(n); }
             var openedInStore = new List<string>();
-            var triggeredStoreOnce = false;
+            // Snapshot full list: ambiguous display names must not drive UI automation.
+            var ambiguousStoreNames = _updates.Where(r => string.Equals(r.Update.Source, "msstore", StringComparison.OrdinalIgnoreCase))
+                .GroupBy(r => r.Update.Name.Trim(), StringComparer.OrdinalIgnoreCase)
+                .Where(g => g.Count() > 1).Select(g => g.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
             WingetService.RestartRequiredAfterUpdates = false;
             // try/finally: μια εξαίρεση στη μέση του βρόχου άφηνε το progress bar μόνιμα ορατό και τα κουμπιά
             // απενεργοποιημένα (ίδιο μοτίβο που ήδη διορθώθηκε στο BtnScanWinget_Click).
@@ -638,24 +642,32 @@ namespace OptimizerWpf.Views
                 progressScope.Update(string.Format(LanguageService.T("Opt_UpdateProgress"), LanguageService.T(catIndex == 1 ? "Opt_FilterWindows" : "Opt_FilterApps"), catDone[catIndex], catTotal[catIndex], row.Update.Name));
                 AppScan.SetStatus($"{LanguageService.T("Opt_UpgradingPrefix")}{row.Update.Name}... ({succeeded.Count + failed.Count + openedInStore.Count + 1}/{selected.Count})");
 
-                if (row.Update.Source == "msstore")
+                if (string.Equals(row.Update.Source, "msstore", StringComparison.OrdinalIgnoreCase))
                 {
-                    // Μηχανισμός WMT 6.7 (StoreGuiUpdateService): MDM update scan μία φορά, μετά για κάθε
-                    // εφαρμογή αυτοματισμός του Store UI (πάτημα "Update" + παρακολούθηση της γραμμής) -
-                    // πλέον επιβεβαιωμένο αποτέλεσμα αντί για απλό άνοιγμα του Store.
-                    if (!triggeredStoreOnce) { await Task.Run(WingetService.TriggerMsStoreUpdateScan); triggeredStoreOnce = true; }
                     StoreUpdateOutcome outcome;
-                    try { outcome = await StoreGuiUpdateService.UpdateAsync(row.Update.Name, null, System.Threading.CancellationToken.None); }
-                    catch { outcome = StoreUpdateOutcome.Failed; }
+                    try
+                    {
+                        outcome = await WingetService.UpgradeStoreAsync(row.Update, installCts.Token,
+                            allowUiFallback: !ambiguousStoreNames.Contains(row.Update.Name.Trim()),
+                            log: message => System.Diagnostics.Trace.TraceInformation(message));
+                    }
+                    catch (OperationCanceledException) when (installCts.IsCancellationRequested) { break; }
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Trace.TraceWarning("Store update: " + ex.Message);
+                        outcome = StoreUpdateOutcome.Failed;
+                    }
                     switch (outcome)
                     {
                         case StoreUpdateOutcome.Updated:
                         case StoreUpdateOutcome.AlreadyCurrent:
                             Ok(row, row.Update.Name); RemoveUpdateRow(row); break;
-                        case StoreUpdateOutcome.TimedOut:
-                            openedInStore.Add(row.Update.Name); break;
                         default:
-                            Fail(row, row.Update.Name); break;
+                            // Preserve the row and distinguish a failed or unconfirmed update.
+                            var reason = LanguageService.Current == "el"
+                                ? (outcome == StoreUpdateOutcome.Failed ? "Αποτυχία ενημέρωσης Store" : "Η ενημέρωση Store δεν επιβεβαιώθηκε")
+                                : (outcome == StoreUpdateOutcome.Failed ? "Store update failed" : "Store update not confirmed");
+                            Fail(row, row.Update.Name + " [" + reason + "]"); break;
                     }
                     continue;
                 }
@@ -669,9 +681,8 @@ namespace OptimizerWpf.Views
             }
             finally { progressScope.End(LanguageService.T("Ready")); }
 
-            // Όπως το Close-WmtStoreGui: το Store κλείνει μόνο όταν όλες οι ενημερώσεις του επιβεβαιώθηκαν.
-            if (!installCts.IsCancellationRequested && triggeredStoreOnce && openedInStore.Count == 0 && failed.Count == 0)
-                await Task.Run(StoreGuiUpdateService.CloseStoreWindow);
+            // Never close the user's Store window or trigger a bulk MDM update
+            // as a side effect of updating selected rows.
 
             var (dOk, dFail) = selectedDrivers.Count > 0 && !installCts.IsCancellationRequested
                 ? await UpdateSelectedDriversAsync(selectedDrivers, installCts.Token) : (new List<string>(), new List<string>());
