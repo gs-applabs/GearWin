@@ -59,7 +59,7 @@ Latest confirmed Windows CI at audit: run 46070758350, 716 passed (674 desktop +
 
 | RQ | Τρέχουσα κατάσταση / επόμενο βήμα |
 |---|---|
-| RQ01 | OPEN — coordinated .NET 11 desktop/migration/CI/installer migration |
+| RQ01 | PORTED — .NET 11 source/SDK/CI/launchers aligned; build and tests pending |
 | RQ02 | PORTED — opt-in resources, compile/visual gates pending |
 | RQ03–04 | OPEN — Partclone and loop/distro workflows reconciliation |
 | RQ05 | PORTED — signer guard; real package trust/install test pending |
@@ -73,6 +73,15 @@ Latest confirmed Windows CI at audit: run 46070758350, 716 passed (674 desktop +
 | RQ20–21 | BLOCKED/deferred — release packaging/signing |
 | RQ22 | SUPERSEDED — no duplicate media converter; verify diagnostics |
 | RQ23–24 | OPEN — endurance and historical scripts audit |
+
+
+### P0.R — integration batch C / continuity checkpoint (2026-11-28)
+
+RQ01: coordinated target-framework port from master 744c2e6/0e5853c, source commit 006cd09ed0defc43a47b11864e8cec1e45d84f1c. All five desktop/migration projects now target net11.0(-windows); SDK global.json 11.0.100 (latestFeature roll-forward), System.Management and Microsoft.Data.Sqlite 11.0.0, four build/test workflows, security-scan SDK setup, two fallback launchers, build-facing README/CONTRIBUTING/migration docs. Inno Setup remains unchanged apart from prior dynamic theme port; self-contained publish already uses project target. AppVeyor config adapted to active branch and official SDK bootstrap (configuration only; no verified provider run). Candidate version metadata intentionally still 7.0.0 until final release synchronization RQ20. No compilation or installation yet claimed for this .NET 11 change. Microsoft SDK source: https://dotnet.microsoft.com/en-us/download/dotnet/11.0 .
+
+CI evidence correction: list all GitHub Actions events, not just pull_request results. Push run 46073432667 at d813e9391e2303b7575850a16204624f066a67ac: 719 desktop + 42 migration = 761 passed; 14 Python fixtures passed (source-inventory); installer and short measurements success. Normal CPU 1.263%, WS 276.90 MiB, private 160.68 MiB, I/O write transfer 2476 B, handles 947→1155; tray 0.039%, WS 132.14 MiB, private 47.32 MiB, write transfer 0 B, handles 713→862. Short measurements not a controlled regression comparison or physical SSD result. Also Opsis UI compile run 46100694066 at ec0beed8 passed (.NET 10). Push run 46071167202 at cc80720c had an intermittent GracefulExitRefusesHeavyWorkThenClosesAdmission timeout (line 99, 2 s); other builds passed. Investigate scheduler/queue timing, do not erase or merely label it resolved. Parent 08806a95 run 46100747389 was pending and 46100694073 was in progress at inspection; query again before adding new work. 348 authored .NET cases recorded (20 beyond 328 from A–B), 9 new Python cases within 14 total. New SDK commit adds no test fixtures. Counts of authored fixtures and test-run totals are separate; newer changes not validated by older results.
+
+RQ03/RQ04 deliberately not blindly ported: master Partclone adapter imports sysfs_safety and real loop harness calls get_geometry/clone(exclusive=True), interfaces not present in the candidate raw cloner. Next integrate explicit partition identity/geometry checks, secure destination and descriptor semantics, then adapt loop tests and matrix. Never add unsupported backup/restore success claims. See START_HERE.md for exact next actions, user constraints and evidence.
 
 ### Αποδεδειγμένη κατάσταση
 

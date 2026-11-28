@@ -1,8 +1,8 @@
 # GearWin Migration
 
-This prototype inventories installed desktop apps and produces a package installation preview for Windows and Linux. The .NET 10 core can be referenced from both the Windows app and a future Linux UI.
+This prototype inventories installed desktop apps and produces a package installation preview for Windows and Linux. The .NET 11 core can be referenced from both the Windows app and a future Linux UI.
 
-Run from the repository root with the .NET 10 SDK:
+Run from the repository root with the .NET 11 SDK:
 
 ```sh
 dotnet run --project migration/GearWin.Migration.Cli -- inspect > target.json

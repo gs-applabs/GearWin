@@ -100,7 +100,7 @@ certutil -hashfile GearWin-Setup-<έκδοση>.exe SHA256
 
 Το αποτέλεσμα πρέπει να ταυτίζεται με το περιεχόμενο του `.sha256` (και με το SHA-256 στις σημειώσεις του release). Η εγκατάσταση γίνεται στο `C:\Program Files\` (machine-wide). Η ενημέρωση μέσα από την εφαρμογή (Ρυθμίσεις › Ενημέρωση GearWin) ελέγχει το ίδιο SHA-256 και αρνείται να τρέξει αν δεν ταιριάζει.
 
-Απαιτήσεις: Windows 11 (64-bit). Το .NET 10 περιλαμβάνεται στον installer (self-contained).
+Απαιτήσεις: Windows 11 (64-bit). Το .NET 11 περιλαμβάνεται στον installer (self-contained).
 
 ### Χτίσιμο από τον πηγαίο κώδικα
 
@@ -113,7 +113,7 @@ ISCC.exe installer/OptimizerWpf.iss
 
 ### Δομή αποθετηρίου
 
-- `wpf/OptimizerWpf/` — η τρέχουσα εφαρμογή (.NET 10, WPF/C#, MVVM-style views ανά καρτέλα)
+- `wpf/OptimizerWpf/` — η τρέχουσα εφαρμογή (.NET 11, WPF/C#, MVVM-style views ανά καρτέλα)
 - `wpf/OptimizerWpf.Tests/` — unit tests (xUnit)
 - `Optimizer.ps1` — το αρχικό PowerShell/WinForms εργαλείο (διατηρείται για ιστορικούς λόγους)
 - `installer/` — Inno Setup script + άδεια χρήσης/περιγραφή ανά γλώσσα
@@ -178,7 +178,7 @@ certutil -hashfile GearWin-Setup-<version>.exe SHA256
 
 The output must equal the content of the `.sha256` file (and the SHA-256 in the release notes). The installer puts GearWin in `C:\Program Files\` (machine-wide). The in-app update (Settings › GearWin update) verifies the same SHA-256 and refuses to run a mismatching file.
 
-Requirements: Windows 11 (64-bit). .NET 10 is bundled in the installer (self-contained).
+Requirements: Windows 11 (64-bit). .NET 11 is bundled in the installer (self-contained).
 
 ### Building from source
 
@@ -191,7 +191,7 @@ The final `GearWin-Setup-<version>.exe` lands in `installer/Output/`.
 
 ### Repository layout
 
-- `wpf/OptimizerWpf/` — the current app (.NET 10, WPF/C#, one view per tab)
+- `wpf/OptimizerWpf/` — the current app (.NET 11, WPF/C#, one view per tab)
 - `wpf/OptimizerWpf.Tests/` — unit tests (xUnit)
 - `Optimizer.ps1` — the original PowerShell/WinForms tool (kept for historical reasons)
 - `docs/img/` — README screenshots, icon and the social-preview image

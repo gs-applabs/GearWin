@@ -1,3 +1,9 @@
+# GEARWIN CONTINUITY — READ FIRST
+
+Read [START_HERE.md](START_HERE.md) before any work. The active branch and current requirements are defined there and in [ROADMAP.md](ROADMAP.md). Update the same checkpoint and cumulative evidence in each meaningful implementation pass. Do not rely on conversation memory alone. Do not create new competing handoff/status files. Preserve historical requirements, safety decisions, exact commit/run references and known failed/NOT RUN tests. Before changing session or losing context, provide links to the exact current source and handoff, or an available verified offline copy; never claim an unbuilt installer exists. The historical instructions below apply only where consistent with current roadmap.
+
+---
+
 CLAUDE.md — AI PROJECT OPERATING SYSTEM
 0. ROLE
 
