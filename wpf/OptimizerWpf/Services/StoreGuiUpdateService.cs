@@ -53,6 +53,23 @@ namespace OptimizerWpf.Services
             AutomationElement.RootElement.FindAll(TreeScope.Children, Condition.TrueCondition)
                 .Cast<AutomationElement>().FirstOrDefault(w => w.Current.Name == "Microsoft Store");
 
+        internal static bool IsExplicitUpdateAction(string automationId, string caption, RowState state) =>
+            state == RowState.Available &&
+            (automationId == "ActionButton" || automationId == "UpdateButton" ||
+                string.Equals(caption.Trim(), "Update", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(caption.Trim(), "Ενημέρωση", StringComparison.OrdinalIgnoreCase)) &&
+            !Regex.IsMatch(caption, @"\b(?:all|open|launch|pause|cancel|install|όλα|άνοιγμα|παύση|ακύρωση|εγκατάσταση)\b", Opt);
+
+        private static AutomationElement? FindUpdateAction(AutomationElement row)
+        {
+            var buttons = row.FindAll(TreeScope.Descendants,
+                new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Button))
+                .Cast<AutomationElement>().Where(b => b.Current.IsEnabled &&
+                    IsExplicitUpdateAction(b.Current.AutomationId, b.Current.Name, ClassifyRow(row.Current.Name)))
+                .Take(2).ToArray();
+            return buttons.Length == 1 ? buttons[0] : null;
+        }
+
         private static AutomationElement? FindRow(AutomationElement storeWindow, string wanted)
         {
             var titleCond = new PropertyCondition(AutomationElement.AutomationIdProperty, "ProductTitle");
@@ -66,12 +83,14 @@ namespace OptimizerWpf.Services
             {
                 parent = TreeWalker.ControlViewWalker.GetParent(parent);
                 if (parent == null || parent.Equals(storeWindow)) return null;
-                if (parent.Current.ControlType != ControlType.Custom) continue;
+                if (parent.Current.ControlType != ControlType.Custom &&
+                    parent.Current.ControlType != ControlType.ListItem) continue;
                 var titles = parent.FindAll(TreeScope.Descendants, titleCond);
                 if (titles.Count != 1) return null;
-                var actions = parent.FindAll(TreeScope.Descendants, new PropertyCondition(AutomationElement.AutomationIdProperty, "ActionButton"));
-                if (actions.Count == 1) return parent;
-                if (actions.Count > 1) return null;
+                var state = ClassifyRow(parent.Current.Name);
+                if (state is RowState.Active or RowState.Finished ||
+                    state == RowState.Available && FindUpdateAction(parent) != null)
+                    return parent;
             }
             return null;
         }
@@ -117,16 +136,18 @@ namespace OptimizerWpf.Services
                         }
                         else if (!started && state == RowState.Available)
                         {
-                            var action = row.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.AutomationIdProperty, "ActionButton"));
+                            var action = FindUpdateAction(row);
                             if (action != null && action.Current.IsEnabled &&
                                 action.TryGetCurrentPattern(InvokePattern.Pattern, out object pattern))
                             {
                                 ct.ThrowIfCancellationRequested();
                                 initialName = rowName;
                                 initialState = state;
-                                ((InvokePattern)pattern).Invoke();
+                                // A provider can throw after dispatching Invoke;
+                                // mark the attempt before calling, never double-click.
                                 started = true;
                                 invokedAt = clock.Elapsed;
+                                ((InvokePattern)pattern).Invoke();
                                 log?.Invoke("Store: selected update requested");
                             }
                         }

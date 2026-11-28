@@ -664,10 +664,10 @@ namespace OptimizerWpf.Views
                             Ok(row, row.Update.Name); RemoveUpdateRow(row); break;
                         default:
                             // Preserve the row and distinguish a failed or unconfirmed update.
-                            var reason = LanguageService.Current == "el"
+                            var storeReason = LanguageService.Current == "el"
                                 ? (outcome == StoreUpdateOutcome.Failed ? "Αποτυχία ενημέρωσης Store" : "Η ενημέρωση Store δεν επιβεβαιώθηκε")
                                 : (outcome == StoreUpdateOutcome.Failed ? "Store update failed" : "Store update not confirmed");
-                            Fail(row, row.Update.Name + " [" + reason + "]"); break;
+                            Fail(row, row.Update.Name + " [" + storeReason + "]"); break;
                     }
                     continue;
                 }

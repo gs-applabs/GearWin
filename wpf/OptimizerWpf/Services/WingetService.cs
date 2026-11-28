@@ -366,7 +366,7 @@ namespace OptimizerWpf.Services
         internal static string StoreUpgradeArguments(WingetUpdate update)
         {
             if (!HasStoreProductId(update)) throw new ArgumentException("Expected an exact Store product ID.");
-            return $"upgrade --id \"{update.Id}\" --exact --source msstore --silent --accept-source-agreements --accept-package-agreements --disable-interactivity";
+            return $"upgrade --id \"{update.Id}\" --exact --source msstore --include-unknown --silent --accept-source-agreements --accept-package-agreements --disable-interactivity";
         }
 
         internal static bool StoreVersionAtLeast(string? installed, string? expected) =>
@@ -374,6 +374,37 @@ namespace OptimizerWpf.Services
 
         internal static bool StoreVersionAdvanced(string? before, string? after) =>
             Version.TryParse(before, out var oldVersion) && Version.TryParse(after, out var newVersion) && newVersion > oldVersion;
+
+        internal static bool StoreReadbackConfirmsUpdate(string? before, string? after, string? expected) =>
+            Version.TryParse(expected, out _) ? StoreVersionAtLeast(after, expected) : StoreVersionAdvanced(before, after);
+
+        // A display title from store.exe is not a product ID. Use the existing
+        // WinGet installed-inventory provider to resolve exactly one matching
+        // installed Store product. Never use a search result for an uninstalled app.
+        internal static bool SafeStoreLookupTitle(string title) =>
+            !string.IsNullOrWhiteSpace(title) && title.Length <= 200 &&
+            !title.Any(c => c == '"' || c == '\\' || char.IsControl(c) ||
+                char.GetUnicodeCategory(c) == System.Globalization.UnicodeCategory.Format);
+
+        internal static WingetUpdate? ResolveInstalledStoreRow(WingetUpdate requested, string output)
+        {
+            if (!SafeStoreLookupTitle(requested.Name)) return null;
+            var rows = ParseWingetTable(output).Where(row =>
+                string.Equals(row.Name.Trim(), requested.Name.Trim(), StringComparison.OrdinalIgnoreCase) &&
+                HasStoreProductId(row)).Take(2).ToArray();
+            return rows.Length == 1
+                ? requested with { Id = rows[0].Id, CurrentVersion = rows[0].CurrentVersion }
+                : null;
+        }
+
+        private static async Task<WingetUpdate?> ResolveStoreProductAsync(WingetUpdate update)
+        {
+            if (!SafeStoreLookupTitle(update.Name)) return null;
+            var (output, exitCode, started) = await RunToolAsync("winget.exe",
+                $"list --name \"{update.Name.Trim()}\" --exact --source msstore --accept-source-agreements --disable-interactivity",
+                TimeSpan.FromSeconds(30));
+            return started && exitCode == 0 ? ResolveInstalledStoreRow(update, output) : null;
+        }
 
         internal static string? ReadExactStoreVersion(string output, string productId)
         {
@@ -401,6 +432,11 @@ namespace OptimizerWpf.Services
             ActiveScanToken.Value = ct;
             try
             {
+                if (!HasStoreProductId(update))
+                {
+                    var resolved = await ResolveStoreProductAsync(update);
+                    if (resolved != null) update = resolved;
+                }
                 if (HasStoreProductId(update))
                 {
                     var before = await ReadStoreVersionAsync(update.Id);
@@ -416,9 +452,16 @@ namespace OptimizerWpf.Services
                     ct.ThrowIfCancellationRequested();
                     if (attempt.Started)
                     {
-                        var after = await ReadStoreVersionAsync(update.Id);
-                        if (StoreVersionAtLeast(after, update.AvailableVersion) || StoreVersionAdvanced(before, after))
-                            return StoreUpdateOutcome.Updated;
+                        // A Store deployment may finalize after the WinGet process
+                        // exits. Recheck at most twice after the initial readback.
+                        for (int probe = 0; probe < 3; probe++)
+                        {
+                            if (probe > 0) await Task.Delay(TimeSpan.FromSeconds(2), ct);
+                            var after = await ReadStoreVersionAsync(update.Id);
+                            if (StoreReadbackConfirmsUpdate(before, after, update.AvailableVersion))
+                                return StoreUpdateOutcome.Updated;
+                            if (attempt.ExitCode != 0) break;
+                        }
                         if (attempt.ExitCode == 0 || attempt.ExitCode == -1)
                             return StoreUpdateOutcome.Unconfirmed;
                         // An explicit error may still have queued work; the UI
