@@ -30,8 +30,8 @@ namespace OptimizerWpf.Services
             // Ρητό αίτημα χρήστη ("αντίστοιχα εικονίδια... για nvme") - ξεχωριστό κλάδο από το γενικό
             // SSD, με τα πιο σαφή NVMe-specific μοτίβα ονόματος πρώτα (μεγαλύτερη σιγουριά).
             if (m.Contains("NVME") || System.Text.RegularExpressions.Regex.IsMatch(m, @"\bSN\d{3}\b") ||
-                m.Contains("EVO") || m.Contains("970") || m.Contains("980") || m.Contains("990") ||
-                m.Contains("CRUCIAL P") || m.Contains("KINGSTON NV") || m.Contains("KINGSTON A2000"))
+                System.Text.RegularExpressions.Regex.IsMatch(m, @"\bSAMSUNG\b.*\b(950|960|970|980|990|9100)\b") ||
+                m.Contains("CRUCIAL P") || m.Contains("KINGSTON NV") || m.Contains("KINGSTON A2000") || m.Contains("KINGSTON KC3000"))
                 return PhysicalDriveKind.Nvme;
 
             if (m.Contains("SSD") || m.Contains("KINGSTON KC"))
@@ -44,211 +44,150 @@ namespace OptimizerWpf.Services
             return PhysicalDriveKind.Unknown;
         }
 
+        // Use the volume's single disk extent and the matching device handle;
+        // MSFT_PhysicalDisk.DeviceId is not guaranteed to equal MSFT_Disk.Number.
+        internal static bool IsDirectStorageBus(int bus) => bus is 1 or 2 or 3 or 7 or 10 or 11 or 12 or 13 or 17;
+
+        internal static PhysicalDriveKind Classify(int bus, bool? seekPenalty)
+        {
+            if (bus == 7) return PhysicalDriveKind.Usb;
+            if (bus == 17) return seekPenalty == true ? PhysicalDriveKind.Unknown : PhysicalDriveKind.Nvme;
+            if (!IsDirectStorageBus(bus)) return PhysicalDriveKind.Unknown;
+            return seekPenalty switch { true => PhysicalDriveKind.Hdd, false => PhysicalDriveKind.Ssd, _ => PhysicalDriveKind.Unknown };
+        }
+
         public static PhysicalDriveKind Detect(string driveLetter)
         {
             try
             {
-                var root = driveLetter.TrimEnd('\\') + "\\";
-                var info = new DriveInfo(root);
-                if (info.DriveType == DriveType.Removable) return PhysicalDriveKind.Usb;
-                if (info.DriveType != DriveType.Fixed) return PhysicalDriveKind.Unknown;
+                var key = HomeDiskMetadataService.NormalizeDrive(driveLetter);
+                if (key == null) return PhysicalDriveKind.Unknown;
+                var info = new DriveInfo(key + "\\");
+                if (!info.IsReady || info.DriveType is not (DriveType.Fixed or DriveType.Removable)) return PhysicalDriveKind.Unknown;
+                var number = StorageTemperatureService.ResolveDiskNumber(key);
+                if (number == null) return PhysicalDriveKind.Unknown;
+                var traits = StorageTemperatureService.ReadDeviceTraits(number.Value);
+                return traits == null ? PhysicalDriveKind.Unknown : Classify(traits.Value.Bus, traits.Value.SeekPenalty);
             }
             catch { return PhysicalDriveKind.Unknown; }
-
-            var mediaAndBus = GetMediaTypeAndBusType(driveLetter);
-            if (mediaAndBus == null) return PhysicalDriveKind.Unknown;
-            var (mediaType, busType) = mediaAndBus.Value;
-
-            // MediaType: 0=Unspecified, 3=HDD, 4=SSD, 5=SCM (treated as SSD-like).
-            if (mediaType == 3) return PhysicalDriveKind.Hdd;
-            if (mediaType != 4 && mediaType != 5) return PhysicalDriveKind.Unknown;
-
-            // Ρητό αίτημα χρήστη ("αντίστοιχα εικονίδια... για nvme") - BusType 17 = NVMe.
-            return busType == 17 ? PhysicalDriveKind.Nvme : PhysicalDriveKind.Ssd;
         }
 
-        // ΔΙΟΡΘΩΣΗ (χρήστης ζήτησε: "βρες μηχανισμό να 'ναι η εφαρμογή σίγουρη" - επιβεβαιώθηκε
-        // ΖΩΝΤΑΝΑ, με βήμα-προς-βήμα διαγνωστικό test, ότι η αλυσίδα MSFT_Partition -> MSFT_Disk ->
-        // MSFT_PhysicalDisk (μέσω GetRelated, το προηγούμενο fix) φτάνει ΣΩΣΤΑ μέχρι το MSFT_Disk
-        // (count=1), αλλά το ΤΕΛΕΥΤΑΙΟ hop (MSFT_PhysicalDiskToDisk) επιστρέφει ΠΑΝΤΑ 0 αποτελέσματα
-        // σε αυτό το μηχάνημα - περιορισμός/quirk του συγκεκριμένου Storage WMI provider, όχι κάτι
-        // διορθώσιμο με ακόμα-πιο-προσεκτικό escaping. Η αξιόπιστη εναλλακτική (επίσης επιβεβαιωμένη
-        // ζωντανά): η ΚΛΑΣΙΚΗ αλυσίδα Win32_LogicalDisk -> Win32_DiskPartition -> Win32_DiskDrive
-        // (απλά string DeviceIDs, ΚΑΝΕΝΑ πρόβλημα escaping) δίνει το Index του φυσικού δίσκου, το
-        // οποίο ταυτίζεται ΠΑΝΤΑ με το MSFT_PhysicalDisk.DeviceId του ΙΔΙΟΥ δίσκου (επιβεβαιώθηκε:
-        // Win32_DiskDrive Index=2 "Samsung SSD 970..." == MSFT_PhysicalDisk DeviceId=2 ίδιο μοντέλο).
-        // Ερώτημα ΑΠΕΥΘΕΙΑΣ στο MSFT_PhysicalDisk (χωρίς ASSOCIATORS/GetRelated καθόλου) αντί για την
-        // εύθραυστη αλυσίδα συσχέτισης.
-        private static (int MediaType, int BusType)? GetMediaTypeAndBusType(string driveLetter)
-        {
-            try
-            {
-                var letter = driveLetter.TrimEnd('\\');
-                using var partSearcher = new ManagementObjectSearcher(
-                    new ObjectQuery($"ASSOCIATORS OF {{Win32_LogicalDisk.DeviceID='{letter}'}} WHERE AssocClass=Win32_LogicalDiskToPartition"));
-                using var partSearcherResults = partSearcher.Get();
-                using var partition = partSearcherResults.Cast<ManagementObject>().FirstOrDefault();
-                if (partition == null) return null;
-
-                using var diskSearcher = new ManagementObjectSearcher(
-                    $"ASSOCIATORS OF {{Win32_DiskPartition.DeviceID='{partition["DeviceID"]}'}} WHERE AssocClass=Win32_DiskDriveToDiskPartition");
-                using var diskSearcherResults = diskSearcher.Get();
-                using var disk = diskSearcherResults.Cast<ManagementObject>().FirstOrDefault();
-                if (disk?["Index"] == null) return null;
-                var diskIndex = disk["Index"].ToString();
-
-                using var physSearcher = new ManagementObjectSearcher(new ManagementScope(@"root\Microsoft\Windows\Storage"),
-                    new ObjectQuery($"SELECT MediaType, BusType FROM MSFT_PhysicalDisk WHERE DeviceId='{diskIndex}'"));
-                using var physSearcherResults = physSearcher.Get();
-                using var physicalDisk = physSearcherResults.Cast<ManagementObject>().FirstOrDefault();
-                if (physicalDisk == null) return null;
-
-                return (Convert.ToInt32(physicalDisk["MediaType"]), Convert.ToInt32(physicalDisk["BusType"]));
-            }
-            catch
-            {
-                // Storage WMI provider can be unavailable (older Windows, restricted permissions) -
-                // degrade to null/Unknown rather than guessing or crashing the tab.
-                return null;
-            }
-        }
-
-        // ΝΕΟ v3.3.0 - human-readable bus type για το "Η Συσκευή Μου" section (MyDeviceService) -
-        // ίδιος μηχανισμός με το Detect() παραπάνω, αλλά επιστρέφει το πραγματικό BusType (SATA/SAS/
-        // USB/κ.λπ.), όχι απλά το 4-τιμών PhysicalDriveKind enum.
         public static string? GetBusTypeName(string driveLetter)
         {
-            var result = GetMediaTypeAndBusType(driveLetter);
-            if (result == null) return null;
-            // BusType enum (MSFT_PhysicalDisk.BusType, Storage Management API): 1=SCSI, 3=ATA,
-            // 7=USB, 8=RAID, 9=iSCSI, 10=SAS, 11=SATA, 17=NVMe.
-            return result.Value.BusType switch
+            var number = StorageTemperatureService.ResolveDiskNumber(driveLetter);
+            if (number == null) return null;
+            var traits = StorageTemperatureService.ReadDeviceTraits(number.Value);
+            return traits?.Bus switch
             {
-                1 => "SCSI", 3 => "ATA", 7 => "USB", 8 => "RAID", 9 => "iSCSI", 10 => "SAS", 11 => "SATA", 17 => "NVMe",
-                _ => null,
+                1 => "SCSI", 2 => "ATAPI", 3 => "ATA", 7 => "USB", 8 => "RAID", 9 => "iSCSI",
+                10 => "SAS", 11 => "SATA", 12 => "SD", 13 => "MMC", 14 => "Virtual", 15 => "File-backed virtual",
+                16 => "Storage Spaces", 17 => "NVMe", _ => null
             };
         }
 
-        // Μάρκα/περιγραφή δίσκου (ρητό αίτημα χρήστη: "δεν αναφέρεις... την περιγραφή του δίσκου")
-        // - χρησιμοποιεί το ΚΛΑΣΙΚΟ Win32_DiskDrive.Model (π.χ. "Samsung SSD 970 EVO Plus 1TB") μέσω
-        // της παλιάς associator αλυσίδας Win32_LogicalDisk -> Win32_DiskPartition -> Win32_DiskDrive
-        // - ΔΕΝ χρησιμοποιεί τη νεότερη root\Microsoft\Windows\Storage (όπως το Detect() παραπάνω)
-        // επειδή το Win32_DiskDrive.Model είναι πιο καθολικά διαθέσιμο/σταθερό σε παλαιότερα Windows.
+        private static ManagementObjectSearcher Query(string scope, string wql) =>
+            new(new ManagementScope(scope), new ObjectQuery(wql),
+                new System.Management.EnumerationOptions { Timeout = TimeSpan.FromSeconds(4), ReturnImmediately = true, Rewindable = false });
+
+        private static (string? Model, string? Pnp)? ReadIdentity(uint number)
+        {
+            using var searcher = Query(@"root\CIMV2", $"SELECT Model, PNPDeviceID FROM Win32_DiskDrive WHERE Index = {number}");
+            using var rows = searcher.Get();
+            (string? Model, string? Pnp)? result = null;
+            int count = 0;
+            foreach (ManagementObject row in rows)
+            {
+                using (row)
+                {
+                    if (++count != 1) return null;
+                    result = (row["Model"]?.ToString()?.Trim(), row["PNPDeviceID"]?.ToString());
+                }
+            }
+            return result;
+        }
+
         public static string? GetDiskModel(string driveLetter)
         {
             try
             {
-                var deviceId = driveLetter.TrimEnd('\\');
-                using var partitionSearcher = new ManagementObjectSearcher(
-                    $"ASSOCIATORS OF {{Win32_LogicalDisk.DeviceID='{deviceId}'}} WHERE AssocClass=Win32_LogicalDiskToPartition");
-                using var partitionSearcherResults = partitionSearcher.Get();
-                using var partition = partitionSearcherResults.Cast<ManagementBaseObject>().FirstOrDefault();
-                if (partition == null) return null;
-
-                using var diskSearcher = new ManagementObjectSearcher(
-                    $"ASSOCIATORS OF {{Win32_DiskPartition.DeviceID='{partition["DeviceID"]}'}} WHERE AssocClass=Win32_DiskDriveToDiskPartition");
-                using var diskSearcherResults = diskSearcher.Get();
-                using var disk = diskSearcherResults.Cast<ManagementBaseObject>().FirstOrDefault();
-                var model = disk?["Model"]?.ToString();
-                return string.IsNullOrWhiteSpace(model) ? null : model.Trim();
+                var number = StorageTemperatureService.ResolveDiskNumber(driveLetter);
+                if (number == null) return null;
+                var traits = StorageTemperatureService.ReadDeviceTraits(number.Value);
+                // Do not feed a virtual/RAID device's name into the model heuristic.
+                if (traits == null || !IsDirectStorageBus(traits.Value.Bus)) return null;
+                return ReadIdentity(number.Value)?.Model;
             }
-            catch
-            {
-                return null;
-            }
+            catch { return null; }
         }
 
-        // ΝΕΟ - roadmap "Τάση υγείας δίσκου (S.M.A.R.T.)" - επιβεβαιώθηκε κατά την ανάπτυξη ότι το πεδίο
-        // Health του StorageDriveInfo ήταν HARDCODED στο "Healthy" (ΠΟΤΕ δεν άλλαζε τιμή, ανεξάρτητα
-        // από την πραγματική κατάσταση του δίσκου) - πραγματικό bug, όχι απλά λείπον χαρακτηριστικό.
-        // Το MSStorageDriver_FailurePredictStatus (root\WMI) είναι ο καθιερωμένος πάροχος SMART
-        // predictive-failure στα Windows - ΙΔΙΑ γνωστή αναξιοπιστία με τους αισθητήρες θερμοκρασίας
-        // αλλού σε αυτό το project (ειδικά σε NVMe): αν η κλάση/το instance δεν βρεθεί, επιστρέφει null
-        // (η εφαρμογή δείχνει "Άγνωστη" - ΠΟΤΕ ψευδές "Healthy" όταν δεν μπορεί πραγματικά να το
-        // επιβεβαιώσει). Η αντιστοίχιση δίσκου->InstanceName γίνεται μέσω του PNPDeviceID (ίδιο μοτίβο
-        // αλυσίδας associator με το GetDiskModel παραπάνω, +1 βήμα ως το Win32_PnPEntity).
+        internal static bool MatchesSmartInstance(string? pnp, string? instance)
+        {
+            if (string.IsNullOrWhiteSpace(pnp) || string.IsNullOrWhiteSpace(instance) ||
+                !instance.StartsWith(pnp, StringComparison.OrdinalIgnoreCase)) return false;
+            if (instance.Length == pnp.Length) return true;
+            var suffix = instance[pnp.Length..];
+            return suffix.Length > 1 && suffix[0] == '_' && suffix[1..].All(char.IsAsciiDigit);
+        }
+
         public static bool? GetSmartHealthy(string driveLetter)
         {
             try
             {
-                var deviceId = driveLetter.TrimEnd('\\');
-                using var partitionSearcher = new ManagementObjectSearcher(
-                    $"ASSOCIATORS OF {{Win32_LogicalDisk.DeviceID='{deviceId}'}} WHERE AssocClass=Win32_LogicalDiskToPartition");
-                using var partitionSearcherResults = partitionSearcher.Get();
-                using var partition = partitionSearcherResults.Cast<ManagementBaseObject>().FirstOrDefault();
-                if (partition == null) return null;
-
-                using var diskSearcher = new ManagementObjectSearcher(
-                    $"ASSOCIATORS OF {{Win32_DiskPartition.DeviceID='{partition["DeviceID"]}'}} WHERE AssocClass=Win32_DiskDriveToDiskPartition");
-                using var diskSearcherResults = diskSearcher.Get();
-                using var disk = diskSearcherResults.Cast<ManagementBaseObject>().FirstOrDefault();
-                var pnpDeviceId = disk?["PNPDeviceID"]?.ToString();
-                if (string.IsNullOrEmpty(pnpDeviceId)) return GetSmartHealthyViaPhysicalDisk(driveLetter);
-
-                // Win32_DiskDrive.PNPDeviceID όπως "SCSI\DISK&VEN_...\4&...&0" - το InstanceName στο
-                // MSStorageDriver_FailurePredictStatus έχει τη μορφή "SCSI\Disk&Ven...\4&...&0_0" (ίδιο
-                // πρόθεμα, πεζά/κεφαλαία ανεξάρτητα - StartsWith με OrdinalIgnoreCase).
-                var scope = new ManagementScope(@"root\WMI");
-                scope.Connect();
-                using var searcher = new ManagementObjectSearcher(scope, new ObjectQuery("SELECT * FROM MSStorageDriver_FailurePredictStatus"));
-                using var results = searcher.Get();
-                foreach (ManagementBaseObject item in results)
+                var number = StorageTemperatureService.ResolveDiskNumber(driveLetter);
+                if (number == null) return null;
+                var traits = StorageTemperatureService.ReadDeviceTraits(number.Value);
+                if (traits == null || !IsDirectStorageBus(traits.Value.Bus)) return null;
+                var pnp = ReadIdentity(number.Value)?.Pnp;
+                if (!string.IsNullOrWhiteSpace(pnp))
                 {
-                    using var reading = item;
-                    var instanceName = item["InstanceName"]?.ToString() ?? "";
-                    if (instanceName.StartsWith(pnpDeviceId, StringComparison.OrdinalIgnoreCase))
-                        return !(bool)item["PredictFailure"];
+                    try
+                    {
+                        using var searcher = Query(@"root\WMI", "SELECT InstanceName, PredictFailure FROM MSStorageDriver_FailurePredictStatus");
+                        using var rows = searcher.Get();
+                        int matched = 0, count = 0;
+                        bool? healthy = null;
+                        foreach (ManagementObject row in rows)
+                        {
+                            using (row)
+                            {
+                                if (++count > 4096) return null;
+                                if (!MatchesSmartInstance(pnp, row["InstanceName"]?.ToString())) continue;
+                                if (++matched != 1) return null;
+                                if (row["PredictFailure"] is bool failure) healthy = !failure;
+                            }
+                        }
+                        if (matched == 1) return healthy;
+                    }
+                    catch { /* try only an explicit storage association below */ }
                 }
-                // Κανένα instance δεν ταίριαξε - συνηθισμένο σε NVMe, βλ. fallback παρακάτω.
-                return GetSmartHealthyViaPhysicalDisk(driveLetter);
+                // Provider health is a summary, not raw SMART attributes. Use
+                // only an explicit one-to-one association, never equal-number guesses.
+                using var diskQuery = Query(@"root\Microsoft\Windows\Storage", $"SELECT * FROM MSFT_Disk WHERE Number = {number.Value}");
+                using var disks = diskQuery.Get();
+                int diskCount = 0;
+                bool? result = null;
+                foreach (ManagementObject disk in disks)
+                {
+                    using (disk)
+                    {
+                        if (++diskCount != 1) return null;
+                        using var physical = disk.GetRelated("MSFT_PhysicalDisk", "MSFT_PhysicalDiskToDisk", null, null, null, null, false,
+                            new System.Management.EnumerationOptions { Timeout = TimeSpan.FromSeconds(4), ReturnImmediately = true });
+                        int count = 0;
+                        foreach (ManagementObject row in physical)
+                        {
+                            using (row)
+                            {
+                                if (++count != 1) return null;
+                                if (row["HealthStatus"] is object value)
+                                    result = Convert.ToInt32(value) switch { 0 => true, 1 or 2 => false, _ => null };
+                            }
+                        }
+                    }
+                }
+                return result;
             }
-            catch
-            {
-                return GetSmartHealthyViaPhysicalDisk(driveLetter);
-            }
-        }
-
-        // ΝΕΟ (roadmap "S.M.A.R.T./NVMe τεχνική αναβάθμιση") - το MSStorageDriver_FailurePredictStatus
-        // παραπάνω είναι ο ΠΑΛΙΟΤΕΡΟΣ πάροχος SMART (root\WMI) και συχνά δεν καλύπτει καθόλου NVMe
-        // δίσκους σε αυτό το μηχάνημα (καμία αντιστοιχία InstanceName -> επιστρέφει null, δείχνει
-        // "Άγνωστη" στο UI). Το MSFT_PhysicalDisk.HealthStatus (root\Microsoft\Windows\Storage) είναι
-        // το ΙΔΙΟ storage subsystem WMI provider που χρησιμοποιεί ήδη το GetMediaTypeAndBusType
-        // παραπάνω (επιβεβαιωμένο ζωντανά ότι λειτουργεί αξιόπιστα σε αυτό το μηχάνημα μέσω του
-        // diskIndex) και καλύπτει SATA+NVMe ενιαία, οπότε χρησιμοποιείται ως fallback όταν ο παλιός
-        // πάροχος δεν βρίσκει αντιστοιχία - όχι αντικατάσταση, γιατί ο παλιός πάροχος παραμένει
-        // ακριβέστερος όταν διαθέσιμος (πραγματικό predictive-failure flag, όχι συνοπτικό health enum).
-        private static bool? GetSmartHealthyViaPhysicalDisk(string driveLetter)
-        {
-            try
-            {
-                var letter = driveLetter.TrimEnd('\\');
-                using var partSearcher = new ManagementObjectSearcher(
-                    new ObjectQuery($"ASSOCIATORS OF {{Win32_LogicalDisk.DeviceID='{letter}'}} WHERE AssocClass=Win32_LogicalDiskToPartition"));
-                using var partSearcherResults = partSearcher.Get();
-                using var partition = partSearcherResults.Cast<ManagementObject>().FirstOrDefault();
-                if (partition == null) return null;
-
-                using var diskSearcher = new ManagementObjectSearcher(
-                    $"ASSOCIATORS OF {{Win32_DiskPartition.DeviceID='{partition["DeviceID"]}'}} WHERE AssocClass=Win32_DiskDriveToDiskPartition");
-                using var diskSearcherResults = diskSearcher.Get();
-                using var disk = diskSearcherResults.Cast<ManagementObject>().FirstOrDefault();
-                if (disk?["Index"] == null) return null;
-                var diskIndex = disk["Index"].ToString();
-
-                using var physSearcher = new ManagementObjectSearcher(new ManagementScope(@"root\Microsoft\Windows\Storage"),
-                    new ObjectQuery($"SELECT HealthStatus FROM MSFT_PhysicalDisk WHERE DeviceId='{diskIndex}'"));
-                using var physSearcherResults = physSearcher.Get();
-                using var physicalDisk = physSearcherResults.Cast<ManagementObject>().FirstOrDefault();
-                if (physicalDisk?["HealthStatus"] == null) return null;
-
-                // MSFT_PhysicalDisk.HealthStatus: 0=Healthy, 1=Warning, 2=Unhealthy, 5=Unknown.
-                var status = Convert.ToInt32(physicalDisk["HealthStatus"]);
-                return status switch { 0 => true, 5 => (bool?)null, _ => false };
-            }
-            catch
-            {
-                return null;
-            }
+            catch { return null; }
         }
     }
 }

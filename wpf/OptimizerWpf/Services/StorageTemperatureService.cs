@@ -25,7 +25,7 @@ internal static class StorageTemperatureService
     private static SafeFileHandle Open(string name) =>
         CreateFile(name, 0, 3, IntPtr.Zero, 3, 0, IntPtr.Zero);
 
-    internal static int? Read(string drive)
+    internal static uint? ResolveDiskNumber(string drive)
     {
         try
         {
@@ -36,9 +36,65 @@ internal static class StorageTemperatureService
             var extents = new byte[32];
             if (!DeviceIoControl(volume, VolumeDiskExtents, null, 0, extents, extents.Length, out int used, IntPtr.Zero)
                 || used < 0 || used > extents.Length) return null;
-            var diskNumber = ParseDiskNumber(extents.AsSpan(0, used));
+            return ParseDiskNumber(extents.AsSpan(0, used));
+        }
+        catch { return null; }
+    }
+
+    private static byte[]? QueryProperty(SafeFileHandle disk, uint property)
+    {
+        var query = new byte[12];
+        BinaryPrimitives.WriteUInt32LittleEndian(query, property);
+        var buffer = new byte[4096];
+        return DeviceIoControl(disk, StorageQueryProperty, query, query.Length, buffer, buffer.Length,
+            out int used, IntPtr.Zero) && used >= 0 && used <= buffer.Length ? buffer[..used] : null;
+    }
+
+    internal static (int Bus, bool? SeekPenalty)? ReadDeviceTraits(uint number)
+    {
+        try
+        {
+            using var disk = Open(@"\\.\PhysicalDrive" + number);
+            if (disk.IsInvalid) return null;
+            var descriptor = QueryProperty(disk, 0); // StorageDeviceProperty
+            int? bus = descriptor == null ? null : ParseBusType(descriptor);
+            if (!bus.HasValue) return null;
+            var seek = QueryProperty(disk, 7); // StorageDeviceSeekPenaltyProperty
+            return (bus.Value, seek == null ? null : ParseSeekPenalty(seek));
+        }
+        catch { return null; }
+    }
+
+    private static bool ValidHeader(ReadOnlySpan<byte> data, int minimum)
+    {
+        if (data.Length < minimum) return false;
+        uint version = BinaryPrimitives.ReadUInt32LittleEndian(data);
+        uint size = BinaryPrimitives.ReadUInt32LittleEndian(data[4..]);
+        return version >= minimum && version <= size && size >= minimum && size <= data.Length;
+    }
+
+    internal static int? ParseBusType(ReadOnlySpan<byte> data)
+    {
+        if (!ValidHeader(data, 36)) return null;
+        uint value = BinaryPrimitives.ReadUInt32LittleEndian(data[28..]);
+        return value <= 255 ? (int)value : null;
+    }
+
+    internal static bool? ParseSeekPenalty(ReadOnlySpan<byte> data)
+    {
+        if (!ValidHeader(data, 9) || data[8] > 1) return null;
+        return data[8] == 1;
+    }
+
+    internal static int? Read(string drive)
+    {
+        try
+        {
+            var diskNumber = ResolveDiskNumber(drive);
             if (!diskNumber.HasValue) return null;
             uint number = diskNumber.Value;
+            var traits = ReadDeviceTraits(number);
+            if (traits == null || !DriveTypeService.IsDirectStorageBus(traits.Value.Bus)) return null;
             using var disk = Open(@"\\.\PhysicalDrive" + number);
             if (disk.IsInvalid) return SensorService.GetDiskTemperatureByNumber(number) ?? ReadReliabilityCounter(number);
             // Device first; adapter property is not used as a substitute for device temperature.
