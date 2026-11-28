@@ -74,6 +74,11 @@ namespace OptimizerWpf.Services
                 if (!SameTarget(target, await PrepareTargetAsync(target.Drive)))
                     return (false, "Backup volume changed after confirmation. No backup started.");
 
+                // Capture catalog IDs before backup; an unreadable baseline is not proof of no backups.
+                var previous = await RunAsync("get", "versions", "-backupTarget:" + target.Drive);
+                if (!SameTarget(target, await PrepareTargetAsync(target.Drive)))
+                    return (false, "Backup volume changed during catalog baseline. No backup started.");
+
                 // wbadmin accepts a volume GUID for the backup target. Do not rely on a
                 // drive letter that can be reassigned by Windows while the job is queued.
                 var backup = await RunAsync("start", "backup", "-backupTarget:" + target.VolumeGuid,
@@ -86,8 +91,11 @@ namespace OptimizerWpf.Services
                     !catalog.Success || string.IsNullOrWhiteSpace(catalog.Output))
                     return (false, "Windows Backup reported success but the backup catalog could not be checked; " +
                         "do not assume the image can be restored. " + catalog.Output);
-                return (true, "Windows Backup completed and the selected disk's backup catalog is readable. " +
-                    "A newly created version and bare-metal boot recovery are NOT independently validated.\n" + catalog.Output);
+                if (!previous.Success || !HasNewCatalogVersion(previous.Output, catalog.Output))
+                    return (false, "Windows Backup completed, but a new catalog identifier could not be established. " +
+                        "Check the catalog manually (including first backups). Do not assume the image is restorable.\n" + catalog.Output);
+                return (true, "A new Windows Backup catalog identifier was observed on the confirmed volume. " +
+                    "Actual WinRE restoration and boot have not been verified.\n" + catalog.Output);
             }
             catch (Exception ex) when (ex is ManagementException or IOException or UnauthorizedAccessException or
                 System.Runtime.InteropServices.COMException or ArgumentException or OperationCanceledException or TimeoutException)
@@ -154,6 +162,34 @@ namespace OptimizerWpf.Services
                 }
             }
             return bootFound && systemFound && targetDisk is uint number && !criticalDisks.Contains(number) ? number : null;
+        }
+
+        // Microsoft documents version identifiers as MM/DD/YYYY-HH:MM. Compare
+        // actual IDs, not changed headers, whitespace, removal of old versions or error text.
+        // An unknown/empty baseline is deliberately inconclusive, including first backup.
+        internal static HashSet<string> CatalogIdentifiers(string? output)
+        {
+            var ids = new HashSet<string>(StringComparer.Ordinal);
+            if (string.IsNullOrWhiteSpace(output) || output.Contains("[Output truncated]", StringComparison.Ordinal))
+                return ids;
+            foreach (var line in output.Split('\n'))
+            {
+                var match = System.Text.RegularExpressions.Regex.Match(line.Trim(),
+                    @"^[^:]+:\s*(\d{2}/\d{2}/\d{4}-\d{2}:\d{2})$");
+                if (match.Success && DateTime.TryParseExact(match.Groups[1].Value, "MM/dd/yyyy-HH:mm",
+                    System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out _))
+                    ids.Add(match.Groups[1].Value);
+            }
+            return ids;
+        }
+
+        internal static bool HasNewCatalogVersion(string? before, string? after)
+        {
+            var old = CatalogIdentifiers(before);
+            var current = CatalogIdentifiers(after);
+            if (old.Count == 0 || current.Count == 0) return false;
+            current.ExceptWith(old);
+            return current.Count != 0;
         }
 
         private static async Task<(bool Success, string Output)> RunAsync(params string[] arguments)

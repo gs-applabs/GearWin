@@ -1,4 +1,5 @@
 using System;
+using System.Formats.Asn1;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -336,16 +337,78 @@ namespace OptimizerWpf.Services
             return match.Success ? match.Groups[1].Value : null;
         }
 
+        // Require Valid Authenticode AND the actual organization attribute of
+        // the signer certificate. Do not split a formatted DN on commas:
+        // a quoted common name may itself contain a fake organization string.
+        internal static bool IsTrustedMicrosoftSignature(string? output)
+        {
+            if (string.IsNullOrWhiteSpace(output) || output.Length > 16384) return false;
+            var parts = output.Trim().Split('|', 2);
+            if (parts.Length != 2 || parts[0] != "Valid") return false;
+            try
+            {
+                var subject = new AsnReader(Convert.FromBase64String(parts[1]), AsnEncodingRules.DER);
+                var sequence = subject.ReadSequence();
+                int organizations = 0;
+                bool matched = false;
+                while (sequence.HasData)
+                {
+                    var rdn = sequence.ReadSetOf();
+                    while (rdn.HasData)
+                    {
+                        var attribute = rdn.ReadSequence();
+                        var oid = attribute.ReadObjectIdentifier();
+                        if (oid == "2.5.4.10")
+                        {
+                            organizations++;
+                            var tag = attribute.PeekTag();
+                            if (tag.TagClass != TagClass.Universal ||
+                                (tag.TagValue != (int)UniversalTagNumber.UTF8String &&
+                                 tag.TagValue != (int)UniversalTagNumber.PrintableString &&
+                                 tag.TagValue != (int)UniversalTagNumber.BMPString)) return false;
+                            matched = string.Equals(attribute.ReadCharacterString((UniversalTagNumber)tag.TagValue),
+                                "Microsoft Corporation", StringComparison.OrdinalIgnoreCase);
+                        }
+                        else attribute.ReadEncodedValue();
+                        attribute.ThrowIfNotEmpty();
+                    }
+                }
+                subject.ThrowIfNotEmpty();
+                return organizations == 1 && matched;
+            }
+            catch (Exception ex) when (ex is FormatException or AsnContentException or ArgumentException)
+            { return false; }
+        }
+
         private static async Task<bool> VerifyAuthenticodeAsync(string filePath)
         {
-            var psi = new ProcessStartInfo("powershell.exe",
-                PowerShellArgs.Command($"(Get-AuthenticodeSignature -LiteralPath '{filePath.Replace("'", "''")}').Status"))
-            { RedirectStandardOutput = true, UseShellExecute = false, CreateNoWindow = true };
+            var script = $"$ErrorActionPreference='Stop'; $s=Get-AuthenticodeSignature -LiteralPath '{filePath.Replace("'", "''")}'; " +
+                "if ($s.Status -ne 'Valid' -or $null -eq $s.SignerCertificate) { exit 1 }; " +
+                "'Valid|' + [Convert]::ToBase64String($s.SignerCertificate.SubjectName.RawData)";
+            var executable = Path.Combine(Environment.SystemDirectory, "WindowsPowerShell", "v1.0", "powershell.exe");
+            var psi = new ProcessStartInfo(executable, PowerShellArgs.Command(script))
+            {
+                RedirectStandardOutput = true, RedirectStandardError = true,
+                UseShellExecute = false, CreateNoWindow = true
+            };
             using var process = Process.Start(psi);
             if (process == null) return false;
-            var output = await process.StandardOutput.ReadToEndAsync();
-            await process.WaitForExitAsync();
-            return output.Trim() == "Valid";
+            var stdout = HealthCleanupService.ReadBoundedOutputAsync(process.StandardOutput, 16384);
+            var stderr = HealthCleanupService.ReadBoundedOutputAsync(process.StandardError, 4096);
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(45));
+            try
+            {
+                await process.WaitForExitAsync(timeout.Token);
+                await Task.WhenAll(stdout, stderr).WaitAsync(timeout.Token);
+                return process.ExitCode == 0 && string.IsNullOrWhiteSpace(await stderr) &&
+                    IsTrustedMicrosoftSignature(await stdout);
+            }
+            catch (OperationCanceledException)
+            {
+                // This child only verifies a signature; no installation has started.
+                try { if (!process.HasExited) process.Kill(entireProcessTree: true); } catch { }
+                return false;
+            }
         }
         public static Task<DriverScanResult> ScanAsync() => ScanCoordinatedAsync(CorePriority.User);
         internal static Task<DriverScanResult> ScanCoordinatedAsync(CorePriority priority) =>

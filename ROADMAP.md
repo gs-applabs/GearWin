@@ -49,6 +49,31 @@ Latest confirmed Windows CI at audit: run 46070758350, 716 passed (674 desktop +
 - CI: confirmed run 46071174933 (head cc80720c) job 140749655057, 706 desktop + 42 migration = 748 passed; installer and short measurements success. 314 authored .NET fixtures covered by that SHA; latest cumulative recovery/backup changes not covered. Normal CPU 4.284%, WS 314.54 MiB, private 203.57 MiB, writes 635 bytes, handles 985→1093; tray CPU .077%, WS 129.97 MiB, private 46.38 MiB, writes 0, handles 532→667. Normal private RAM worsened in this short run; no controlled performance or physical SSD conclusion.
 - Remaining RQ01/RQ03–05/RQ07/RQ10–24 tracked below/above; no bulk reset or master merge. SDK stays 10 until coordinated RQ01 migration. 2 newly authored .NET cases (transfer root and resource packaged), 330 cumulative authored. No merge or release.
 
+
+### P0.R — integration batch B (2026-11-28)
+
+- RQ05: ported Microsoft signer requirement, but replaced master comma-split DN parsing with DER certificate organization attribute parsing to reject quoted-CN spoofing. Require Authenticode Valid, process exit zero, clean stderr; use absolute system PowerShell path and bounded output/45 s read-only verification timeout. Preserve candidate secured staging and core admission. Real trust chain/WHQL sample and install acceptance remain unverified; organization alone is not certificate pinning or proof of intended driver identity.
+- RQ07: combine candidate target GUID/identity checks with before/after catalog identifiers, not master string-difference heuristic. Require readable recognized baseline and an actual new canonical MM/DD/YYYY-HH:MM identifier. Unknown/empty/first backup baseline deliberately yields unverified result, not claim of failure to create image; manual inspection needed. Version identifier reference: https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/wbadmin-get-versions and https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/wbadmin-start-recovery . No physical restore certification. 18 new .NET fixture cases, 348 cumulative authored, pending CI. No merge or release.
+
+### Κατάσταση RQ μετά τα batches A–B (πηγαίος κώδικας, όχι release)
+
+| RQ | Τρέχουσα κατάσταση / επόμενο βήμα |
+|---|---|
+| RQ01 | OPEN — coordinated .NET 11 desktop/migration/CI/installer migration |
+| RQ02 | PORTED — opt-in resources, compile/visual gates pending |
+| RQ03–04 | OPEN — Partclone and loop/distro workflows reconciliation |
+| RQ05 | PORTED — signer guard; real package trust/install test pending |
+| RQ06 | SOURCE COVERED — root logic already fixed; regression test restored |
+| RQ07 | PORTED — catalog ID check with volume identity; native backup/restore pending |
+| RQ08–09 | PARTIAL — brush and dynamic installer restored; remaining history, recovery export and upgrade tests |
+| RQ10–11 | OPEN — product docs/second provider |
+| RQ12 | PARTIAL — CLI planning; GUI/data migration gaps |
+| RQ13 | OPEN/deferred — usage-based suggestions |
+| RQ14–19 | PARTIAL — existing functionality; targeted runtime and lifecycle validation |
+| RQ20–21 | BLOCKED/deferred — release packaging/signing |
+| RQ22 | SUPERSEDED — no duplicate media converter; verify diagnostics |
+| RQ23–24 | OPEN — endurance and historical scripts audit |
+
 ### Αποδεδειγμένη κατάσταση
 
 - 283 διακριτά ευρήματα, 281 πλήρως ή μερικώς αντιμετωπισμένα σε πηγαίο κώδικα. Όχι 281 πιστοποιημένες διορθώσεις.
