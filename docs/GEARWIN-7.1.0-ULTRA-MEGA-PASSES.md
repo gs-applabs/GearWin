@@ -667,3 +667,7 @@ RQ03/RQ04 deliberately not blindly ported: master Partclone adapter imports sysf
 ## P0.R — recovery geometry groundwork (2026-11-28)
 
 RQ03/RQ04: raw clone now records LOG-SEC, rechecks identity and native BLKGETSIZE64/BLKSSZGET, refuses incompatible geometry; extracted sysfs holder check with strict unknown-state refusal and already-claimed-handle verified copy helper. No production loop-device bypass. 5 new Python fixtures (19 total before Partclone). This does not certify real disk or boot recovery.
+
+## P0.R — Partclone partition imaging (2026-11-28)
+
+RQ03 source port with stricter safety instead of copying master adapter: physical parent and partition identity, same/alias disk refusal, source offline, conservative destination filesystem/free space and root-owned ancestry, exclusive read-only descriptor, pinned destination directory, bounded manifest/strict duplicate keys, descriptor hash and checker, no-overwrite publication, durable flush. Optional external Partclone only, no GPL binaries; no restore or repartitioning. 13 new Python unittest methods (32 total including 19 raw clone cases). Package/GUI export and publish asset check updated. Engine compatibility with fd paths and exclusive source claim unverified; fails rather than falling back. Real loop and distro matrix still pending; actual partition boot recovery not certified. Source tests pending CI. Official CLI: https://partclone.org/usage/partclone.php .

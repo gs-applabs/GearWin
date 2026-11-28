@@ -95,8 +95,9 @@ namespace OptimizerWpf.Views
                     MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
             var folder = Path.Combine(System.AppContext.BaseDirectory, "Recovery");
             var script = Path.Combine(folder, "gearwin_clone.py");
+            var adapter = Path.Combine(folder, "partclone_adapter.py");
             var guide = Path.Combine(folder, "README.md");
-            if (!File.Exists(script) || !File.Exists(guide))
+            if (!File.Exists(script) || !File.Exists(adapter) || !File.Exists(guide))
             {
                 ThemedMessageBox.Show("Recovery assets are missing from this build.", "GearWin",
                     MessageBoxButton.OK, MessageBoxImage.Error);
@@ -114,6 +115,7 @@ namespace OptimizerWpf.Views
                 using var stream = new FileStream(picker.FileName, FileMode.Create, FileAccess.Write, FileShare.None);
                 using var archive = new ZipArchive(stream, ZipArchiveMode.Create);
                 archive.CreateEntryFromFile(script, "gearwin_clone.py", CompressionLevel.Optimal);
+                archive.CreateEntryFromFile(adapter, "partclone_adapter.py", CompressionLevel.Optimal);
                 archive.CreateEntryFromFile(guide, "README.md", CompressionLevel.Optimal);
                 TxtBackupStatus.Text = "Offline recovery kit exported: " + picker.FileName +
                     ". Boot Linux Live separately before attempting the clone.";

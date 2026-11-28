@@ -165,6 +165,8 @@
   <ItemGroup>
     <Content Include="..\..\tools\recovery\gearwin_clone.py" Link="Recovery\gearwin_clone.py"
              CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\..\tools\recovery\partclone_adapter.py" Link="Recovery\partclone_adapter.py"
+             CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="..\..\tools\recovery\README.md" Link="Recovery\README.md"
              CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>

@@ -37,3 +37,13 @@ https://learn.microsoft.com/windows-server/administration/windows-commands/wbadm
 Additional execution safeguards: require serial or WWN and kernel major/minor, recheck after both typed confirmations, claim both whole block devices exclusively, reject active kernel holders, verify actual device capacity/read-only state and keep descriptors open for the entire copy and SHA-256 readback. Missing identifiers or busy devices fail closed. These safeguards cannot prove all hardware aliases, hotplug races or offline conditions; do not bypass them. Verification covers the source-sized byte range, not any extra sectors on a larger target. A failed/interrupted copy may leave an unbootable target. No automatic retry or rollback is attempted.
 
 Raw clone now also compares logical sector sizes from lsblk and native BLKSSZGET on the held descriptors. Unknown or different geometry is refused. Larger target trailing sectors remain unchanged; this is not a secure erase.
+
+## Optional Partclone partition image (experimental)
+
+Install the distro's Partclone tools separately; no GPL program binaries are bundled. The exported kit contains `partclone_adapter.py`. Use a separately booted Live environment; root-owned non-writable-to-others directory ancestry on a separate mounted ext2/3/4 or XFS partition; reserve at least source capacity plus 64 MiB. All source disk partitions must be offline, with identifiable physical parents and known geometry. The adapter creates a partition image only, never a bootable disk layout or a restore operation. It holds an exclusive read-only source descriptor and pinned output directory, passes file-descriptor paths to Partclone, checks its image, computes SHA-256, publishes without overwrite, and fsyncs image/manifest. If a Partclone build rejects descriptor paths/claims, stop; never bypass. A failed publication may leave an image without a manifest: treat it as incomplete. The manifest is integrity metadata, not an authenticated signature. Verify from a trusted path, without root if possible. No unsupported filesystem fallback.
+
+    python3 partclone_adapter.py plan --device /dev/sda1 --output /mnt/backup/partition.pcl
+    sudo python3 partclone_adapter.py backup --device /dev/sda1 --output /mnt/backup/partition.pcl
+    python3 partclone_adapter.py verify --output /mnt/backup/partition.pcl
+
+The optional feature is experimental until tested on disposable loop devices and physical-partition acceptance environments. A SHA-256-only result explicitly does not certify Partclone internal format. GPT/EFI/boot/WinRE restore separately. Partclone CLI references: https://partclone.org/usage/partclone.php and https://partclone.org/usage/partclone.chkimg.php .
