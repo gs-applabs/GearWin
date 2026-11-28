@@ -58,6 +58,15 @@ public class AutoGameProfileJournalTests
     }
 
     [Theory]
+    [InlineData(0, 0, 1920, 1080, 0, 0, 1920, 1080, true)]
+    [InlineData(-2560, 0, 0, 1440, -2560, 0, 0, 1440, true)]
+    [InlineData(1920, -300, 4480, 1140, 1920, -300, 4480, 1140, true)]
+    [InlineData(10, 0, 1930, 1080, 0, 0, 1920, 1080, false)]
+    [InlineData(0, 0, 1920, 1040, 0, 0, 1920, 1080, false)]
+    public void FullscreenUsesActualMonitorBounds(int l, int t, int r, int b, int ml, int mt, int mr, int mb, bool expected) =>
+        Assert.Equal(expected, AutoGamingModeService.CoversMonitor(l,t,r,b,ml,mt,mr,mb));
+
+    [Theory]
     [InlineData(null, "a", 0, 1)]
     [InlineData("a", "a", 1, 2)]
     [InlineData("a", "a", 2, 2)]

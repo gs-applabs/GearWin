@@ -18,6 +18,49 @@ public class DriverServiceTests
         Assert.Equal(expected, DriverService.IsDateNewer(latest, installed));
     }
 
+    [Theory]
+    [InlineData(@"PCI\VEN_1234&DEV_5678", true)]
+    [InlineData("", false)]
+    [InlineData("bad\"id", false)]
+    [InlineData("bad;id", false)]
+    [InlineData("bad\nid", false)]
+    public void DeviceIdentityRejectsAmbiguousValues(string id, bool expected) =>
+        Assert.Equal(expected, DriverService.ValidDeviceIdentity(id));
+
+    private static PnpDeviceInfo Device(string id, string version) =>
+        new("Device", @"PCI\VEN_1234", Version.Parse(version), DateTime.MinValue) { DeviceInstanceId = id };
+
+    private static CatalogCandidate Candidate(string id, string version) =>
+        new("Device", @"PCI\VEN_1234", "00000000-0000-0000-0000-000000000001",
+            "Driver", Version.Parse(version), DateTime.MinValue, false) { DeviceInstanceId = id };
+
+    [Theory]
+    [InlineData("1.0", "2.0", true)]
+    [InlineData("0.0.0.0", "2.0", false)]
+    [InlineData("2.0", "2.0", false)]
+    [InlineData("3.0", "2.0", false)]
+    public void InstallRequiresKnownOlderVersion(string installed, string requested, bool accepted) =>
+        Assert.Equal(accepted, DriverService.CatalogTargetStillEligible(Candidate("a", requested), new[] { Device("a", installed) }));
+
+    [Fact]
+    public void RecheckRefusesMissingOrAmbiguousInstanceAndOtherNewerDevice()
+    {
+        var c = Candidate("a", "2.0");
+        Assert.False(DriverService.CatalogTargetStillEligible(c, new[] { Device("b", "1.0") }));
+        Assert.False(DriverService.CatalogTargetStillEligible(c, new[] { Device("a", "1.0"), Device("A", "1.0") }));
+        Assert.False(DriverService.CatalogTargetStillEligible(c, new[] { Device("a", "1.0"), Device("b", "3.0") }));
+        Assert.True(DriverService.CatalogTargetStillEligible(c, new[] { Device("a", "1.0"), Device("b", "1.0") }));
+    }
+
+    [Fact]
+    public void BestCandidateUsesVersionTieBreakAndExactHardwareId()
+    {
+        var device = Device("a", "1.0");
+        var wrong = Candidate("a", "9.0") with { HardwareId = "other" };
+        Assert.Equal(new Version(3, 0), DriverService.PickBest(device,
+            new() { Candidate("a", "2.0"), wrong, Candidate("a", "3.0") })!.Version);
+    }
+
     [Fact]
     public void HasSourceOverlap_MatchesSubstringEitherDirection()
     {

@@ -21,11 +21,13 @@ namespace OptimizerWpf.Services
     public record PnpDeviceInfo(string DeviceName, string HardwareId, Version CurrentVersion, DateTime CurrentDate)
     {
         public string PnpClass { get; init; } = "";
+        public string DeviceInstanceId { get; init; } = "";
     }
 
     public record CatalogCandidate(string DeviceName, string HardwareId, string UpdateId, string Title, Version Version, DateTime ReleaseDate, bool IsWhql)
     {
         public string ResultClass { get; init; } = "";
+        public string DeviceInstanceId { get; init; } = "";
     }
 
     // Port των 4 πρόσθετων πηγών του Optimizer.ps1's Start-DriverScan (~11977-12289, βλ. HANDOFF.md
@@ -90,34 +92,58 @@ namespace OptimizerWpf.Services
 
         // ===== Microsoft Update Catalog (ανά Hardware ID) =====
 
+        internal static bool ValidDeviceIdentity(string? value) =>
+            !string.IsNullOrWhiteSpace(value) && value.Length <= 512 &&
+            !value.Any(ch => char.IsControl(ch) || ch is '"' or ',' or ';');
+
+        internal static bool KnownDriverVersion(Version? value) =>
+            value != null && value > new Version(0, 0, 0, 0);
+
+        private static ManagementObjectSearcher DeviceQuery(string query) =>
+            new(new ManagementScope(@"root\CIMV2"), new ObjectQuery(query),
+                new EnumerationOptions { ReturnImmediately = true, Rewindable = false, Timeout = TimeSpan.FromSeconds(15) });
+
         public static Task<IReadOnlyList<PnpDeviceInfo>> GetSystemDevicesAsync() => Task.Run(() =>
         {
-            var devices = new List<PnpDeviceInfo>();
-            using var searcher = new ManagementObjectSearcher("SELECT Name, DeviceID, HardwareID, PNPClass FROM Win32_PnPEntity WHERE ConfigManagerErrorCode = 0");
-            foreach (ManagementObject entity in searcher.Get())
+            // Fixed WQL, two queries rather than N+1 dynamically interpolated queries.
+            var installed = new Dictionary<string, (Version? Version, DateTime Date)>(StringComparer.OrdinalIgnoreCase);
+            using (var searcher = DeviceQuery("SELECT DeviceID, DriverVersion, DriverDate FROM Win32_PnPSignedDriver"))
+            using (var rows = searcher.Get())
             {
-                var name = entity["Name"] as string;
-                var hwIds = entity["HardwareID"] as string[];
-                var deviceId = entity["DeviceID"] as string;
-                if (string.IsNullOrEmpty(name) || hwIds == null || hwIds.Length == 0 || deviceId == null) continue;
-                var pnpClass = entity["PNPClass"] as string ?? "";
-
-                var version = new Version(0, 0, 0, 0);
-                var date = DateTime.MinValue;
-                try
+                int count = 0;
+                foreach (ManagementObject row in rows)
                 {
-                    using var driverSearcher = new ManagementObjectSearcher(
-                        $"ASSOCIATORS OF {{Win32_PnPEntity.DeviceID=\"{deviceId.Replace("\\", "\\\\")}\"}} WHERE ResultClass = Win32_PnPSignedDriver");
-                    var signed = driverSearcher.Get().Cast<ManagementBaseObject>().FirstOrDefault();
-                    if (signed != null)
+                    using (row)
                     {
-                        if (signed["DriverVersion"] is string vs) Version.TryParse(vs, out version!);
-                        if (signed["DriverDate"] is string ds) date = ManagementDateTimeConverter.ToDateTime(ds);
+                        if (++count > 4096) throw new InvalidDataException("Driver inventory exceeds limit.");
+                        if (row["DeviceID"] is not string id || !ValidDeviceIdentity(id)) continue;
+                        Version.TryParse(row["DriverVersion"] as string, out var version);
+                        DateTime date = DateTime.MinValue;
+                        try { if (row["DriverDate"] is string ds) date = ManagementDateTimeConverter.ToDateTime(ds); }
+                        catch (ArgumentException) { }
+                        if (!installed.TryAdd(id, (version, date))) installed[id] = (null, DateTime.MinValue);
                     }
                 }
-                catch { }
+            }
 
-                devices.Add(new PnpDeviceInfo(name, hwIds[0], version, date) { PnpClass = pnpClass });
+            var devices = new List<PnpDeviceInfo>();
+            using var entities = DeviceQuery("SELECT Name, DeviceID, HardwareID, PNPClass FROM Win32_PnPEntity WHERE ConfigManagerErrorCode = 0");
+            using var collection = entities.Get();
+            int seen = 0;
+            foreach (ManagementObject entity in collection)
+            {
+                using (entity)
+                {
+                    if (++seen > 4096) throw new InvalidDataException("Device inventory exceeds limit.");
+                    var name = entity["Name"] as string;
+                    var hwIds = entity["HardwareID"] as string[];
+                    var deviceId = entity["DeviceID"] as string;
+                    if (string.IsNullOrEmpty(name) || hwIds == null || hwIds.Length == 0 ||
+                        !ValidDeviceIdentity(deviceId) || !ValidDeviceIdentity(hwIds[0])) continue;
+                    installed.TryGetValue(deviceId!, out var driver);
+                    devices.Add(new PnpDeviceInfo(name, hwIds[0], driver.Version ?? new Version(0, 0, 0, 0), driver.Date)
+                    { PnpClass = entity["PNPClass"] as string ?? "", DeviceInstanceId = deviceId! });
+                }
             }
             return (IReadOnlyList<PnpDeviceInfo>)devices;
         });
@@ -140,46 +166,43 @@ namespace OptimizerWpf.Services
         // για ΤΟ ΙΔΙΟ αποτέλεσμα - το hardware δεν άλλαξε. ΣΗΜΕΙΩΣΗ ΕΙΛΙΚΡΙΝΕΙΑΣ: ένα νέο driver που
         // δημοσιεύτηκε ΜΕΣΑ σε αυτό το 24ωρο δεν θα φανεί μέχρι να λήξει η cache - αποδεκτός συμβιβασμός
         // δεδομένου του πόσο σπάνια αλλάζει το διαθέσιμο driver ενός συγκεκριμένου hardware ID.
-        private static readonly string CatalogCachePath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "OptimizerWpf", "DriverCatalogCache.json");
+        // Session-only bounded cache: legacy disk cache is deliberately not trusted or deleted.
+        // No idle I/O, no cross-process writable metadata used to propose privileged changes.
+        private const int MaxCatalogEntries = 128;
+        private const int MaxCatalogRows = 32;
         private static readonly TimeSpan CatalogCacheTtl = TimeSpan.FromHours(24);
-        private record CachedCandidate(string DeviceName, string HardwareId, string UpdateId, string Title, string Version, string ReleaseDate, bool IsWhql, string ResultClass);
-        private record CatalogCacheEntry(DateTime CachedAtUtc, List<CachedCandidate> Candidates);
-        private static Dictionary<string, CatalogCacheEntry>? _catalogCache;
+        private static readonly object CatalogCacheGate = new();
+        private static readonly Dictionary<string, (DateTime CachedAtUtc, CatalogCandidate[] Rows)> CatalogCache =
+            new(StringComparer.OrdinalIgnoreCase);
 
-        private static Dictionary<string, CatalogCacheEntry> LoadCatalogCache()
+        internal static bool ValidCatalogRow(CatalogCandidate c) =>
+            ValidDeviceIdentity(c.HardwareId) && Guid.TryParseExact(c.UpdateId, "D", out _) &&
+            c.Title is { Length: > 0 and <= 1024 } && c.ResultClass is { Length: <= 256 } &&
+            c.DeviceName is { Length: > 0 and <= 512 } && KnownDriverVersion(c.Version);
+
+        private static List<CatalogCandidate>? ReadCatalogCache(PnpDeviceInfo device)
         {
-            if (_catalogCache != null) return _catalogCache;
-            try
+            lock (CatalogCacheGate)
             {
-                if (File.Exists(CatalogCachePath))
-                    _catalogCache = JsonSerializer.Deserialize<Dictionary<string, CatalogCacheEntry>>(File.ReadAllText(CatalogCachePath));
+                if (!CatalogCache.TryGetValue(device.HardwareId, out var entry)) return null;
+                var age = DateTime.UtcNow - entry.CachedAtUtc;
+                if (age < TimeSpan.Zero || age >= CatalogCacheTtl)
+                { CatalogCache.Remove(device.HardwareId); return null; }
+                return entry.Rows.Select(c => c with { DeviceName = device.DeviceName, DeviceInstanceId = device.DeviceInstanceId }).ToList();
             }
-            catch { }
-            _catalogCache ??= new Dictionary<string, CatalogCacheEntry>();
-            return _catalogCache;
         }
 
-        private static void SaveCatalogCache()
+        private static void CacheCatalogRows(PnpDeviceInfo device, List<CatalogCandidate> candidates)
         {
-            try
+            // Empty or malformed results are not authoritative. Do not truncate
+            // a list and then pretend the truncated search is complete.
+            if (candidates.Count == 0 || candidates.Count > MaxCatalogRows || candidates.Any(c => !ValidCatalogRow(c))) return;
+            lock (CatalogCacheGate)
             {
-                Directory.CreateDirectory(Path.GetDirectoryName(CatalogCachePath)!);
-                File.WriteAllText(CatalogCachePath, JsonSerializer.Serialize(_catalogCache));
+                if (CatalogCache.Count >= MaxCatalogEntries && !CatalogCache.ContainsKey(device.HardwareId))
+                    CatalogCache.Remove(CatalogCache.OrderBy(x => x.Value.CachedAtUtc).First().Key);
+                CatalogCache[device.HardwareId] = (DateTime.UtcNow, candidates.ToArray());
             }
-            catch { }
-        }
-
-        private static CachedCandidate ToCached(CatalogCandidate c) =>
-            new(c.DeviceName, c.HardwareId, c.UpdateId, c.Title, c.Version.ToString(), c.ReleaseDate.ToString("O"), c.IsWhql, c.ResultClass);
-
-        private static CatalogCandidate? FromCached(CachedCandidate c)
-        {
-            try
-            {
-                return new CatalogCandidate(c.DeviceName, c.HardwareId, c.UpdateId, c.Title, Version.Parse(c.Version), DateTime.Parse(c.ReleaseDate), c.IsWhql) { ResultClass = c.ResultClass };
-            }
-            catch { return null; }
         }
 
         public static async Task<(IReadOnlyList<CatalogCandidate> Candidates, bool LooksBlocked)> ScanCatalogAsync(
@@ -189,8 +212,6 @@ namespace OptimizerWpf.Services
             var devicesWithAnyResult = 0;
             var devicesScanned = 0;
             var rnd = new Random();
-            var cache = LoadCatalogCache();
-            var cacheChanged = false;
             var requestFailed = false;
 
             foreach (var device in devices)
@@ -199,9 +220,12 @@ namespace OptimizerWpf.Services
                 progress?.Report(device.DeviceName);
                 devicesScanned++;
 
-                if (cache.TryGetValue(device.HardwareId, out var cached) && DateTime.UtcNow - cached.CachedAtUtc < CatalogCacheTtl)
+                if (!KnownDriverVersion(device.CurrentVersion) || !ValidDeviceIdentity(device.HardwareId) ||
+                    !ValidDeviceIdentity(device.DeviceInstanceId)) { requestFailed = true; continue; }
+
+                var cachedCandidates = ReadCatalogCache(device);
+                if (cachedCandidates != null)
                 {
-                    var cachedCandidates = cached.Candidates.Select(FromCached).Where(c => c != null).Select(c => c!).ToList();
                     if (cachedCandidates.Count > 0) devicesWithAnyResult++;
                     var bestCached = PickBest(device, cachedCandidates);
                     if (bestCached != null) results.Add(bestCached);
@@ -212,8 +236,7 @@ namespace OptimizerWpf.Services
                 {
                     var candidates = await SearchCatalogForDeviceWithRetryAsync(device, ct);
                     if (candidates.Count > 0) devicesWithAnyResult++;
-                    cache[device.HardwareId] = new CatalogCacheEntry(DateTime.UtcNow, candidates.Select(ToCached).ToList());
-                    cacheChanged = true;
+                    CacheCatalogRows(device, candidates);
                     var best = PickBest(device, candidates);
                     if (best != null) results.Add(best);
                 }
@@ -221,8 +244,6 @@ namespace OptimizerWpf.Services
                 catch { requestFailed = true; /* do not cache failed requests as empty successes */ }
                 await Task.Delay(350 + rnd.Next(0, 250), ct);
             }
-
-            if (cacheChanged) SaveCatalogCache();
 
             var looksBlocked = devicesWithAnyResult == 0 && (requestFailed || devicesScanned >= 5);
             return (results, looksBlocked);
@@ -256,8 +277,11 @@ namespace OptimizerWpf.Services
                 if (!Version.TryParse(m.Groups["Version"].Value.Trim(), out var version)) continue;
                 if (!DateTime.TryParse(m.Groups["Date"].Value.Trim(), out var date)) continue;
 
-                list.Add(new CatalogCandidate(device.DeviceName, device.HardwareId, m.Groups["UpdateId"].Value, title, version, date, IsWhql: true)
-                { ResultClass = m.Groups["Class"].Value.Trim() });
+                // HTML text alone does not establish WHQL certification.
+                var candidate = new CatalogCandidate(device.DeviceName, device.HardwareId, m.Groups["UpdateId"].Value, title, version, date, IsWhql: false)
+                { ResultClass = m.Groups["Class"].Value.Trim(), DeviceInstanceId = device.DeviceInstanceId };
+                if (ValidCatalogRow(candidate)) list.Add(candidate);
+                if (list.Count > 256) throw new InvalidDataException("Catalog result limit exceeded.");
             }
             return list;
         }
@@ -267,20 +291,21 @@ namespace OptimizerWpf.Services
         // αν η κλάση συσκευής (π.χ. "Net"/"Display"/"HDC") είναι γνωστή ΚΑΙ το αποτέλεσμα του Catalog
         // έχει ΔΙΑΦΟΡΕΤΙΚΗ, μη-κενή κλάση, απορρίπτεται ως πιθανό ψευδές ταίριασμα - όχι τέλεια
         // επικύρωση, αλλά αρκετά καλή για να πιάσει τα πιο προφανή άσχετα αποτελέσματα.
-        private static CatalogCandidate? PickBest(PnpDeviceInfo device, List<CatalogCandidate> candidates)
+        internal static CatalogCandidate? PickBest(PnpDeviceInfo device, List<CatalogCandidate> candidates)
         {
             CatalogCandidate? best = null;
             var bestScore = -1;
             foreach (var c in candidates)
             {
-                if (c.Version <= device.CurrentVersion) continue;
+                if (!KnownDriverVersion(device.CurrentVersion) || !ValidCatalogRow(c) ||
+                    !string.Equals(c.HardwareId, device.HardwareId, StringComparison.OrdinalIgnoreCase) || c.Version <= device.CurrentVersion) continue;
                 if (!string.IsNullOrEmpty(device.PnpClass) && !string.IsNullOrEmpty(c.ResultClass) &&
                     !c.ResultClass.Contains(device.PnpClass, StringComparison.OrdinalIgnoreCase) &&
                     !device.PnpClass.Contains(c.ResultClass, StringComparison.OrdinalIgnoreCase))
                     continue;
 
                 var score = (c.IsWhql ? 40 : 0) + 30 + (c.ReleaseDate > device.CurrentDate ? 20 : 0);
-                if (score > bestScore) { bestScore = score; best = c; }
+                if (score > bestScore || (score == bestScore && best != null && c.Version > best.Version)) { bestScore = score; best = c; }
             }
             return best;
         }
@@ -297,6 +322,8 @@ namespace OptimizerWpf.Services
             string? tempDir = null;
             try
             {
+                if (!ValidCatalogRow(candidate) || !ValidDeviceIdentity(candidate.DeviceInstanceId))
+                    throw new InvalidDataException("Rescan devices before installing this driver.");
                 var downloadUrl = CatalogPackage.Normalize(await ResolveCatalogDownloadUrlAsync(candidate.UpdateId), fromCatalog: true);
                 if (downloadUrl == null) { LastInstallLog = "Unsupported or ambiguous Catalog package (CAB required)."; return false; }
                 tempDir = SecureStorage.NewPrivateTempDir("DriverCatalog");
@@ -320,8 +347,7 @@ namespace OptimizerWpf.Services
                 // Recheck the selected device is still present and the
                 // candidate is newer. Do not rely solely on cached metadata.
                 var devices = await GetSystemDevicesAsync();
-                if (!devices.Any(d => d.HardwareId.Equals(candidate.HardwareId, StringComparison.OrdinalIgnoreCase)
-                    && d.CurrentVersion != null && candidate.Version > d.CurrentVersion))
+                if (!CatalogTargetStillEligible(candidate, devices))
                 {
                     LastInstallLog += " · Device/version no longer eligible";
                     return false;
@@ -329,15 +355,39 @@ namespace OptimizerWpf.Services
                 int install = await RunCatalogCommandAsync("pnputil.exe", "/add-driver", inf, "/install");
                 LastInstallLog += " · PnPUtil exit " + install +
                     (install == 3010 ? " (restart required)" : "");
-                // Exit success means PnPUtil accepted the package, not proof
-                // that Windows selected it over a higher-ranked installed driver.
-                return install is 0 or 3010;
+                if (install is not (0 or 3010)) return false;
+                // Acceptance is distinct from active version. A reboot or Windows
+                // ranking may defer or prevent activation.
+                try
+                {
+                    var after = await GetSystemDevicesAsync();
+                    var active = after.Where(d => string.Equals(d.DeviceInstanceId, candidate.DeviceInstanceId,
+                        StringComparison.OrdinalIgnoreCase)).ToArray();
+                    LastInstallLog += active.Length == 1 && active[0].CurrentVersion == candidate.Version
+                        ? " · Selected device reports requested version"
+                        : " · Accepted; active version not verified";
+                }
+                catch { LastInstallLog += " · Accepted; active version readback unavailable"; }
+                return true;
             }
             catch (Exception ex) { LastInstallLog = (LastInstallLog ?? "Catalog installation") + " · " + ex.Message; return false; }
             finally
             {
                 if (tempDir != null) try { Directory.Delete(tempDir, true); } catch { }
             }
+        }
+
+        internal static bool CatalogTargetStillEligible(CatalogCandidate candidate, IReadOnlyList<PnpDeviceInfo> devices)
+        {
+            if (!ValidCatalogRow(candidate) || !ValidDeviceIdentity(candidate.DeviceInstanceId)) return false;
+            var matching = devices.Where(d => string.Equals(d.HardwareId, candidate.HardwareId,
+                StringComparison.OrdinalIgnoreCase)).ToArray();
+            // PnPUtil can affect several matching devices. Refuse ambiguous
+            // instance identity or unknown/equal/newer versions in this set.
+            return matching.Count(d => string.Equals(d.DeviceInstanceId, candidate.DeviceInstanceId,
+                StringComparison.OrdinalIgnoreCase)) == 1 &&
+                matching.All(d => ValidDeviceIdentity(d.DeviceInstanceId) &&
+                    KnownDriverVersion(d.CurrentVersion) && candidate.Version > d.CurrentVersion);
         }
 
         private static async Task<int> RunCatalogCommandAsync(string executable, params string[] arguments)

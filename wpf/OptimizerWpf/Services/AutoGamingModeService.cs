@@ -20,8 +20,18 @@ public static class AutoGamingModeService
     [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
     [DllImport("user32.dll")] private static extern int GetWindowThreadProcessId(IntPtr hWnd, out int processId);
-    [DllImport("user32.dll")] private static extern int GetSystemMetrics(int index);
+    [DllImport("user32.dll")] private static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint flags);
+    [DllImport("user32.dll", CharSet = CharSet.Auto)]
+    private static extern bool GetMonitorInfo(IntPtr monitor, ref MONITORINFO info);
+    [StructLayout(LayoutKind.Sequential)]
     private struct RECT { public int Left, Top, Right, Bottom; }
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MONITORINFO { public int Size; public RECT Monitor, Work; public uint Flags; }
+
+    internal static bool CoversMonitor(int left, int top, int right, int bottom,
+        int monitorLeft, int monitorTop, int monitorRight, int monitorBottom) =>
+        monitorRight > monitorLeft && monitorBottom > monitorTop &&
+        left == monitorLeft && top == monitorTop && right == monitorRight && bottom == monitorBottom;
 
     public static void Start()
     {
@@ -112,8 +122,12 @@ public static class AutoGamingModeService
         try
         {
             var hwnd = GetForegroundWindow();
-            if (hwnd == IntPtr.Zero || !GetWindowRect(hwnd, out var r) ||
-                r.Right - r.Left != GetSystemMetrics(0) || r.Bottom - r.Top != GetSystemMetrics(1)) return null;
+            if (hwnd == IntPtr.Zero || !GetWindowRect(hwnd, out var r)) return null;
+            var monitor = MonitorFromWindow(hwnd, 0); // MONITOR_DEFAULTTONULL
+            var info = new MONITORINFO { Size = Marshal.SizeOf<MONITORINFO>() };
+            if (monitor == IntPtr.Zero || !GetMonitorInfo(monitor, ref info) ||
+                !CoversMonitor(r.Left, r.Top, r.Right, r.Bottom, info.Monitor.Left,
+                    info.Monitor.Top, info.Monitor.Right, info.Monitor.Bottom)) return null;
             GetWindowThreadProcessId(hwnd, out int pid);
             using var process = Process.GetProcessById(pid);
             if (pid == Environment.ProcessId || process.ProcessName is "explorer" or "dwm" or "dotnet") return null;
