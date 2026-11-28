@@ -2,7 +2,7 @@ name: recovery-vm
 on:
   workflow_dispatch:
   push:
-    branches: [release/7.1.0-ultra]
+    branches: [release/7.1.0-ultra, release/7.1.0-rc1, release/7.1.0-final]
     paths: ['tools/recovery/**', 'migration/**', '.github/workflows/recovery-vm.yml']
 permissions:
   contents: read

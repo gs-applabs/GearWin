@@ -8,7 +8,7 @@ name: installer-e2e
 on:
   workflow_dispatch:
   push:
-    branches: [main, master, release/7.0.0-validation, release/7.1.0-ultra]
+    branches: [main, master, release/7.0.0-validation, release/7.1.0-ultra, release/7.1.0-rc1, release/7.1.0-final]
     paths-ignore: ['docs/**', '**/*.md']
 
 concurrency:
@@ -46,7 +46,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          git archive --format=zip --output=dist/GearWin-7.0.0-source.zip HEAD
+          git archive --format=zip --output=dist/GearWin-7.1.0-rc1-source.zip HEAD
           if ($LASTEXITCODE -ne 0) { throw 'git archive source failed' }
           New-Item -ItemType Directory -Force -Path dist/markdown | Out-Null
           $markdownFiles = @(git ls-files -- '*.md' '*.MD')
@@ -56,9 +56,9 @@ jobs:
             New-Item -ItemType Directory -Path (Split-Path -Parent $path) -Force | Out-Null
             Copy-Item -LiteralPath $relative -Destination $path
           }
-          Compress-Archive -Path dist/markdown/* -DestinationPath dist/GearWin-7.0.0-markdown.zip -CompressionLevel Optimal
+          Compress-Archive -Path dist/markdown/* -DestinationPath dist/GearWin-7.1.0-rc1-markdown.zip -CompressionLevel Optimal
           @(
-            'Version: 7.0.0 candidate',
+            'Version: 7.1.0-rc.1 candidate',
             "Git commit: $(git rev-parse HEAD)",
             'Source is from tracked Git files. No binaries or build outputs are included.',
             "Markdown count: $($markdownFiles.Count)",
@@ -69,10 +69,10 @@ jobs:
           } | Set-Content dist/SOURCE_SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: gearwin-source-7.0.0
+          name: gearwin-source-7.1.0-rc1
           path: |
-            dist/GearWin-7.0.0-source.zip
-            dist/GearWin-7.0.0-markdown.zip
+            dist/GearWin-7.1.0-rc1-source.zip
+            dist/GearWin-7.1.0-rc1-markdown.zip
             dist/PACKAGE_PROVENANCE.txt
             dist/SOURCE_SHA256SUMS.txt
           retention-days: 30

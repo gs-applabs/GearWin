@@ -1,6 +1,7 @@
 name: Opsis.UI 6 WPF compatibility
 on:
   push:
+    branches: ['**']
     paths:
       - 'wpf/OptimizerWpf/App.xaml'
       - 'wpf/OptimizerWpf/Themes/OpsisUI6Midnight.xaml'

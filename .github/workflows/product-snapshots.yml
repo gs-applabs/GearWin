@@ -2,7 +2,7 @@ name: Product snapshots
 on:
   workflow_dispatch:
   push:
-    branches: [release/7.1.0-ultra]
+    branches: [release/7.1.0-ultra, release/7.1.0-rc1, release/7.1.0-final]
     paths: ['.github/workflows/product-snapshots.yml']
 permissions:
   contents: read
@@ -11,7 +11,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   capture:
-    if: github.ref == 'refs/heads/release/7.1.0-ultra'
+    if: github.ref == 'refs/heads/release/7.1.0-ultra' || github.ref == 'refs/heads/release/7.1.0-rc1' || github.ref == 'refs/heads/release/7.1.0-final'
     runs-on: windows-2025
     timeout-minutes: 30
     steps:
