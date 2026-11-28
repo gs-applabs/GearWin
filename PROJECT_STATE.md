@@ -2,12 +2,12 @@
 
 Read [START_HERE.md](START_HERE.md) first; release/7.1.0-ultra, draft PR #6.
 
-## Current P2 follow-up: CAB preflight / shared browser plan — 2026-11-28
+## Current P2 follow-up: driver scan uncertainty and UI — 2026-11-28
 
-- Parent 75e51e9061bd5ccce60b28748e401562e4dcc518 installer CI 46106288722 failed to compile: job 140859683226 CS0104 DriverService EnumerationOptions ambiguous System.Management/System.IO. Qualified System.Management type. Offline clone job passed, installer E2E skipped; audit 46106288660 pending at inspection.
-- RQ05/15: CAB preflight before expand.exe, after signature check. MS-CAB structural bounds on folder/file tables, names, spanning, duplicate leaves, compressed ranges, declared uncompressed sizes, per-folder offsets and 2 GiB aggregate quota. Rejects non-ASCII names, ambiguous paths, spanning and unsupported layouts conservatively; real signed CAB compatibility still requires test. This is metadata validation, NOT a filesystem quota, decompression sandbox or proof of valid compressed bytes. Post-extraction checks remain; no forced install termination. Reference: https://download.microsoft.com/download/4/D/A/4DA14F27-B4EF-4170-A6E6-5B1EF85B1BAA/%5BMS-CAB%5D.pdf .
-- RQ16: normalized browser cache root plan deduplicates same/nested roots with boundary-aware matching, shared between aggregate health scan, QuickClean estimate/execution and per-browser paths. No change to age policy or profile data exclusions; overlap outside browser category and alternate cleanup paths still open.
-- 17 new deterministic cases (573 cumulative authored, not passed). Remaining RQ15 partial scan reporting/progress/cancel, RQ16 wider dedupe, RQ17 SSD identity, RQ13 opt-in usage suggestions, RQ14 automatic profile ownership, RQ12 migration, P3 UI/i18n and P4/P5. User requests implementation first then consolidated checks; automatic CI may trigger meanwhile. No merge or release, version metadata still 7.0.0.
+- RQ15: legacy LooksBlocked flag now also signals partial scan failure and empty inventory; UI keeps found candidates visible but does not publish an authoritative zero/count to Updates Hub when Catalog or WU is incomplete. Catalog rows mark WHQL unknown rather than incorrectly marking every unsigned-unknown HTML result as a preview; title preview filtering remains. This changes previous behavior deliberately; actual WHQL verification still required before certification.
+- Driver history distinguishes accepted Catalog package from verified installed/active driver; single install retains other result rows, uses detailed log rather than unconditional installed label, invalidates hub count until rescan. Existing translations reused for unknown status; log/history still English and need P3 review. Other sources and batch UI still require end-to-end verification.
+- Five new deterministic cases (578 cumulative authored, not passed). Parent ffc566747a7c5ad368fe5bd868429ac8d8de0a68 audit 46106464870 pending, installer 46106464886 in progress at inspection. No final certification or release.
+- Remaining implementation: update progress/cancel between items and actual native results, driver backup/restore-point failure handling, broader cleanup dedupe, SSD physical identity, opt-in usage suggestions, gaming ownership, migration, UI/i18n and unified tests. Keep P4 hardware and independent provider open; no merge. Version metadata remains 7.0.0.
 
 
 ---

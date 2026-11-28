@@ -61,6 +61,15 @@ public class DriverServiceTests
             new() { Candidate("a", "2.0"), wrong, Candidate("a", "3.0") })!.Version);
     }
 
+    [Theory]
+    [InlineData(true, 10, 4, true)]
+    [InlineData(false, 0, 0, true)]
+    [InlineData(false, 5, 0, true)]
+    [InlineData(false, 5, 2, false)]
+    [InlineData(false, 1, 0, false)]
+    public void IncompleteDriverScanIsNotReportedAsComplete(bool failed, int scanned, int found, bool expected) =>
+        Assert.Equal(expected, DriverService.CatalogScanIncomplete(failed, scanned, found));
+
     [Fact]
     public void HasSourceOverlap_MatchesSubstringEitherDirection()
     {

@@ -245,9 +245,13 @@ namespace OptimizerWpf.Services
                 await Task.Delay(350 + rnd.Next(0, 250), ct);
             }
 
-            var looksBlocked = devicesWithAnyResult == 0 && (requestFailed || devicesScanned >= 5);
+            var looksBlocked = CatalogScanIncomplete(requestFailed, devicesScanned, devicesWithAnyResult);
             return (results, looksBlocked);
         }
+
+        // The legacy LooksBlocked flag now also covers incomplete coverage.
+        internal static bool CatalogScanIncomplete(bool requestFailed, int scanned, int withResults) =>
+            requestFailed || scanned == 0 || (scanned >= 5 && withResults == 0);
 
         private static async Task<List<CatalogCandidate>> SearchCatalogForDeviceWithRetryAsync(PnpDeviceInfo device, CancellationToken ct)
         {

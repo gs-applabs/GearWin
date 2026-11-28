@@ -721,8 +721,9 @@ namespace OptimizerWpf.Views
                         : row.CatalogCandidate != null && await DriverService.InstallCatalogDriverAsync(row.CatalogCandidate);
                 }
                 catch { done = false; }
-                DriverHistoryService.Record(row.Title, row.WuUpdate != null ? "Windows Update" : "Microsoft Update Catalog", done ? "installed" : "failed");
-                if (done) { okNames.Add(row.Title); _driverUpdates.Remove(row); UpdatesHubService.ReportDriverScan(_driverUpdates.Count); } else failNames.Add(row.Title);
+                DriverHistoryService.Record(row.Title, row.WuUpdate != null ? "Windows Update" : "Microsoft Update Catalog",
+                    !done ? "failed" : row.WuUpdate != null ? "installed" : "accepted; active version not necessarily verified");
+                if (done) { okNames.Add(row.Title); _driverUpdates.Remove(row); UpdatesHubService.ReportDriverScan(null); } else failNames.Add(row.Title);
             }
             scope.End($"{LanguageService.T("Opt_FilterDrivers")}: {okNames.Count} / {rows.Count}" + (failNames.Count > 0 ? $" ({failNames.Count})" : ""));
             return (okNames, failNames);
@@ -941,10 +942,10 @@ namespace OptimizerWpf.Views
                 {
                     Title = c.Title,
                     SourceBadge = "Update Catalog",
-                    SubText = $"{c.DeviceName} · v{c.Version}",
+                    SubText = $"{c.DeviceName} · v{c.Version} · WHQL: {(c.IsWhql ? "✓" : LanguageService.T("Opt_Unknown"))}",
                     CatalogCandidate = c,
                     Vendor = UnifiedDriverRow.VendorFromTitle(c.Title),
-                    IsPreview = UnifiedDriverRow.LooksPreview(c.Title, c.IsWhql),
+                    IsPreview = UnifiedDriverRow.LooksPreview(c.Title, c.IsWhql ? true : (bool?)null),
                 });
 
 
@@ -974,13 +975,13 @@ namespace OptimizerWpf.Views
             parts.Add(wuResult.PolicyBlocked
                 ? LanguageService.T("Opt_WuPolicyBlocked")
                 : $"Windows Update: {wuResult.Updates.Count}{LanguageService.T("Opt_UpdatesSuffix")}");
-            parts.Add(looksBlocked
-                ? $"{LanguageService.T("Opt_CatalogNoResponsePrefix")}{devices.Count}{LanguageService.T("Opt_CatalogNoResponseSuffix")}"
-                : $"Update Catalog: {candidates.Count}{LanguageService.T("Opt_CatalogUpdatesMid")}{devices.Count}{LanguageService.T("Opt_CatalogUpdatesSuffix")}");
+            parts.Add($"Update Catalog: {candidates.Count}" + (looksBlocked
+                ? $" · {LanguageService.T("Opt_Unknown")}" : $"{LanguageService.T("Opt_CatalogUpdatesMid")}{devices.Count}{LanguageService.T("Opt_CatalogUpdatesSuffix")}"));
+            bool incomplete = looksBlocked || wuResult.PolicyBlocked;
             DriverScan.SetStatus(_driverUpdates.Count == 0
-                ? $"{LanguageService.T("Opt_NoDriverUpdatesFound")} {string.Join(" ", parts)}"
+                ? $"{LanguageService.T(incomplete ? "Opt_Unknown" : "Opt_NoDriverUpdatesFound")} {string.Join(" ", parts)}"
                 : $"{LanguageService.T("Opt_DriverUpdatesFoundPrefix")}{_driverUpdates.Count}{LanguageService.T("Opt_DriverUpdatesFoundSuffix")} {string.Join(" ", parts)}");
-            UpdatesHubService.ReportDriverScan(_driverUpdates.Count);
+            UpdatesHubService.ReportDriverScan(incomplete ? null : _driverUpdates.Count);
             s_vendorCache = vendor;
 
             ShowVendorExtras(vendor);
@@ -1158,14 +1159,15 @@ namespace OptimizerWpf.Views
 
             StatusService.SetBusy($"{LanguageService.T("Opt_DownloadVerifyInstallPrefix")}{candidate.Title}...");
             var ok = await DriverService.InstallCatalogDriverAsync(candidate);
-            DriverHistoryService.Record(candidate.Title, "Microsoft Update Catalog", ok ? "installed (hash verified)" : "failed");
+            DriverHistoryService.Record(candidate.Title, "Microsoft Update Catalog", ok ? "accepted; active version not necessarily verified" : "failed");
             StatusService.SetIdle(LanguageService.T("Ready"));
 
             if (ok)
             {
                 _driverUpdates.Remove(row);
-                BorderDriverResults.Visibility = Visibility.Collapsed;
-                ThemedMessageBox.Show($"{LanguageService.T("Opt_DriverInstalledPrefix")}\n{DriverService.LastInstallLog}", LanguageService.T("Opt_SuccessTitle"), MessageBoxButton.OK, MessageBoxImage.Information);
+                if (_driverUpdates.Count == 0) BorderDriverResults.Visibility = Visibility.Collapsed;
+                UpdatesHubService.ReportDriverScan(null);
+                ThemedMessageBox.Show($"{candidate.Title}\n{DriverService.LastInstallLog}", LanguageService.T("Opt_FilterDrivers"), MessageBoxButton.OK, MessageBoxImage.Information);
             }
             else
             {

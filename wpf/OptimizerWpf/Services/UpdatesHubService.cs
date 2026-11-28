@@ -19,7 +19,7 @@ namespace OptimizerWpf.Services
 
         public static event Action? Changed;
 
-        public static void ReportDriverScan(int count)
+        public static void ReportDriverScan(int? count)
         {
             DriverUpdatesAvailable = count;
             Changed?.Invoke();
