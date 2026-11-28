@@ -141,8 +141,11 @@ namespace OptimizerWpf.Services
             var (items, exists) = Read();
             if (items.Count >= MaxItems) throw new InvalidOperationException("Custom menu limit reached.");
             var values = Values(item);
-            using (var key = Registry.ClassesRoot.OpenSubKey(RegPath(scope, item.Id)[@"Software\Classes\".Length..]))
+            foreach (var hive in new[] { Registry.CurrentUser, Registry.LocalMachine })
+            {
+                using var key = hive.OpenSubKey(RegPath(scope, item.Id));
                 if (key != null) throw new IOException("Shell verb already exists.");
+            }
             _ = GroupedRegistryTweaks.SelectOwned(values, t => TweakRegistryJournal.Preflight(t, false));
             items.Add(item);
             // Save the durable plan first, so an interrupted apply remains

@@ -80,11 +80,15 @@ internal static class BuiltInShellJournal
     // legacy or third-party verb, even when it uses the old product name.
     private static bool IsVacant(string root)
     {
-        using var key = Registry.ClassesRoot.OpenSubKey(root);
-        if (key == null) return true;
-        if (key.ValueCount != 0 || key.GetSubKeyNames().Any(n => !n.Equals("command", StringComparison.OrdinalIgnoreCase))) return false;
-        using var command = key.OpenSubKey("command");
-        return command == null || (command.ValueCount == 0 && command.SubKeyCount == 0);
+        foreach (var hive in new[] { Registry.CurrentUser, Registry.LocalMachine })
+        {
+            using var key = hive.OpenSubKey(Classes + root);
+            if (key == null) continue;
+            if (key.ValueCount != 0 || key.GetSubKeyNames().Any(n => !n.Equals("command", StringComparison.OrdinalIgnoreCase))) return false;
+            using var command = key.OpenSubKey("command");
+            if (command != null && (command.ValueCount != 0 || command.SubKeyCount != 0)) return false;
+        }
+        return true;
     }
 
     internal static bool IsOn(string kind)

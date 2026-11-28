@@ -20,7 +20,7 @@ try {
     }
     $drive = [IO.DriveInfo]::new([IO.Path]::GetPathRoot($full))
     if ($drive.DriveType -ne [IO.DriveType]::Fixed) { throw 'Select a file or directory on a fixed local drive.' }
-    foreach ($protected in @($env:windir, $env:ProgramFiles, env:ProgramFiles(x86), $env:ProgramData)) {
+    foreach ($protected in @($env:windir, $env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:ProgramData)) {
         if ([string]::IsNullOrWhiteSpace($protected)) { continue }
         $root = [IO.Path]::GetFullPath($protected).TrimEnd('\')
         if ($full.Equals($root, [StringComparison]::OrdinalIgnoreCase) -or
