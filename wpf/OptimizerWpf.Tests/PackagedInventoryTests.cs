@@ -1,3 +1,4 @@
+using System;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -35,6 +36,26 @@ public sealed class PackagedInventoryTests
         var result = await BloatwareService.ReadInventoryOutputAsync(reader, 100, CancellationToken.None);
         Assert.True(result.Exceeded);
         Assert.True(result.Text.Length <= 100);
+        Assert.Equal(-1, reader.Peek());
+    }
+
+    [Fact]
+    public async Task SharedReaderRejectsAlreadyCanceledRead()
+    {
+        using var reader = new StringReader("fixture");
+        using var cancel = new CancellationTokenSource();
+        cancel.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            BoundedProcessOutput.ReadAsync(reader, 100, cancel.Token));
+    }
+
+    [Fact]
+    public async Task SharedReaderKeepsExactLimitAndDrainsOneExtraCharacter()
+    {
+        using var reader = new StringReader(new string('x', 4097));
+        var result = await BoundedProcessOutput.ReadAsync(reader, 4096, CancellationToken.None);
+        Assert.True(result.Exceeded);
+        Assert.Equal(4096, result.Text.Length);
         Assert.Equal(-1, reader.Peek());
     }
 

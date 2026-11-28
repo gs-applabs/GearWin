@@ -430,21 +430,9 @@ try {{
 
         // Continue draining both pipes after the limit, without retaining excess
         // text, so a verbose child cannot deadlock on a full pipe.
-        internal static async Task<(string Text, bool Exceeded)> ReadInventoryOutputAsync(
-            TextReader reader, int maxChars, System.Threading.CancellationToken token)
-        {
-            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxChars);
-            var buffer = new char[4096];
-            var text = new System.Text.StringBuilder();
-            bool exceeded = false;
-            int count;
-            while ((count = await reader.ReadAsync(buffer.AsMemory(), token)) != 0)
-            {
-                if (count > maxChars - text.Length) exceeded = true;
-                if (!exceeded) text.Append(buffer, 0, count);
-            }
-            return (text.ToString(), exceeded);
-        }
+        internal static Task<(string Text, bool Exceeded)> ReadInventoryOutputAsync(
+            TextReader reader, int maxChars, System.Threading.CancellationToken token) =>
+            BoundedProcessOutput.ReadAsync(reader, maxChars, token);
 
         private static async Task<bool> RunProcessForSuccessAsync(string fileName, string arguments)
         {

@@ -838,6 +838,7 @@ $out | ConvertTo-Json -Compress";
         private static async Task<(string Output, int ExitCode, bool Started)> RunToolAsync(string fileName, string arguments, TimeSpan timeout,
             bool closeInput = false, string? stdinResponse = null)
         {
+            ActiveScanToken.Value.ThrowIfCancellationRequested();
             var psi = new ProcessStartInfo
             {
                 FileName = fileName,
@@ -877,36 +878,56 @@ $out | ConvertTo-Json -Compress";
                 if (process == null) return ("", -1, false);
             }
 
+            if (process == null) return ("", -1, false);
             using (process)
+            using (var cts = CancellationTokenSource.CreateLinkedTokenSource(ActiveScanToken.Value))
             {
-                var proc = process!; // μη-nullable alias - η null περίπτωση έχει ήδη επιστρέψει παραπάνω (το using(process) από μόνο του δεν στενεύει τη nullability ανάλυση)
-                var stdoutTask = proc.StandardOutput.ReadToEndAsync();
-                var stderrTask = proc.StandardError.ReadToEndAsync(); // το stderr δεν διαβαζόταν ποτέ → block αν γέμιζε το pipe
+                cts.CancelAfter(timeout);
+                var stdoutTask = BoundedProcessOutput.ReadAsync(process.StandardOutput, BoundedProcessOutput.InventoryChars, cts.Token);
+                var stderrTask = BoundedProcessOutput.ReadAsync(process.StandardError, BoundedProcessOutput.ErrorChars, cts.Token);
+                var pipes = Task.WhenAll(stdoutTask, stderrTask);
                 try
                 {
-                    using var cts = CancellationTokenSource.CreateLinkedTokenSource(ActiveScanToken.Value);
-                    cts.CancelAfter(timeout);
                     if (psi.RedirectStandardInput)
                     {
                         try
                         {
                             if (stdinResponse != null)
-                                await proc.StandardInput.WriteLineAsync(stdinResponse.AsMemory(), cts.Token);
-                            proc.StandardInput.Close();
+                                await process.StandardInput.WriteLineAsync(stdinResponse.AsMemory(), cts.Token);
+                            process.StandardInput.Close();
                         }
                         catch (IOException) { }
                     }
-                    await proc.WaitForExitAsync(cts.Token);
-                    await Task.WhenAll(stdoutTask, stderrTask).WaitAsync(cts.Token);
+                    await process.WaitForExitAsync(cts.Token);
+                    var output = await pipes.WaitAsync(cts.Token);
+                    if (output[0].Exceeded || output[1].Exceeded)
+                    {
+                        // Never treat a partial table as a complete inventory or
+                        // report a verified installation from truncated output.
+                        System.Diagnostics.Trace.TraceWarning("Package provider output exceeded its limit; outcome not confirmed.");
+                        return ("", -1, true);
+                    }
+                    return (output[0].Text, process.ExitCode, true);
                 }
                 catch (OperationCanceledException)
                 {
-                    try { proc.Kill(true); } catch { }
+                    try { process.Kill(true); } catch { }
                     ActiveScanToken.Value.ThrowIfCancellationRequested();
                     return ("", -1, true);
                 }
-                var stdout = await stdoutTask;
-                return (stdout, proc.ExitCode, true);
+                catch (IOException)
+                {
+                    System.Diagnostics.Trace.TraceWarning("Package provider pipe could not be read; outcome not confirmed.");
+                    return ("", -1, true);
+                }
+                finally
+                {
+                    // Observe a pipe failure even when timeout/cancellation
+                    // ended the process wait first.
+                    _ = pipes.ContinueWith(t => { _ = t.Exception; }, CancellationToken.None,
+                        TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+                        TaskScheduler.Default);
+                }
             }
         }
 

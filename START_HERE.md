@@ -2,6 +2,12 @@
 
 Updated 2026-11-28. This is the single current entry point for a new ChatGPT/Claude Code session. Repository: gs-applabs/GearWin. Active branch: release/7.1.0-ultra. Draft integration PR: #6 (base release/7.0.0-validation). Resolve live branch HEAD first; last fully validated source 7960011c034d9e5a49605b2d34e73a0e37f6ca61; current HEAD includes newer history/product reconciliation. Master audit reference: c025e12d3e4cc8d3dc2be63d27f30b0aa8f34132. Never reset or blindly merge. No final release yet.
 
+## ACTIVE CHECKPOINT — M04 bounded provider output
+
+M04/M01/M05: extract existing bounded pipe reader into a common BoundedProcessOutput and reuse from packaged app scanner and WinGet/provider runner. All provider stdout limited to 4 Mi characters, stderr to 64 Ki characters; drain both concurrently, reject truncated result as unconfirmed, check cancellation before process start and during reads, observe late pipe faults. Existing timeout and kill policy unchanged; no new polling, timer or disk writes. Two additional deterministic cases (776 cumulative authored, not passed on this candidate). Native provider output/locale, scan completeness propagation and real install acceptance remain open.
+
+Exact parent a237c098be7fd6b08e9947897d5236044561d033 installer 46134147393 and audit 46134147374 pending, linux-distros 46134147392 and recovery-vm 46134147376 running at inspection. e07d7a3 offline clone success/build running. 8946a85 6/6 installer jobs, 1125 desktop +56 migration PASS. No merge or release.
+
 ## ACTIVE CHECKPOINT — H01 local installed package verification
 
 H01/M04/E02: Windows GUI optional live installed-package check uses actual current PC profile, one existing WinGet inventory query under UpdateScan lease and bounded timeout/cancellation, no new source-agreement acceptance; strict parser requires explicit known source and exact ID, common core verification preserves command preview and destination-inventory evidence separately. Missing/ambiguous results remain unconfirmed; never executes imported commands. Four UI keys ×14 (56 strings), all 20 new localization keys covered. Six additional deterministic cases (774 cumulative authored, not passed on this candidate). Windows CLI live verification, remote availability, complete localization/dynamic messages and actual native acceptance remain open. No new timers.
