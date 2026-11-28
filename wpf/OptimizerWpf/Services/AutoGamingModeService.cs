@@ -16,6 +16,7 @@ public static class AutoGamingModeService
     private static bool _recoveryChecked;
     private static bool _reportedFailure;
     private static long _lastProfileProbe;
+    private static long _lastFailureAt;
 
     [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
@@ -39,7 +40,7 @@ public static class AutoGamingModeService
         _candidate = _active = null;
         _stableTicks = _misses = 0;
         _recoveryChecked = _reportedFailure = false;
-        _lastProfileProbe = 0;
+        _lastProfileProbe = _lastFailureAt = 0;
         _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
         _timer.Tick += OnTick;
         _timer.Start();
@@ -74,6 +75,7 @@ public static class AutoGamingModeService
     private static void OnTick(object? sender, EventArgs e)
     {
         if (!AppSettingsService.Current.AutoGamingModeEnabled) return;
+        if (_lastFailureAt != 0 && SharedTelemetryService.IsFresh(Environment.TickCount64, _lastFailureAt, 30000)) return;
         try
         {
             // Recover an interrupted automatic session before any new one.
@@ -114,7 +116,7 @@ public static class AutoGamingModeService
             _active = identity; // even a no-op remains stable until a different game
             _reportedFailure = false;
         }
-        catch (Exception ex) { Report(ex); }
+        catch (Exception ex) { _lastFailureAt = Environment.TickCount64; Report(ex); }
     }
 
     private static (string Path, string Identity)? ForegroundGame()

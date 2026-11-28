@@ -60,6 +60,7 @@ namespace OptimizerWpf.Views
         public BloatwareView()
         {
             InitializeComponent();
+            BtnUsageReview.Content = LanguageService.Current == "el" ? "Έλεγχος παλαιότερης χρήσης εφαρμογών" : "Review older app usage";
             ListBuiltin.ItemsSource = _builtin;
             ListAllFeatures.ItemsSource = _displayedFeatures;
             LoadPopularFeatureChips();
@@ -250,6 +251,37 @@ namespace OptimizerWpf.Views
                 if (sender is Button b) b.IsEnabled = true;
                 _deepUninstallBusy = false;
             }
+        }
+
+        private static bool s_usageReviewBusy;
+
+        private async void BtnUsageReview_Click(object sender, RoutedEventArgs e)
+        {
+            if (s_usageReviewBusy || _deepUninstallBusy) return;
+            bool greek = LanguageService.Current == "el";
+            var title = greek ? "Έλεγχος χρήσης εφαρμογών" : "App usage review";
+            var notice = greek
+                ? "Να διαβαστούν μία φορά οι τοπικές ενδείξεις εκκίνησης εφαρμογών του τρέχοντος χρήστη από τα Windows; Δεν γίνεται παρακολούθηση, αποθήκευση ή αποστολή. Η απουσία πρόσφατης ένδειξης δεν αποδεικνύει αχρησία. Δεν αφαιρείται τίποτα."
+                : "Read existing Windows launch indicators for the current user once? No monitoring, storage or transmission. Lack of a recent observation does not prove non-use. Nothing is removed.";
+            if (ThemedMessageBox.Show(notice, title, MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
+            s_usageReviewBusy = true;
+            BtnUsageReview.IsEnabled = false;
+            using var busy = StatusService.BeginScope(title);
+            try
+            {
+                var apps = await BloatwareService.LoadInstalledAppsAsync();
+                var result = await System.Threading.Tasks.Task.Run(() => AppUsageReview.Read(apps));
+                if (!IsLoaded) return;
+                var text = result == null
+                    ? (greek ? "Δεν υπάρχουν αξιόπιστα ή προσβάσιμα στοιχεία." : "Reliable observations are unavailable.")
+                    : result.Count == 0
+                        ? (greek ? "Δεν βρέθηκαν κατάλληλες παλαιές ενδείξεις." : "No eligible older observations found.")
+                        : (greek ? "Τελευταία καταγεγραμμένη εκκίνηση (όχι απόδειξη αχρησίας):" : "Last recorded launch (not proof of non-use):") +
+                          "\n\n" + string.Join("\n", result.Select(row => row.Name + " · " + row.LastObservedUtc.ToLocalTime().ToString("d")));
+                ThemedMessageBox.Show(text, title, MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            catch { if (IsLoaded) ThemedMessageBox.Show(LanguageService.T("Opt_Unknown"), title, MessageBoxButton.OK, MessageBoxImage.Warning); }
+            finally { BtnUsageReview.IsEnabled = true; s_usageReviewBusy = false; }
         }
 
         private bool _deepUninstallBusy;

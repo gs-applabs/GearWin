@@ -12,6 +12,7 @@ namespace OptimizerWpf.Services
     public record InstalledApp(string DisplayName, string? Publisher, string UninstallString)
     {
         internal string? MachineProductCode { get; init; }
+        internal string? UsageExecutable { get; init; }
     }
     public record UwpAppInfo(string Name, string PackageFullName)
     {
@@ -315,7 +316,7 @@ try {{
                     var product = SafeUninstallService.MatchMachineMsi(name, uninstallString,
                         ReferenceEquals(hive, Registry.LocalMachine), sub.GetValue("WindowsInstaller") is int flag && flag == 1);
                     apps.Add(new InstalledApp(displayName, sub.GetValue("Publisher") as string, uninstallString)
-                        { MachineProductCode = product });
+                        { MachineProductCode = product, UsageExecutable = AppUsageReview.ParseDisplayIcon(sub.GetValue("DisplayIcon") as string) });
                 }
             }
             return (IReadOnlyList<InstalledApp>)apps.OrderBy(a => a.DisplayName).ToList();

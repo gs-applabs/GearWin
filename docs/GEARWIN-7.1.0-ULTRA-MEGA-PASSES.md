@@ -816,3 +816,11 @@ CatalogPackage streams HTTPS Microsoft allowlisted CAB to protected staging with
 - Static review of parent 38bbbcd5637f97d756cdcda5a22c99520dc7c20b: removed old out-variable dependency introduced during temperature refactor. Temperature now uses same physical handle for bus and temperature descriptors, no seek-penalty query per temperature sample; native failure returns unknown, fallback checks current volume number before reading. This does not prove identity across device replacement or make WMI fallback atomic. SD/MMC use removable icon class instead of SSD/HDD guess.
 - Two additional cases, 603 cumulative authored (not passed). Prior fa4d8405 CI still in progress at inspection. Next: opt-in usage suggestions, gaming, cleanup/update/migration/UI, then final test matrix. No merge or release.
 
+
+
+## Current P2 follow-up: opt-in usage review and gaming retry throttle — 2026-11-28
+
+- RQ13: Bloatware Deep Uninstall now has explicit consent for one-time current-user Windows UserAssist review. Only positive older launch observations (90 days, max 30 rows) with exact executable DisplayIcon identity, no missing-record inference, ambiguous shared executable excluded, suite paths protected. Known 72-byte layout only; unsupported/no data is unknown. No background monitoring, writes, transmission or automatic uninstall. UI Greek/English fallback pending all-language review; UserAssist coverage and elevated current-user identity limitations require native testing. This is advisory, not comprehensive usage accounting.
+- RQ14: automatic gaming failures now back off 30 seconds to avoid repeated failed journal/native probes every five seconds; no new timer and no change to profile ownership. UI-thread/native work and manual override race remain open.
+- Nine new deterministic cases (612 cumulative authored, not passed). Parent 55e9acc4545d7a8974ac63da8e777222275a507a installer 46106994117 in progress, offline clone job 140861889324 passed; audit 46106994114 pending. No merge or release. Next: gaming ownership, cleanup overlap, update retry, migration, UI/i18n and unified tests. Version metadata remains 7.0.0.
+

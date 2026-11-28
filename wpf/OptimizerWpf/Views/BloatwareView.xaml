@@ -185,6 +185,8 @@
                         <TextBlock Grid.Column="1" Text="{tr:Tr Bloatware_DeepUninstall}" Style="{StaticResource CardTitleStyle}"/>
                         <Button Grid.Column="2" Content="{tr:Tr Bloatware_RefreshList}" Style="{StaticResource FlatButtonStyle}" Width="150" Height="36" Click="BtnRefreshInstalledApps_Click"/>
                     </Grid>
+                    <Button x:Name="BtnUsageReview" Style="{StaticResource FlatButtonStyle}" HorizontalAlignment="Left"
+                            Margin="0,0,0,8" Padding="12,6" Click="BtnUsageReview_Click"/>
                     <TextBox x:Name="TxtInstalledAppsSearch" Height="32" Padding="8,4" VerticalContentAlignment="Center" Margin="0,0,0,8"
                              Background="{DynamicResource MainBgBrush}" Foreground="{DynamicResource TextBrush}" BorderBrush="{DynamicResource CardBorderBrush}"
                              TextChanged="TxtInstalledAppsSearch_TextChanged" ToolTip="{tr:Tr Bloatware_SearchInstalledTooltip}"/>
