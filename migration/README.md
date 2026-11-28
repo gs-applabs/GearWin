@@ -20,6 +20,10 @@ dotnet run --project migration/GearWin.Migration.Cli -- plan migration/example-m
 
 `--verify` uses local package indexes for APT, Pacman, DNF/DNF5, Zypper, APK and XBPS. It reports an exact match with its version and architecture, an unconfirmed result, or an unsupported verifier. Flatpak checks installed applications and the selected origin, reported separately as `installedOnDestination`. Local indexes can be stale. Flatpak remote availability requires a separate check. Verification uses the existing local package data without downloading packages or executing installation previews.
 
+## Windows graphical planning
+
+In System & Tools → Tools below System Image Backup, export the installed-app inventory and the computer profile as JSON. Choose Create application plan, select the mapping manifest, source inventory and destination profile, then save the report. These use the same strict document contract and planner as the CLI. The report preserves unresolved/manual entries and inventory warnings; no command is executed. For Linux, export the profile/inventory with the CLI. Local package verification remains a destination CLI operation; WinGet verification is not implemented.
+
 ## Scope
 
 - `inspect` reads local OS and executable metadata. Windows can detect WinGet. Linux can detect APT, DNF/DNF5, Pacman, Zypper, APK, XBPS, Portage, Eopkg, Urpmi, Slackpkg, Flatpak, Snap, rpm-ostree and transactional-update. PackageKit is a fallback when `pkcon` is present and there is no selected native manager. NixOS and Guix use manual configuration plans. Unknown variants use detected capabilities. Each preview still needs repository and installation validation on the destination.

@@ -1,16 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 using GearWin.Migration;
-
-var json = new JsonSerializerOptions(JsonSerializerDefaults.Web)
-{
-    WriteIndented = true,
-    AllowDuplicateProperties = false,
-    RespectNullableAnnotations = true,
-    RespectRequiredConstructorParameters = true,
-    Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase, allowIntegerValues: false) }
-};
 
 try
 {
@@ -46,14 +36,7 @@ catch (Exception error) when (error is IOException or UnauthorizedAccessExceptio
     return 2;
 }
 
-T ReadJson<T>(string path) where T : class
-{
-    const int maxJsonBytes = 16 * 1024 * 1024;
-    return JsonSerializer.Deserialize<T>(BoundedText.ReadFile(path, maxJsonBytes), json) ??
-        throw new JsonException("Expected a JSON object.");
-}
-
-void WriteJson<T>(T value) => Console.WriteLine(JsonSerializer.Serialize(value, json));
+void WriteJson<T>(T value) => Console.WriteLine(MigrationDocuments.Serialize(value));
 
 async Task WritePlanAsync(string manifestPath, string[] options)
 {
@@ -85,19 +68,13 @@ async Task WritePlanAsync(string manifestPath, string[] options)
     PackageProfile target;
     if (targetPath is null)
         target = PackageDiscovery.InspectHost();
-    else
-    {
-        var profile = ReadJson<ProfileDocument>(targetPath);
-        if (profile.SchemaVersion != PackagePlanner.SchemaVersion)
-            throw new ArgumentException($"Unsupported target profile schema version {profile.SchemaVersion}.");
-        target = profile.Profile;
-    }
-    var manifest = ReadJson<PackageManifest>(manifestPath);
-    var inventory = inventoryPath is null ? null : ReadJson<ApplicationInventory>(inventoryPath);
-    var applications = PackagePlanner.CreatePlan(target, manifest, inventory);
+    else target = MigrationDocuments.ReadTarget(targetPath);
+    var manifest = MigrationDocuments.Read<PackageManifest>(manifestPath);
+    var inventory = inventoryPath is null ? null : MigrationDocuments.Read<ApplicationInventory>(inventoryPath);
+    var document = MigrationDocuments.CreatePlan(target, manifest, inventory);
     if (verify)
-        applications = await PackageVerifier.VerifyAsync(applications);
-    WriteJson(new PlanDocument(PackagePlanner.SchemaVersion, target, applications, inventory?.Warnings));
+        document = document with { Applications = await PackageVerifier.VerifyAsync(document.Applications) };
+    WriteJson(document);
 }
 
 static void PrintUsage(TextWriter output)
@@ -108,6 +85,3 @@ static void PrintUsage(TextWriter output)
     output.WriteLine("  plan <manifest.json> [--target <profile.json> | --verify] [--inventory <inventory.json>]");
 }
 
-sealed record ProfileDocument(int SchemaVersion, PackageProfile Profile);
-sealed record PlanDocument(int SchemaVersion, PackageProfile Target, IReadOnlyList<ApplicationPlan> Applications,
-    IReadOnlyList<string>? InventoryWarnings);

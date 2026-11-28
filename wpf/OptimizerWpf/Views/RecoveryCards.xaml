@@ -103,6 +103,12 @@
                     </WrapPanel>
                     <TextBlock x:Name="TxtTransferStatus" Style="{StaticResource SubTextStyle}" TextWrapping="Wrap"/>
                     <TextBlock x:Name="TxtAppsExportStatus" Style="{StaticResource SubTextStyle}" TextWrapping="Wrap" Margin="0,4,0,0"/>
+                    <TextBlock x:Name="TxtMigrationPlanHelp" Style="{StaticResource SubTextStyle}" TextWrapping="Wrap" Margin="0,12,0,8"/>
+                    <WrapPanel>
+                        <Button x:Name="BtnExportTargetProfile" Style="{StaticResource FlatButtonStyle}" Padding="12,8" Margin="0,0,8,8" Click="ExportTargetProfile_Click"/>
+                        <Button x:Name="BtnCreateMigrationPlan" Style="{StaticResource FlatButtonStyle}" Padding="12,8" Margin="0,0,0,8" Click="CreateMigrationPlan_Click"/>
+                    </WrapPanel>
+                    <TextBlock x:Name="TxtMigrationPlanStatus" Style="{StaticResource SubTextStyle}" TextWrapping="Wrap"/>
                 </StackPanel>
             </Border>
     </StackPanel>

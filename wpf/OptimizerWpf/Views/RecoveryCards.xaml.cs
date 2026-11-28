@@ -224,6 +224,7 @@ namespace OptimizerWpf.Views
             BtnTransferCheck.Content = _transferCheck != null ? LanguageService.T("Cancel") :
                 greek ? "Έλεγχος πριν από τη μεταφορά" : "Check before transfer";
             BtnAppsExport.Content = greek ? "Εξαγωγή εγκατεστημένων εφαρμογών (JSON)" : "Export installed apps (JSON)";
+            TranslateMigrationPlanUi();
         }
 
         private static string Translation(string greek, string english) =>
@@ -301,13 +302,7 @@ namespace OptimizerWpf.Views
             {
                 TxtAppsExportStatus.Text = Translation("Απογραφή εφαρμογών…", "Reading installed applications…");
                 var inventory = await GearWinCore.RunAsync(CoreWork.TransferScan, () => System.Threading.Tasks.Task.Run(GearWin.Migration.ApplicationDiscovery.InspectHost));
-                var options = new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web)
-                {
-                    WriteIndented = true,
-                    Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter(
-                        System.Text.Json.JsonNamingPolicy.CamelCase, allowIntegerValues: false) },
-                };
-                string json = System.Text.Json.JsonSerializer.Serialize(inventory, options);
+                string json = GearWin.Migration.MigrationDocuments.Serialize(inventory);
                 await GearWinCore.RunAsync(CoreWork.Backup, () => System.Threading.Tasks.Task.Run(() =>
                     AppSettingsService.WriteIfChanged(Path.GetFullPath(picker.FileName), json, null)));
                 TxtAppsExportStatus.Text = Translation(
