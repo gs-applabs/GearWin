@@ -91,6 +91,26 @@ public class DriveMetadataSlotTests
     public void OnlyTopologyOrResumeBroadcastsInvalidate(int msg, long change, bool expected) =>
         Assert.Equal(expected, OptimizerWpf.Views.HomeView.IsDiskTopologyMessage(msg, change));
 
+    [Theory]
+    [InlineData(100L, 0L, 100)]
+    [InlineData(100L, 100L, 0)]
+    [InlineData(100L, 25L, 75)]
+    [InlineData(0L, 0L, null)]
+    [InlineData(-1L, 0L, null)]
+    [InlineData(100L, -1L, null)]
+    [InlineData(100L, 101L, null)]
+    public void DiskPercentRejectsUnavailableOrInconsistentCapacity(long total, long free, int? expected) =>
+        Assert.Equal(expected, OptimizerWpf.Views.HomeView.DiskUsedPercent(total, free));
+
+    [Theory]
+    [InlineData(1L, 1L, true, false, false, true)]
+    [InlineData(1L, 2L, true, false, false, false)]
+    [InlineData(1L, 1L, false, false, false, false)]
+    [InlineData(1L, 1L, true, true, false, false)]
+    [InlineData(1L, 1L, true, false, true, false)]
+    public void SmartBadgeRequiresCurrentVisibleLifetime(long captured, long current, bool visible, bool dirty, bool canceled, bool expected) =>
+        Assert.Equal(expected, OptimizerWpf.Views.HomeView.CanPublishSmartSample(captured, current, visible, dirty, canceled));
+
     [Fact]
     public async Task CacheExpiresAndCannotGrowBeyondAlphabet()
     {

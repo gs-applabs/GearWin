@@ -82,7 +82,7 @@ namespace OptimizerWpf.Views
             _refreshTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(PerformanceProfileService.Current.HomeRefreshSeconds) };
             _refreshTimer.Tick += (_, _) => { RefreshCpuRamGpu(); RefreshNetworkGraph(); };
             _diskRefreshTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(20) };
-            _diskRefreshTimer.Tick += (_, _) => { RefreshDiskTopologyIfNeeded(); RefreshDisk(); _ = RefreshNetworkStatusAsync(); _ = RefreshTemperaturesAsync(); if (_diskIconNeedsRetry) _ = UpdateDiskIconAsync(); };
+            _diskRefreshTimer.Tick += (_, _) => { RefreshDiskTopologyIfNeeded(); RefreshDisk(); _ = RefreshNetworkStatusAsync(); _ = RefreshTemperaturesAsync(); _ = RefreshSmartBadgeAsync(); if (_diskIconNeedsRetry) _ = UpdateDiskIconAsync(); };
 
             // Constructor-time Window.GetWindow is frequently null. Attach after Loaded.
             Window? parentWindow = null;
@@ -113,7 +113,14 @@ namespace OptimizerWpf.Views
                 _refreshTimer.Interval = TimeSpan.FromSeconds(PollSeconds(
                     PerformanceProfileService.Current.HomeRefreshSeconds, parentWindow.IsActive));
                 if (!_refreshTimer.IsEnabled) _refreshTimer.Start();
-                if (!_diskRefreshTimer.IsEnabled) { _diskRefreshTimer.Start(); _ = RefreshTemperaturesAsync(); }
+                if (!_diskRefreshTimer.IsEnabled)
+                {
+                    _diskRefreshTimer.Start();
+                    RefreshDisk();
+                    _ = RefreshTemperaturesAsync();
+                    _ = RefreshSmartBadgeAsync();
+                    if (_diskIconNeedsRetry) _ = UpdateDiskIconAsync();
+                }
             }
             int pollingRefreshQueued = 0;
             Action perfChanged = () =>
@@ -578,6 +585,7 @@ namespace OptimizerWpf.Views
             HomeDiskMetadataService.InvalidateTopology();
             _diskSelectionGeneration++;
             _diskTopologyDirty = true;
+            TxtDiskSmart.Visibility = Visibility.Collapsed;
             _analysisCts?.Cancel();
         }
 
@@ -586,16 +594,21 @@ namespace OptimizerWpf.Views
             if (!_diskTopologyDirty) return;
             _diskTopologyDirty = false;
             PopulateDriveList();
+            ResetDiskPresentation();
+            TxtDiskSmart.Visibility = Visibility.Collapsed;
+            _diskIconNeedsRetry = CurrentDrive != null;
+        }
+
+        private void ResetDiskPresentation()
+        {
             TxtDriveModel.Text = "";
             TxtDriveKind.Text = "?";
             TxtDiskTemp.Text = "—";
             TxtDiskTemp.ToolTip = null;
-            TxtDiskSmart.Visibility = Visibility.Collapsed;
             TxtDiskPercent.Text = "—";
             TxtDiskDetail.Text = "—";
             AnimateBar(BarDisk, 0);
             ImgDiskIcon.Source = new BitmapImage(new Uri("/GearWin;component/Assets/disk-icon.png", UriKind.Relative));
-            _diskIconNeedsRetry = CurrentDrive != null;
         }
 
         private void PopulateDriveList()
@@ -653,8 +666,7 @@ namespace OptimizerWpf.Views
             if (_drives.Count == 0) return;
             _driveIndex = (_driveIndex + delta + _drives.Count) % _drives.Count;
             _diskSelectionGeneration++;
-            TxtDiskTemp.Text = "—";
-            TxtDiskTemp.ToolTip = null;
+            ResetDiskPresentation();
             TxtDriveLabel.Text = _drives[_driveIndex];
             RefreshDisk();
             _ = RefreshDiskTemperatureAsync();
@@ -680,7 +692,7 @@ namespace OptimizerWpf.Views
             HomeDiskMetadataService.Snapshot? snapshot;
             try { snapshot = await HomeDiskMetadataService.ReadAsync(drive).WaitAsync(token); }
             catch (OperationCanceledException) when (token.IsCancellationRequested) { return; }
-            catch (Exception ex) { System.Diagnostics.Trace.TraceError(ex.Message); return; }
+            catch (Exception ex) { System.Diagnostics.Trace.TraceError(ex.Message); _diskIconNeedsRetry = true; return; }
             finally { _diskIconReading = false; }
             if (_unloaded || token.IsCancellationRequested) return;
             if (generation != _diskSelectionGeneration || snapshot == null)
@@ -754,14 +766,67 @@ namespace OptimizerWpf.Views
             try
             {
                 var drive = new DriveInfo(driveName);
-                var totalGb = drive.TotalSize / 1024.0 / 1024.0 / 1024.0;
-                var freeGb = drive.TotalFreeSpace / 1024.0 / 1024.0 / 1024.0;
-                var usedPct = (int)Math.Round(100.0 * (1 - drive.TotalFreeSpace / (double)drive.TotalSize));
-                TxtDiskPercent.Text = $"{usedPct}%";
-                AnimateBar(BarDisk, usedPct);
-                TxtDiskDetail.Text = $"{freeGb:0.0} GB {LanguageService.T("Sys_DrivesFreeOf")} {totalGb:0.0} GB";
+                var total = drive.TotalSize;
+                var free = drive.TotalFreeSpace;
+                var usedPct = DiskUsedPercent(total, free);
+                if (usedPct.HasValue)
+                {
+                    var totalGb = total / 1073741824.0;
+                    var freeGb = free / 1073741824.0;
+                    TxtDiskPercent.Text = $"{usedPct.Value}%";
+                    AnimateBar(BarDisk, usedPct.Value);
+                    TxtDiskDetail.Text = $"{freeGb:0.0} GB {LanguageService.T("Sys_DrivesFreeOf")} {totalGb:0.0} GB";
+                    return;
+                }
             }
             catch { /* drive can become unready (removable media ejected mid-run) */ }
+            // Never keep apparently current numbers from an unavailable drive.
+            ResetDiskPresentation();
+            _diskIconNeedsRetry = true;
+        }
+
+        internal static int? DiskUsedPercent(long total, long free) =>
+            total <= 0 || free < 0 || free > total ? null :
+                (int)Math.Round(100.0 * (1 - free / (double)total));
+
+        internal static bool CanPublishSmartSample(long captured, long current, bool visible, bool dirty, bool canceled) =>
+            captured == current && visible && !dirty && !canceled;
+
+        private bool _smartReading;
+
+        private async Task RefreshSmartBadgeAsync()
+        {
+            if (_smartReading || _unloaded || !IsVisible || !IsLoaded || _diskTopologyDirty) return;
+            var token = ViewToken;
+            var topology = HomeDiskMetadataService.TopologyGeneration;
+            _smartReading = true;
+            try
+            {
+                var sysDrive = System.IO.Path.GetPathRoot(Environment.SystemDirectory) ?? "C:\\";
+                // The service shares one in-flight request and caches it for 60 seconds.
+                var healthy = await HomeDiskMetadataService.ReadSystemSmartAsync(sysDrive).WaitAsync(token);
+                if (!CanPublishSmartSample(topology, HomeDiskMetadataService.TopologyGeneration,
+                    IsVisible && IsLoaded && !_unloaded, _diskTopologyDirty, token.IsCancellationRequested)) return;
+                if (healthy.HasValue)
+                {
+                    TxtDiskSmart.Text = healthy.Value
+                        ? $"✓ {LanguageService.T("Home_DiskSmartGood")}"
+                        : $"⚠ {LanguageService.T("Home_DiskSmartWarning")}";
+                    TxtDiskSmart.Foreground = new SolidColorBrush(healthy.Value
+                        ? Color.FromRgb(90, 200, 120) : Color.FromRgb(220, 80, 80));
+                    TxtDiskSmart.Visibility = Visibility.Visible;
+                }
+                else TxtDiskSmart.Visibility = Visibility.Collapsed;
+            }
+            catch (OperationCanceledException) when (token.IsCancellationRequested) { }
+            catch (Exception ex)
+            {
+                if (CanPublishSmartSample(topology, HomeDiskMetadataService.TopologyGeneration,
+                    IsVisible && IsLoaded && !_unloaded, _diskTopologyDirty, token.IsCancellationRequested))
+                    TxtDiskSmart.Visibility = Visibility.Collapsed;
+                System.Diagnostics.Trace.TraceWarning(ex.Message);
+            }
+            finally { _smartReading = false; }
         }
 
         private bool _healthBusy;
@@ -967,29 +1032,8 @@ namespace OptimizerWpf.Views
             TxtHealthSparkline.Text = sparkline;
             TxtHealthSparkline.Visibility = sparkline.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
 
-            // ΝΕΟ - roadmap "πιο εμφανές S.M.A.R.T. στην Αρχική" - έλεγχος του δίσκου συστήματος μόνο
-            // (όχι όλων των δίσκων - κρατά το badge σύντομο/ενιαίο, το πλήρες breakdown ανά δίσκο
-            // παραμένει στην καρτέλα Σύστημα). GetSmartHealthy κάνει WMI ερωτήματα - εκτελείται off the
-            // UI thread, ίδιο μοτίβο με το HealthScoreService.Compute() παραπάνω.
-            var sysDrive = System.IO.Path.GetPathRoot(Environment.SystemDirectory) ?? "C:\\";
-            var topology = HomeDiskMetadataService.TopologyGeneration;
-            var smartHealthy = await HomeDiskMetadataService.ReadSystemSmartAsync(sysDrive).WaitAsync(token);
-            if (topology != HomeDiskMetadataService.TopologyGeneration) smartHealthy = null;
-            if (token.IsCancellationRequested || _unloaded) return;
-            if (smartHealthy.HasValue)
-            {
-                TxtDiskSmart.Text = smartHealthy.Value
-                    ? $"✓ {LanguageService.T("Home_DiskSmartGood")}"
-                    : $"⚠ {LanguageService.T("Home_DiskSmartWarning")}";
-                TxtDiskSmart.Foreground = smartHealthy.Value
-                    ? new SolidColorBrush(Color.FromRgb(90, 200, 120))
-                    : new SolidColorBrush(Color.FromRgb(220, 80, 80));
-                TxtDiskSmart.Visibility = Visibility.Visible;
-            }
-            else
-            {
-                TxtDiskSmart.Visibility = Visibility.Collapsed;
-            }
+            // SMART is independent of the full health score/history refresh.
+            _ = RefreshSmartBadgeAsync();
 
             TxtHealthScore.Text = result.DisplayScore;
             var scoreColor = result.Score >= 80
