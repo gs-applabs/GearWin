@@ -1,6 +1,6 @@
 # CURRENT CHECKPOINT — 2026-11-28
 
-Read [START_HERE.md](START_HERE.md) and [ROADMAP.md](ROADMAP.md). One shared WUA installation engine, driver exact revision and scan completeness. Eleven new tests, current CI pending; no merge or release.
+Read [START_HERE.md](START_HERE.md) and SINGLE ACTIVE BACKLOG in [ROADMAP.md](ROADMAP.md). All remaining work, easiest to hardest; E01 shared cleanup rules implemented. Parent 4a2e9df0: 1068 .NET tests passed, final E2E pending. New CI pending; no merge/release.
 
 ---
 

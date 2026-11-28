@@ -12,6 +12,51 @@ namespace OptimizerWpf.Tests;
 public class QuickCleanServiceTests
 {
     [Theory]
+    [InlineData(@"C:\Cache\Nested\a.txt", 3, true)]
+    [InlineData(@"C:\Cache2\a.txt", 3, false)]
+    [InlineData(@"C:\Cache\a.txt", 1, false)]
+    [InlineData(@"C:\Cache\a.txt", 2, true)]
+    public void EarlierRuleOwnsOnlyEligibleDescendants(string file, int days, bool expected)
+    {
+        var now = new DateTime(2026, 11, 28, 0, 0, 0, DateTimeKind.Utc);
+        var rule = new QuickCleanService.CleanupRule("First", @"C:\Cache", TimeSpan.FromDays(2));
+        Assert.Equal(expected, QuickCleanService.OwnsFile(rule, file, now.AddDays(-days), now));
+    }
+
+    [Fact]
+    public void CoverageRespectsAgePatternAndRecursion()
+    {
+        var root = new QuickCleanService.CleanupRule("A", @"C:\Cache", TimeSpan.FromDays(2));
+        var nested = new QuickCleanService.CleanupRule("B", @"C:\Cache\Nested", TimeSpan.FromDays(7));
+        Assert.True(QuickCleanService.CoversRule(root, nested));
+        Assert.False(QuickCleanService.CoversRule(nested, root));
+        Assert.False(QuickCleanService.CoversRule(root with { Recursive = false }, nested));
+        Assert.False(QuickCleanService.CoversRule(root with { Pattern = "thumbcache_*.db" }, nested));
+        Assert.False(QuickCleanService.CoversRule(root with { MinAge = TimeSpan.FromDays(10) }, nested));
+    }
+
+    [Fact]
+    public void SharedExclusionPreservesEarlierCategoryFilesInMeasureAndClean()
+    {
+        var root = Directory.CreateTempSubdirectory("gw_overlap_").FullName;
+        try
+        {
+            var keep = Path.Combine(root, "first.txt");
+            var remove = Path.Combine(root, "second.txt");
+            File.WriteAllBytes(keep, new byte[11]);
+            File.WriteAllBytes(remove, new byte[22]);
+            File.SetLastWriteTimeUtc(keep, DateTime.UtcNow.AddDays(-3));
+            File.SetLastWriteTimeUtc(remove, DateTime.UtcNow.AddDays(-3));
+            bool Exclude(string path) => string.Equals(path, keep, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(22L, MaintenancePaths.MeasureFiles(root, TimeSpan.FromDays(2), exclude: Exclude));
+            Assert.Equal(22L, MaintenancePaths.CleanFiles(root, TimeSpan.FromDays(2), exclude: Exclude));
+            Assert.True(File.Exists(keep));
+            Assert.False(File.Exists(remove));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Theory]
     [InlineData(0L, "0 B")]
     [InlineData(512L, "512 B")]
     [InlineData(1024L, "1 KB")]

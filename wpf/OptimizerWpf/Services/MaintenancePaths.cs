@@ -67,12 +67,11 @@ internal static class MaintenancePaths
 
     // Identical traversal and age policy for estimates and execution. Estimates do
     // not open every file exclusively; in-use files can reduce actual removed bytes.
-    private static IEnumerable<string> Candidates(string root, TimeSpan minAge, bool recursive, string pattern)
+    private static IEnumerable<string> Candidates(string root, DateTime cutoff, bool recursive, string pattern, Func<string, bool>? exclude)
     {
         if (!IsOrdinaryLocalPath(root) || IsProtectedMaintenancePath(root) || !Directory.Exists(root)) yield break;
         var pending = new Stack<string>();
         pending.Push(root);
-        var cutoff = DateTime.UtcNow - minAge;
         while (pending.Count > 0)
         {
             var dir = pending.Pop();
@@ -82,7 +81,7 @@ internal static class MaintenancePaths
             foreach (var file in files)
             {
                 bool eligible;
-                try { eligible = IsWithin(root, file) && IsOrdinaryLocalPath(file) && !IsProtectedMaintenancePath(file) && File.GetLastWriteTimeUtc(file) <= cutoff; }
+                try { eligible = IsWithin(root, file) && IsOrdinaryLocalPath(file) && !IsProtectedMaintenancePath(file) && File.GetLastWriteTimeUtc(file) <= cutoff && (exclude == null || !exclude(file)); }
                 catch { eligible = false; }
                 if (eligible) yield return file;
             }
@@ -93,28 +92,30 @@ internal static class MaintenancePaths
         }
     }
 
-    internal static long MeasureFiles(string root, TimeSpan minAge, bool recursive = true, string pattern = "*")
+    internal static long MeasureFiles(string root, TimeSpan minAge, bool recursive = true, string pattern = "*",
+        Func<string, bool>? exclude = null, DateTime? nowUtc = null)
     {
         long size = 0;
-        foreach (var file in Candidates(root, minAge, recursive, pattern))
+        foreach (var file in Candidates(root, (nowUtc ?? DateTime.UtcNow) - minAge, recursive, pattern, exclude))
         {
             try { size += new FileInfo(file).Length; } catch { }
         }
         return size;
     }
 
-    internal static long CleanFiles(string root, TimeSpan minAge, bool recursive = true, string pattern = "*")
+    internal static long CleanFiles(string root, TimeSpan minAge, bool recursive = true, string pattern = "*",
+        Func<string, bool>? exclude = null, DateTime? nowUtc = null)
     {
         long removed = 0;
-        var cutoff = DateTime.UtcNow - minAge;
-        foreach (var file in Candidates(root, minAge, recursive, pattern))
+        var cutoff = (nowUtc ?? DateTime.UtcNow) - minAge;
+        foreach (var file in Candidates(root, cutoff, recursive, pattern, exclude))
         {
             try
             {
                 long length;
                 using (var probe = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.None))
                     length = probe.Length;
-                if (!IsOrdinaryLocalPath(file) || IsProtectedMaintenancePath(file) || File.GetLastWriteTimeUtc(file) > cutoff) continue;
+                if (!IsOrdinaryLocalPath(file) || IsProtectedMaintenancePath(file) || File.GetLastWriteTimeUtc(file) > cutoff || (exclude != null && exclude(file))) continue;
                 File.Delete(file);
                 if (!File.Exists(file)) removed += length;
             }

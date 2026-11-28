@@ -46,26 +46,114 @@ namespace OptimizerWpf.Services
             return dirs;
         }
 
+        internal sealed record CleanupRule(string Category, string Root, TimeSpan MinAge, bool Recursive = true, string Pattern = "*");
+
+        private static readonly string[] Categories = {
+            "UserTemp", "ThumbnailCache", "WindowsTemp", "RecycleBin", "WindowsUpdateCache",
+            "DeliveryOptimization", "ShaderCache", "LauncherCache", "BrowserCache"
+        };
+
+        private static bool Recommended(string category) => category is "UserTemp" or "ThumbnailCache";
+
+        // One rule catalog for both estimation and execution. Earlier categories own
+        // overlap; selecting a later category cannot silently expand its scan estimate.
+        private static IEnumerable<CleanupRule> RulesFor(string category)
+        {
+            var age = TimeSpan.FromDays(2);
+            switch (category)
+            {
+                case "UserTemp":
+                    if (MaintenancePaths.VerifiedUserTemp() is string temp) yield return new(category, temp, age);
+                    break;
+                case "ThumbnailCache":
+                    yield return new(category, ExplorerCacheDir, age, false, "thumbcache_*.db");
+                    yield return new(category, ExplorerCacheDir, age, false, "iconcache_*.db");
+                    break;
+                case "WindowsTemp": yield return new(category, WindowsTempDir, TimeSpan.FromDays(7)); break;
+                case "WindowsUpdateCache": yield return new(category, WindowsUpdateCacheDir, TimeSpan.FromDays(7)); break;
+                case "DeliveryOptimization": yield return new(category, DeliveryOptimizationDir, TimeSpan.FromDays(7)); break;
+                case "ShaderCache":
+                    foreach (var root in ShaderCacheDirs()) yield return new(category, root, age);
+                    break;
+                case "LauncherCache":
+                    foreach (var root in LauncherCacheDirs()) yield return new(category, root, age);
+                    break;
+                case "BrowserCache":
+                    foreach (var root in HealthCleanupService.AllBrowserCacheDirectories(HealthCleanupService.DetectBrowsers()))
+                        yield return new(category, root, age);
+                    break;
+            }
+        }
+
+        internal static bool OwnsFile(CleanupRule rule, string file, DateTime modifiedUtc, DateTime nowUtc)
+        {
+            if (modifiedUtc > nowUtc - rule.MinAge || !MaintenancePaths.IsWithin(rule.Root, file)) return false;
+            if (!rule.Recursive && !string.Equals(
+                Path.TrimEndingDirectorySeparator(Path.GetFullPath(rule.Root)), Path.GetDirectoryName(Path.GetFullPath(file)),
+                StringComparison.OrdinalIgnoreCase)) return false;
+            return System.IO.Enumeration.FileSystemName.MatchesSimpleExpression(rule.Pattern, Path.GetFileName(file), ignoreCase: true);
+        }
+
+        private static bool Overlaps(string a, string b) =>
+            string.Equals(a, b, StringComparison.OrdinalIgnoreCase) || MaintenancePaths.IsWithin(a, b) || MaintenancePaths.IsWithin(b, a);
+
+        internal static bool CoversRule(CleanupRule earlier, CleanupRule later) =>
+            earlier.MinAge <= later.MinAge && (earlier.Pattern == "*" ||
+                string.Equals(earlier.Pattern, later.Pattern, StringComparison.OrdinalIgnoreCase)) &&
+            (earlier.Recursive
+                ? string.Equals(earlier.Root, later.Root, StringComparison.OrdinalIgnoreCase) || MaintenancePaths.IsWithin(earlier.Root, later.Root)
+                : !later.Recursive && string.Equals(earlier.Root, later.Root, StringComparison.OrdinalIgnoreCase));
+
+        private static Dictionary<string, long> RunPlan(HashSet<string> selected, bool clean)
+        {
+            var totals = new Dictionary<string, long>(StringComparer.Ordinal);
+            var prior = new List<CleanupRule>();
+            var now = DateTime.UtcNow;
+            int last = Array.FindLastIndex(Categories, selected.Contains);
+            for (int i = 0; i <= last; i++)
+            {
+                string category = Categories[i];
+                bool run = selected.Contains(category);
+                long bytes = 0;
+                if (category == "RecycleBin" && run)
+                {
+                    var before = RecycleBinSize();
+                    if (clean) { EmptyRecycleBin(); bytes = Math.Max(0, before - RecycleBinSize()); }
+                    else bytes = before;
+                }
+                foreach (var raw in RulesFor(category))
+                {
+                    if (!Path.IsPathFullyQualified(raw.Root) || !MaintenancePaths.IsOrdinaryLocalPath(raw.Root) ||
+                        MaintenancePaths.IsProtectedMaintenancePath(raw.Root) || !Directory.Exists(raw.Root)) continue;
+                    var rule = raw with { Root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(raw.Root)) };
+                    if (prior.Any(earlier => CoversRule(earlier, rule))) continue;
+                    if (run)
+                    {
+                        var overlapping = prior.Where(earlier => Overlaps(earlier.Root, rule.Root)).ToArray();
+                        Func<string, bool>? exclude = overlapping.Length == 0 ? null : file =>
+                        {
+                            var modified = File.GetLastWriteTimeUtc(file);
+                            return overlapping.Any(earlier => OwnsFile(earlier, file, modified, now));
+                        };
+                        bytes += clean
+                            ? MaintenancePaths.CleanFiles(rule.Root, rule.MinAge, rule.Recursive, rule.Pattern, exclude, now)
+                            : MaintenancePaths.MeasureFiles(rule.Root, rule.MinAge, rule.Recursive, rule.Pattern, exclude, now);
+                    }
+                    prior.Add(rule);
+                }
+                if (run) totals[category] = bytes;
+            }
+            return totals;
+        }
+
         public static Task<IReadOnlyList<QuickCleanItem>> ScanAsync() => ScanCoreAsync(false);
         internal static Task<IReadOnlyList<QuickCleanItem>> ScanRecommendedAsync() => ScanCoreAsync(true);
         private static Task<IReadOnlyList<QuickCleanItem>> ScanCoreAsync(bool recommendedOnly) => GearWinCore.RunAsync(CoreWork.CleanupScan, () => Task.Run(() =>
         {
-            var items = new List<QuickCleanItem>
-            {
-                new("UserTemp", LanguageService.T("QuickClean_UserTemp"), MaintenancePaths.VerifiedUserTemp() is string temp ? MaintenancePaths.MeasureFiles(temp, TimeSpan.FromDays(2)) : 0, true),
-                new("ThumbnailCache", LanguageService.T("QuickClean_ThumbnailCache"), ThumbCacheSize(), true),
-            };
-            if (!recommendedOnly) items.AddRange(new QuickCleanItem[]
-            {
-                new("WindowsTemp", LanguageService.T("QuickClean_WindowsTemp"), MaintenancePaths.MeasureFiles(WindowsTempDir, TimeSpan.FromDays(7)), false),
-                new("RecycleBin", LanguageService.T("QuickClean_RecycleBin"), RecycleBinSize(), false),
-                new("WindowsUpdateCache", LanguageService.T("QuickClean_WindowsUpdateCache"), MaintenancePaths.MeasureFiles(WindowsUpdateCacheDir, TimeSpan.FromDays(7)), false),
-                new("DeliveryOptimization", LanguageService.T("QuickClean_DeliveryOptimization"), MaintenancePaths.MeasureFiles(DeliveryOptimizationDir, TimeSpan.FromDays(7)), false),
-                new("ShaderCache", LanguageService.T("QuickClean_ShaderCache"), ShaderCacheDirs().Sum(dir => MaintenancePaths.MeasureFiles(dir, TimeSpan.FromDays(2))), false),
-                new("LauncherCache", LanguageService.T("QuickClean_LauncherCache"), LauncherCacheDirs().Sum(dir => MaintenancePaths.MeasureFiles(dir, TimeSpan.FromDays(2))), false),
-                new("BrowserCache", LanguageService.T("QuickClean_BrowserCache"), HealthCleanupService.AllBrowserCacheDirectories(HealthCleanupService.DetectBrowsers()).Sum(path => MaintenancePaths.MeasureFiles(path, TimeSpan.FromDays(2))), false),
-            });
-            return (IReadOnlyList<QuickCleanItem>)items;
+            var selected = Categories.Where(category => !recommendedOnly || Recommended(category)).ToHashSet(StringComparer.Ordinal);
+            var totals = RunPlan(selected, clean: false);
+            return (IReadOnlyList<QuickCleanItem>)Categories.Where(selected.Contains)
+                .Select(category => new QuickCleanItem(category, LanguageService.T("QuickClean_" + category), totals[category], Recommended(category))).ToArray();
         }));
 
         // The weekly task bypasses the GUI's single-instance mutex. Use a user-specific
@@ -95,59 +183,8 @@ namespace OptimizerWpf.Services
             return RunExclusiveAsync(() => CleanCore(selected));
         }
 
-        private static long CleanCore(IReadOnlyList<string> keys)
-        {
-            long freed = 0;
-            foreach (var key in keys)
-            {
-                switch (key)
-                {
-                    case "UserTemp":
-                        if (MaintenancePaths.VerifiedUserTemp() is string temp)
-                            freed += MaintenancePaths.CleanFiles(temp, TimeSpan.FromDays(2));
-                        break;
-                    case "WindowsTemp":
-                        freed += MaintenancePaths.CleanFiles(WindowsTempDir, TimeSpan.FromDays(7));
-                        break;
-                    case "RecycleBin":
-                        var before = RecycleBinSize();
-                        EmptyRecycleBin();
-                        freed += Math.Max(0, before - RecycleBinSize());
-                        break;
-                    case "ThumbnailCache":
-                        freed += MaintenancePaths.CleanFiles(ExplorerCacheDir, TimeSpan.FromDays(2), false, "thumbcache_*.db") +
-                            MaintenancePaths.CleanFiles(ExplorerCacheDir, TimeSpan.FromDays(2), false, "iconcache_*.db");
-                        break;
-                    case "WindowsUpdateCache":
-                        freed += MaintenancePaths.CleanFiles(WindowsUpdateCacheDir, TimeSpan.FromDays(7));
-                        break;
-                    case "DeliveryOptimization":
-                        freed += MaintenancePaths.CleanFiles(DeliveryOptimizationDir, TimeSpan.FromDays(7));
-                        break;
-                    case "ShaderCache":
-                        foreach (var dir in ShaderCacheDirs())
-                        {
-                            freed += MaintenancePaths.CleanFiles(dir, TimeSpan.FromDays(2));
-                        }
-                        break;
-                    case "LauncherCache":
-                        foreach (var dir in LauncherCacheDirs())
-                        {
-                            freed += MaintenancePaths.CleanFiles(dir, TimeSpan.FromDays(2));
-                        }
-                        break;
-                    case "BrowserCache":
-                        foreach (var path in HealthCleanupService.AllBrowserCacheDirectories(HealthCleanupService.DetectBrowsers()))
-                            freed += MaintenancePaths.CleanFiles(path, TimeSpan.FromDays(2));
-                        break;
-                }
-            }
-            return freed;
-        }
-
-        private static long ThumbCacheSize() =>
-            MaintenancePaths.MeasureFiles(ExplorerCacheDir, TimeSpan.FromDays(2), false, "thumbcache_*.db") +
-            MaintenancePaths.MeasureFiles(ExplorerCacheDir, TimeSpan.FromDays(2), false, "iconcache_*.db");
+        private static long CleanCore(IReadOnlyList<string> keys) =>
+            RunPlan(keys.ToHashSet(StringComparer.Ordinal), clean: true).Values.Sum();
 
         // ===== Κάδος Ανακύκλωσης μέσω shell32.dll - καμία διαθέσιμη διαχειριζόμενη API για
         // μέγεθος/άδειασμα, ίδιο μοτίβο P/Invoke με τα ήδη υπάρχοντα Win32 calls της εφαρμογής. =====
