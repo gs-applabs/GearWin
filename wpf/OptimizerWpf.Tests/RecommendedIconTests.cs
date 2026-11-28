@@ -71,6 +71,18 @@ public class RecommendedIconTests
         => Assert.Equal(expected, AppIconService.MatchesInstalledTitle(display, title));
 
     [Theory]
+    [InlineData(@"C:\Apps\Tool.exe,0", @"C:\Apps\Tool.exe")]
+    [InlineData("\"C:\\Apps\\Tool.dll\", -1", @"C:\Apps\Tool.dll")]
+    [InlineData(@"C:\Apps\Logo.ico", @"C:\Apps\Logo.ico")]
+    [InlineData(@"\\server\Tool.exe", null)]
+    [InlineData(@"\\?\C:\Apps\Tool.exe", null)]
+    [InlineData(@"C:\Apps\Tool.exe:stream", null)]
+    [InlineData("relative.exe", null)]
+    [InlineData(null, null)]
+    public void SharedIconPathParserKeepsLocalResourcesOnly(string? value, string? expected)
+        => Assert.Equal(expected, AppIconService.ParseInstalledIconPath(value));
+
+    [Theory]
     [InlineData("Google Chrome   Google.Chrome   1.0   winget", "Google.Chrome", true)]
     [InlineData("Chrome Remote Desktop Google.ChromeRemoteDesktopHost 1.0 winget", "Google.Chrome", false)]
     [InlineData("Δεν βρέθηκε εγκατεστημένο πακέτο", "Google.Chrome", false)]

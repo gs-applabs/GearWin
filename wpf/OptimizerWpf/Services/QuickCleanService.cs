@@ -145,33 +145,6 @@ namespace OptimizerWpf.Services
             return freed;
         }
 
-        // ΔΙΟΡΘΩΣΗ (εξονυχιστικός έλεγχος εντόπισε): Directory.EnumerateFiles(dir, "*",
-        // SearchOption.AllDirectories) είναι ΤΕΜΠΕΛΗΣ (lazy) - το UnauthorizedAccessException από έναν
-        // απαγορευμένο υποφάκελο (π.χ. AppContainer temp folders μέσα στο C:\Windows\Temp, ακόμα και με
-        // Administrator) πετάγεται ΜΕΣΑ στο foreach, ΟΧΙ στην αρχική κλήση - το try/catch γύρω από την
-        // κλήση δεν το έπιανε καθόλου, με αποτέλεσμα η σάρωση να "κολλάει" σιωπηλά για πάντα (καμία
-        // εξαίρεση, καμία ενημέρωση UI, βλ. LoadQuickCleanAsync). Αναδρομικός, ΑΝΑ-ΦΑΚΕΛΟ προστατευμένος
-        // περίπατος αντί για αυτό - ένας απρόσβατος υποφάκελος παραλείπεται (συνεισφέρει 0), η σάρωση
-        // συνεχίζει κανονικά στους υπόλοιπους.
-        internal static long DirSize(string dir)
-        {
-            if (!MaintenancePaths.IsOrdinaryLocalPath(dir) || !Directory.Exists(dir)) return 0;
-            long total = 0;
-
-            string[] files;
-            try { files = Directory.GetFiles(dir); } catch { files = Array.Empty<string>(); }
-            foreach (var f in files)
-            {
-                try { if (MaintenancePaths.IsOrdinaryLocalPath(f)) total += new FileInfo(f).Length; } catch { }
-            }
-
-            string[] subdirs;
-            try { subdirs = Directory.GetDirectories(dir); } catch { subdirs = Array.Empty<string>(); }
-            foreach (var d in subdirs) total += DirSize(d);
-
-            return total;
-        }
-
         private static long ThumbCacheSize() =>
             MaintenancePaths.MeasureFiles(ExplorerCacheDir, TimeSpan.FromDays(2), false, "thumbcache_*.db") +
             MaintenancePaths.MeasureFiles(ExplorerCacheDir, TimeSpan.FromDays(2), false, "iconcache_*.db");

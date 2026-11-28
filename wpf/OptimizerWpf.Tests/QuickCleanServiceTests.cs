@@ -6,7 +6,7 @@ namespace OptimizerWpf.Tests;
 
 // ΝΕΟ - roadmap "Περισσότερα unit tests" (v4.3.5). Καλύπτει την καθαρή λογική του QuickCleanService
 // που μέχρι τώρα δεν είχε καμία αυτοματοποιημένη επαλήθευση: το μέγεθος σε ανθρώπινα αναγνώσιμη
-// μορφή (FormatSize) και τον αναδρομικό, ανά-φάκελο προστατευμένο περίπατο (DirSize) που διόρθωσε
+// μορφή (FormatSize) και τον αναδρομικό, ανά-φάκελο προστατευμένο περίπατο (MaintenancePaths.MeasureFiles) που διόρθωσε
 // το πραγματικό bug με το lazy Directory.EnumerateFiles (βλ. HANDOFF.md/roadmap - "Γρήγορος
 // Καθαρισμός κολλούσε σε σάρωση").
 public class QuickCleanServiceTests
@@ -33,7 +33,7 @@ public class QuickCleanServiceTests
     }
 
     [Fact]
-    public void DirSize_SumsAllFilesRecursively()
+    public void MeasureFiles_SumsAllFilesRecursively()
     {
         var root = Directory.CreateTempSubdirectory("qc_test_").FullName;
         try
@@ -44,7 +44,7 @@ public class QuickCleanServiceTests
             var subsub = Directory.CreateDirectory(Path.Combine(sub.FullName, "deeper"));
             File.WriteAllBytes(Path.Combine(subsub.FullName, "c.txt"), new byte[10]);
 
-            Assert.Equal(360L, QuickCleanService.DirSize(root));
+            Assert.Equal(360L, MaintenancePaths.MeasureFiles(root, TimeSpan.Zero));
         }
         finally
         {
@@ -53,21 +53,21 @@ public class QuickCleanServiceTests
     }
 
     [Fact]
-    public void DirSize_ReturnsZero_WhenDirectoryDoesNotExist()
+    public void MeasureFiles_ReturnsZero_WhenDirectoryDoesNotExist()
     {
         var missing = Path.Combine(Path.GetTempPath(), "qc_test_does_not_exist_" + Guid.NewGuid().ToString("N"));
-        Assert.Equal(0L, QuickCleanService.DirSize(missing));
+        Assert.Equal(0L, MaintenancePaths.MeasureFiles(missing, TimeSpan.Zero));
     }
 
     [Fact]
-    public void DirSize_IgnoresEmptySubfolders()
+    public void MeasureFiles_IgnoresEmptySubfolders()
     {
         var root = Directory.CreateTempSubdirectory("qc_test_").FullName;
         try
         {
             Directory.CreateDirectory(Path.Combine(root, "empty1"));
             Directory.CreateDirectory(Path.Combine(root, "empty2"));
-            Assert.Equal(0L, QuickCleanService.DirSize(root));
+            Assert.Equal(0L, MaintenancePaths.MeasureFiles(root, TimeSpan.Zero));
         }
         finally
         {

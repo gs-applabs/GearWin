@@ -1,5 +1,7 @@
 using System;
 using System.IO;
+using System.Collections.Generic;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
@@ -80,38 +82,61 @@ namespace OptimizerWpf.Services
             return false;
         }
 
-        public static string? FindInstalledIconPath(string appTitle)
+        // Shared read-only display-icon evidence. Unlike AppUsageReview this
+        // accepts non-executable icon resources and expanded environment variables.
+        internal static string? ParseInstalledIconPath(string? icon)
         {
-            foreach (var (hive, subPath) in new[]
-                     {
-                         (Registry.LocalMachine, @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
-                         (Registry.LocalMachine, @"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"),
-                         (Registry.CurrentUser, @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
-                     })
+            if (string.IsNullOrWhiteSpace(icon) || icon.Length > 4096) return null;
+            try
+            {
+                string path = Environment.ExpandEnvironmentVariables(
+                    System.Text.RegularExpressions.Regex.Replace(icon.Trim(), @",\s*-?\d+$", "").Trim('"'));
+                // Never probe a network share or device path from registry metadata.
+                if (!System.Text.RegularExpressions.Regex.IsMatch(path, @"^[A-Za-z]:\\") ||
+                    !Path.IsPathFullyQualified(path) || path.Skip(2).Contains(':') ||
+                    path.Any(char.IsControl) || path.Contains('"') || path.Contains('*') || path.Contains('?')) return null;
+                return path;
+            }
+            catch { return null; }
+        }
+
+        internal static IReadOnlyList<(string Title, string Path)> ReadInstalledIconEntries(string? appTitle = null)
+        {
+            var entries = new List<(string Title, string Path)>();
+            var machineViews = Environment.Is64BitOperatingSystem
+                ? new[] { RegistryView.Registry64, RegistryView.Registry32 } : new[] { RegistryView.Default };
+            var views = machineViews.Select(view => (RegistryHive.LocalMachine, view))
+                .Append((RegistryHive.CurrentUser, RegistryView.Default));
+            foreach (var (hive, view) in views)
             {
                 try
                 {
-                    using var key = hive.OpenSubKey(subPath);
+                    using var root = RegistryKey.OpenBaseKey(hive, view);
+                    using var key = root.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall");
                     if (key == null) continue;
                     foreach (var name in key.GetSubKeyNames())
                     {
                         try
                         {
                             using var sub = key.OpenSubKey(name);
-                            var displayName = sub?.GetValue("DisplayName") as string;
-                            if (displayName == null || !MatchesInstalledTitle(displayName, appTitle)) continue;
-                            var icon = sub?.GetValue("DisplayIcon") as string;
-                            if (string.IsNullOrWhiteSpace(icon)) continue;
-                            var path = System.Text.RegularExpressions.Regex.Replace(icon.Trim(), @",\s*-?\d+$", "").Trim('"');
-                            path = Environment.ExpandEnvironmentVariables(path);
-                            if (Path.IsPathFullyQualified(path) && File.Exists(path)) return path;
+                            var title = sub?.GetValue("DisplayName") as string;
+                            if (string.IsNullOrWhiteSpace(title) ||
+                                appTitle != null && !MatchesInstalledTitle(title, appTitle)) continue;
+                            var path = ParseInstalledIconPath(sub?.GetValue("DisplayIcon") as string);
+                            if (path == null || !MaintenancePaths.IsOrdinaryLocalPath(path, allowRemovable: true) ||
+                                !File.Exists(path)) continue;
+                            entries.Add((title, path));
+                            if (appTitle != null) return entries;
                         }
-                        catch { /* inaccessible entry is not evidence of an installed app */ }
+                        catch { /* inaccessible entry is not positive installed evidence */ }
                     }
                 }
-                catch { /* inaccessible hive: continue with the other views */ }
+                catch { /* inaccessible registry view is not proof of absence */ }
             }
-            return null;
+            return entries;
         }
+
+        public static string? FindInstalledIconPath(string appTitle) =>
+            ReadInstalledIconEntries(appTitle).FirstOrDefault().Path;
     }
 }

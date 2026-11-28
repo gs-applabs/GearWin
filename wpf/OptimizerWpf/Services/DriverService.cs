@@ -870,9 +870,7 @@ try {
             }
         }
 
-        // Ξεχωριστή background διεργασία ανά driver, ίδιο με το ps1 original - δεν περιμένει να
-        // ολοκληρωθεί (η λήψη+εγκατάσταση μέσω Windows Update μπορεί να πάρει αρκετά λεπτά).
-        // 6.9.0: έκδοση που ΠΕΡΙΜΕΝΕΙ το αποτέλεσμα (η InstallInBackground παρακάτω δεν επέστρεφε ποτέ τίποτα - η γραμμή κατάστασης έμενε «παγωμένη»).
+        // Await the exact WUA driver result; no detached installation route.
         public static async Task<bool> InstallAndWaitAsync(string updateId, CancellationToken ct = default)
         {
             using var lease = await GearWinCore.EnterAsync(CoreWork.SoftwareChange, ct: ct);
@@ -941,28 +939,6 @@ try {{
 
         internal static bool DriverBackupReady(bool restorePoint, string? exportPath) =>
             restorePoint && !string.IsNullOrWhiteSpace(exportPath);
-
-        public static void InstallInBackground(string updateId)
-        {
-            var script = $@"
-$ErrorActionPreference = 'Continue'
-try {{
-    $session = New-Object -ComObject Microsoft.Update.Session
-    $searcher = $session.CreateUpdateSearcher()
-    $result = $searcher.Search(""UpdateID='{updateId}'"")
-    if ($result.Updates.Count -eq 0) {{ exit 1 }}
-    $toInstall = New-Object -ComObject Microsoft.Update.UpdateColl
-    $toInstall.Add($result.Updates.Item(0)) | Out-Null
-    $downloader = $session.CreateUpdateDownloader()
-    $downloader.Updates = $toInstall
-    $downloader.Download() | Out-Null
-    $installer = $session.CreateUpdateInstaller()
-    $installer.Updates = $toInstall
-    $installer.Install() | Out-Null
-}} catch {{}}
-";
-            RunPowerShellScriptDetached(script);
-        }
 
         // DISM Export-Driver - εξάγει ΟΛΟΥΣ τους οδηγούς τρίτων κατασκευαστών (ΟΧΙ τους εργοστασιακούς
         // Windows) σε φάκελο. Ίδιος μηχανισμός με καθιερωμένα εργαλεία δημιουργίας αντιγράφων οδηγών.
@@ -1087,28 +1063,6 @@ $result | ConvertTo-Json -Depth 4 -Compress
             {
                 if (scriptFile != null) { try { File.Delete(scriptFile); } catch { } }
             }
-        }
-
-        // Fire-and-forget - χρησιμοποιείται μόνο για την εγκατάσταση driver (μπορεί να πάρει πολλά
-        // λεπτά, δεν χρειάζεται να την περιμένει η εφαρμογή· ο χρήστης βλέπει μόνο ότι ξεκίνησε).
-        private static void RunPowerShellScriptDetached(string script)
-        {
-            // ΑΣΦΑΛΕΙΑ: η εγκατάσταση οδηγού τρέχει elevated - ΟΧΙ script στο %TEMP% (αντικαταστάσιμο από μη-elevated
-            // κώδικα πριν εκτελεστεί), βλ. PowerShellArgs.
-            var scriptFile = PowerShellArgs.Fits(script) ? null : SecureStorage.NewPrivateTempFile("psinstall", ".ps1");
-            if (scriptFile != null) File.WriteAllText(scriptFile, script);
-            try
-            {
-                Process.Start(new ProcessStartInfo
-                {
-                    FileName = "powershell.exe",
-                    Arguments = scriptFile == null ? PowerShellArgs.Command(script) : $"-NoProfile -ExecutionPolicy Bypass -Command \"& '{scriptFile}'; Remove-Item '{scriptFile}' -Force\"",
-                    WindowStyle = ProcessWindowStyle.Hidden,
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                });
-            }
-            catch { }
         }
 
         private static async Task<bool> RunProcessAsync(string fileName, string arguments, TimeSpan timeout)

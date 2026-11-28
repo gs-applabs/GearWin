@@ -1,6 +1,6 @@
 # CURRENT CHECKPOINT — 2026-11-28
 
-Read [START_HERE.md](START_HERE.md) and active RQ/DUP register in [ROADMAP.md](ROADMAP.md). Source-first cross-check at 76bd8e5b: 488 files / 372 scanned / 98,678 lines; exact installer CI 46107336517 success, 1045 .NET tests; master divergent; current functional source unchanged. No feature implementation from stale statuses. New lexical audit outputs not yet run. Full semantic/native certification open.
+Read [START_HERE.md](START_HERE.md) and [ROADMAP.md](ROADMAP.md). Duplicate consolidation: removed unused detached driver path, test-only recursive cleanup traversal, unused browser estimates; shared installed-icon registry reader. Parent source/audit artifacts verified; exact latest CI pending. No new feature engine, no release.
 
 ---
 

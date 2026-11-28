@@ -307,14 +307,6 @@ namespace OptimizerWpf.Services
             return result;
         }
 
-        // ΝΕΟ - ρητό αίτημα χρήστη: το μέγεθος cache περιηγητών να συνυπολογίζεται στον Πλήρη Έλεγχο
-        // Υγείας (HealthCheckWindow's στάδιο "Καθαρισμός Χώρου"), ΧΩΡΙΣ να αγγίξει καθόλου την ήδη
-        // υπάρχουσα, ξεχωριστή ανά-περιηγητή λίστα/κουμπιά στην καρτέλα Υγεία & Συντήρηση (ρητή
-        // οδηγία χρήστη: "άσε τα as they are") - μόνο ανάγνωση μεγέθους εδώ, επαναχρησιμοποιεί το ίδιο
-        // DetectBrowsers() ώστε να μετρά ΑΚΡΙΒΩΣ τους ίδιους φακέλους που θα καθάριζε το υπάρχον κουμπί.
-        public static Task<long> ScanBrowserCacheSizeAsync() => Task.Run(() =>
-            AllBrowserCacheDirectories(DetectBrowsers()).Sum(path => MaintenancePaths.MeasureFiles(path, TimeSpan.FromDays(2))));
-
         // Same normalized root plan for aggregate estimate and aggregate cleaning.
         internal static IReadOnlyList<string> UniqueCacheRoots(IEnumerable<string> paths)
         {
@@ -336,10 +328,6 @@ namespace OptimizerWpf.Services
 
         internal static IReadOnlyList<string> AllBrowserCacheDirectories(IEnumerable<BrowserCacheEntry> browsers) =>
             UniqueCacheRoots(browsers.SelectMany(BrowserCacheDirectories));
-
-        internal static long BrowserCacheSize(BrowserCacheEntry browser) =>
-            UniqueCacheRoots(BrowserCacheDirectories(browser))
-                .Sum(path => MaintenancePaths.MeasureFiles(path, TimeSpan.FromDays(2)));
 
         internal static IEnumerable<string> BrowserCacheDirectories(BrowserCacheEntry browser)
         {

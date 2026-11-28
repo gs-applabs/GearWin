@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
-using Microsoft.Win32;
 
 namespace OptimizerWpf.Services;
 
@@ -40,7 +39,7 @@ internal static class RecommendedInventoryService
         var (output, exitCode, started) = await WingetService.ListInstalledWithinLeaseAsync().ConfigureAwait(false);
         var (ids, complete) = ParseInventory(output, started && exitCode == 0);
         // Read uninstall titles once. Registry matches are positive corroboration only.
-        var titles = await Task.Run(ReadTitles).ConfigureAwait(false);
+        var titles = await Task.Run(() => AppIconService.ReadInstalledIconEntries().Select(row => row.Title).ToArray()).ConfigureAwait(false);
         var result = BloatwareService.RecommendedApps.ToDictionary(a => a.WingetId,
             a => ids.Contains(a.WingetId) || titles.Any(t => AppIconService.MatchesInstalledTitle(t, a.Title))
                 ? (bool?)true : complete ? false : null, StringComparer.OrdinalIgnoreCase);
@@ -49,37 +48,6 @@ internal static class RecommendedInventoryService
             if (generation == _generation) { _cached = result; _cachedAt = Environment.TickCount64; _cachedSoftwareEpoch = epoch; }
         }
         return result;
-    }
-
-    private static List<string> ReadTitles()
-    {
-        var titles = new List<string>();
-        foreach (var (hive, view) in new[] {
-            (RegistryHive.LocalMachine, RegistryView.Registry64),
-            (RegistryHive.LocalMachine, RegistryView.Registry32),
-            (RegistryHive.CurrentUser, RegistryView.Default) })
-        {
-            try
-            {
-                using var root = RegistryKey.OpenBaseKey(hive, view);
-                using var uninstall = root.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Uninstall");
-                if (uninstall == null) continue;
-                foreach (var name in uninstall.GetSubKeyNames())
-                {
-                    try
-                    {
-                        using var sub = uninstall.OpenSubKey(name);
-                        if (sub?.GetValue("DisplayName") is not string title ||
-                            string.IsNullOrWhiteSpace(title) || sub.GetValue("DisplayIcon") is not string icon) continue;
-                        var path = Environment.ExpandEnvironmentVariables(Regex.Replace(icon.Trim(), @",\s*-?\d+$", "").Trim('"'));
-                        if (System.IO.Path.IsPathFullyQualified(path) && System.IO.File.Exists(path)) titles.Add(title);
-                    }
-                    catch { }
-                }
-            }
-            catch { }
-        }
-        return titles;
     }
 
     internal static (HashSet<string> Ids, bool Complete) ParseInventory(string output, bool success)
