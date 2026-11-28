@@ -136,9 +136,8 @@ internal static class AutoGameProfileJournal
 
     internal static void Apply(string executable, GameProfileData profile)
     {
-        // Check for any existing manual power profile before taking the power
-        // lease (PowerModeService's own lock ordering is Gate -> power lease).
-        if (PowerModeService.HasSavedProfile()) throw new IOException("A power profile already owns gaming settings.");
+        // Do not acquire PowerModeService.Gate after the power lease;
+        // the protected snapshot is read directly under the same resource lease.
         using var lease = UltimatePlanJournal.PowerLease();
         if (PowerModeService.HasSavedProfileUnderPowerLease())
             throw new IOException("A power profile already owns gaming settings.");

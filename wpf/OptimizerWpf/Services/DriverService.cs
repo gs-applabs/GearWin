@@ -268,59 +268,68 @@ namespace OptimizerWpf.Services
         public static async Task<bool> InstallCatalogDriverAsync(CatalogCandidate candidate)
         {
             using var lease = await GearWinCore.EnterAsync(CoreWork.SoftwareChange);
-            // ΑΣΦΑΛΕΙΑ: το πακέτο οδηγού κατεβαίνει, επαληθεύεται (Authenticode) και ΜΕΤΑ εγκαθίσταται elevated (pnputil/wusa) -
-            // σε φάκελο μόνο-Administrators, ώστε να μην αντικατασταθεί ανάμεσα στον έλεγχο και την εγκατάσταση (TOCTOU).
-            var tempDir = SecureStorage.NewPrivateTempDir("DriverCatalog");
+            LastInstallLog = null;
+            string? tempDir = null;
             try
             {
-                var downloadUrl = await ResolveCatalogDownloadUrlAsync(candidate.UpdateId);
-                if (downloadUrl == null) return false;
-
-                var filePath = Path.Combine(tempDir, Path.GetFileName(new Uri(downloadUrl).LocalPath));
-                var bytes = await Http.GetByteArrayAsync(downloadUrl);
-                await File.WriteAllBytesAsync(filePath, bytes);
-
-                // SHA256 - καταγράφεται στο log ως πρόσθετο, ελέγξιμο ίχνος του τι πραγματικά
-                // κατέβηκε/εγκαταστάθηκε (defense-in-depth πλάι στο Authenticode, δεν αντικαθιστά την
-                // υπογραφή - δεν υπάρχει "γνωστό καλό" hash να συγκριθεί εκ των προτέρων, το Catalog
-                // δεν εκθέτει hashes δημόσια).
-                var sha256 = Convert.ToHexString(SHA256.HashData(bytes));
+                var downloadUrl = CatalogPackage.Normalize(await ResolveCatalogDownloadUrlAsync(candidate.UpdateId), fromCatalog: true);
+                if (downloadUrl == null) { LastInstallLog = "Unsupported or ambiguous Catalog package (CAB required)."; return false; }
+                tempDir = SecureStorage.NewPrivateTempDir("DriverCatalog");
+                var filePath = Path.Combine(tempDir, "driver.cab");
+                var root = Path.GetPathRoot(tempDir)!;
+                if (new DriveInfo(root).AvailableFreeSpace < 3 * CatalogPackage.MaxBytes)
+                    throw new IOException("Insufficient free space for bounded package staging.");
+                var sha256 = await CatalogPackage.DownloadAsync(downloadUrl, filePath);
+                ProtectedOperationJournal.SetTrustedOwner(filePath);
+                if (!SecureStorage.IsProtectedFile(filePath)) throw new IOException("Unprotected driver package.");
                 LastInstallLog = $"{candidate.Title} · SHA256: {sha256}";
+                if (!await VerifyAuthenticodeAsync(filePath)) { LastInstallLog += " · Signature not verified"; return false; }
 
-                // Επαλήθευση Authenticode ΠΡΙΝ την εγκατάσταση - το .NET δεν έχει καθαρό, ενσωματωμένο
-                // API ισοδύναμο του Get-AuthenticodeSignature (θα χρειαζόταν P/Invoke WinVerifyTrust) -
-                // shell out στο ΙΔΙΟ cmdlet που χρησιμοποιεί το PowerShell, ίδιο μοτίβο με τα υπόλοιπα
-                // σημεία της εφαρμογής που στηρίζονται σε PowerShell-only λειτουργικότητα.
-                if (!await VerifyAuthenticodeAsync(filePath)) return false;
+                var extractPath = Path.Combine(tempDir, "extracted");
+                SecureStorage.SecureDirectory(extractPath);
+                int expand = await RunCatalogCommandAsync("expand.exe", filePath, "-F:*", extractPath);
+                if (expand != 0) { LastInstallLog += " · CAB extraction failed"; return false; }
+                var inf = CatalogPackage.SelectInf(extractPath, candidate.HardwareId);
+                if (inf == null) { LastInstallLog += " · No unique exact hardware-ID INF"; return false; }
 
-                if (filePath.EndsWith(".cab", StringComparison.OrdinalIgnoreCase))
+                // Recheck the selected device is still present and the
+                // candidate is newer. Do not rely solely on cached metadata.
+                var devices = await GetSystemDevicesAsync();
+                if (!devices.Any(d => d.HardwareId.Equals(candidate.HardwareId, StringComparison.OrdinalIgnoreCase)
+                    && d.CurrentVersion != null && candidate.Version > d.CurrentVersion))
                 {
-                    var extractPath = Path.Combine(tempDir, "extracted");
-                    Directory.CreateDirectory(extractPath);
-                    using var expand = Process.Start(new ProcessStartInfo("expand.exe", $"\"{filePath}\" -F:* \"{extractPath}\"")
-                    { UseShellExecute = false, CreateNoWindow = true });
-                    expand?.WaitForExit();
-                    if (expand?.ExitCode != 0) return false;
-
-                    using var pnputil = Process.Start(new ProcessStartInfo("pnputil.exe", $"/add-driver \"{extractPath}\\*.inf\" /subdirs /install")
-                    { UseShellExecute = false, CreateNoWindow = true });
-                    pnputil?.WaitForExit();
-                    return pnputil?.ExitCode == 0;
+                    LastInstallLog += " · Device/version no longer eligible";
+                    return false;
                 }
-
-                // .msu ή άλλος τύπος πακέτου - wusa.exe είναι ο επίσημος εγκαταστάτης για .msu.
-                using var wusa = Process.Start(new ProcessStartInfo("wusa.exe", $"\"{filePath}\" /quiet /norestart") { UseShellExecute = false, CreateNoWindow = true });
-                wusa?.WaitForExit();
-                return wusa?.ExitCode == 0;
+                int install = await RunCatalogCommandAsync("pnputil.exe", "/add-driver", inf, "/install");
+                LastInstallLog += " · PnPUtil exit " + install +
+                    (install == 3010 ? " (restart required)" : "");
+                // Exit success means PnPUtil accepted the package, not proof
+                // that Windows selected it over a higher-ranked installed driver.
+                return install is 0 or 3010;
             }
-            catch
-            {
-                return false;
-            }
+            catch (Exception ex) { LastInstallLog = (LastInstallLog ?? "Catalog installation") + " · " + ex.Message; return false; }
             finally
             {
-                try { Directory.Delete(tempDir, true); } catch { }
+                if (tempDir != null) try { Directory.Delete(tempDir, true); } catch { }
             }
+        }
+
+        private static async Task<int> RunCatalogCommandAsync(string executable, params string[] arguments)
+        {
+            var start = new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, executable))
+            {
+                UseShellExecute = false, CreateNoWindow = true,
+                RedirectStandardOutput = true, RedirectStandardError = true
+            };
+            foreach (var arg in arguments) start.ArgumentList.Add(arg);
+            using var child = Process.Start(start) ?? throw new IOException("Cannot start " + executable);
+            var stdout = HealthCleanupService.ReadBoundedOutputAsync(child.StandardOutput, 32768);
+            var stderr = HealthCleanupService.ReadBoundedOutputAsync(child.StandardError, 4096);
+            // Do not kill a running driver installation on an arbitrary deadline.
+            await child.WaitForExitAsync();
+            await Task.WhenAll(stdout, stderr);
+            return child.ExitCode;
         }
 
         private static async Task<string?> ResolveCatalogDownloadUrlAsync(string updateId)
@@ -328,13 +337,16 @@ namespace OptimizerWpf.Services
             // Το updateId μπαίνει σε σώμα JSON/form: δέχεται μόνο GUID (προστασία από injection, π.χ. από παραποιημένη cache στο δίσκο).
             if (!Guid.TryParseExact(updateId, "D", out _)) return null;
             var body = $"updateIDs=[{{\"size\":0,\"updateID\":\"{updateId}\",\"uidInfo\":\"{updateId}\"}}]";
-            var content = new StringContent(Uri.UnescapeDataString(body));
+            using var content = new StringContent(Uri.UnescapeDataString(body));
             content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/x-www-form-urlencoded");
             using var response = await Http.PostAsync("https://www.catalog.update.microsoft.com/DownloadDialog.aspx", content);
+            response.EnsureSuccessStatusCode();
             var html = await response.Content.ReadAsStringAsync();
-            html = html.Replace("www.download.windowsupdate", "download.windowsupdate");
-            var match = Regex.Match(html, @"(https?://(?:dl\.delivery\.mp\.microsoft\.com|(?:catalog\.s\.)?download\.windowsupdate\.com)/[^'""]*)");
-            return match.Success ? match.Groups[1].Value : null;
+            if (html.Length > 2 * 1024 * 1024) return null;
+            var urls = Regex.Matches(html, @"(https?://(?:dl\.delivery\.mp\.microsoft\.com|(?:catalog\.s\.|www\.)?download\.windowsupdate\.com)/[^'""]*)")
+                .Select(m => CatalogPackage.Normalize(System.Net.WebUtility.HtmlDecode(m.Groups[1].Value), fromCatalog: true))
+                .Where(u => u != null).Select(u => u!.AbsoluteUri).Distinct(StringComparer.Ordinal).ToArray();
+            return urls.Length == 1 ? urls[0] : null;
         }
 
         // Require Valid Authenticode AND the actual organization attribute of

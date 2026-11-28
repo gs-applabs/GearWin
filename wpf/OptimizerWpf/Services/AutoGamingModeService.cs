@@ -15,6 +15,7 @@ public static class AutoGamingModeService
     private static int _stableTicks, _misses;
     private static bool _recoveryChecked;
     private static bool _reportedFailure;
+    private static long _lastProfileProbe;
 
     [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
@@ -28,6 +29,7 @@ public static class AutoGamingModeService
         _candidate = _active = null;
         _stableTicks = _misses = 0;
         _recoveryChecked = _reportedFailure = false;
+        _lastProfileProbe = 0;
         _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
         _timer.Tick += OnTick;
         _timer.Start();
@@ -76,6 +78,7 @@ public static class AutoGamingModeService
             var settings = AppSettingsService.Current;
             var current = settings.GamingModeActive || settings.OfficeModeActive ? null : ForegroundGame();
             string? identity = current?.Identity;
+            if (_candidate != identity) _lastProfileProbe = 0;
             _stableTicks = NextStableTicks(_candidate, identity, _stableTicks);
             _candidate = identity;
             if (_active != null)
@@ -90,8 +93,11 @@ public static class AutoGamingModeService
                 _misses = 0;
             }
             if (current == null || _stableTicks < 2) return;
+            long now = Environment.TickCount64;
+            if (_lastProfileProbe != 0 && SharedTelemetryService.IsFresh(now, _lastProfileProbe, 30000)) return;
             using var applyLease = GearWinCore.TryEnterBackground(CoreWork.ProfileChange);
             if (applyLease == null || !settings.AutoGamingModeEnabled || settings.GamingModeActive || settings.OfficeModeActive) return;
+            _lastProfileProbe = now;
             var profile = GameProfileService.Load(current.Value.Path);
             if (profile == null) return;
             AutoGameProfileJournal.Apply(current.Value.Path, profile);
@@ -112,7 +118,7 @@ public static class AutoGamingModeService
             using var process = Process.GetProcessById(pid);
             if (pid == Environment.ProcessId || process.ProcessName is "explorer" or "dwm" or "dotnet") return null;
             string? path = process.MainModule?.FileName;
-            if (path == null || !GameProfileService.HasProfile(path)) return null;
+            if (path == null) return null;
             // PID + start time prevents PID reuse; exact profile path prevents
             // another executable with a coincidentally similar file name.
             return (path, pid + ":" + process.StartTime.ToUniversalTime().Ticks + ":" + GameProfileService.Identity(path));
