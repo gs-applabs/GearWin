@@ -18,3 +18,7 @@ wpf/.lang_scratch/
 release/
 *_wpftmp.csproj
 reference/
+
+# Python recovery/audit bytecode is generated, never source.
+__pycache__/
+*.py[cod]

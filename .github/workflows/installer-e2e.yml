@@ -13,7 +13,8 @@ on:
 
 concurrency:
   group: installer-e2e-${{ github.ref }}
-  cancel-in-progress: true
+  # Preserve active installer acceptance evidence; supersede queued candidates only.
+  cancel-in-progress: false
 
 permissions:
   contents: read

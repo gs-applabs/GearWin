@@ -942,3 +942,10 @@ Current implementation E01: existing QuickCleanService defines one category/age/
 
 
 - E02: Bloatware usage review + safe uninstall localization: 14 new keys and four corrected existing keys in all 14 language dictionaries (252 localized entries). Live XAML translation for usage button. Help, button and confirmation now describe verified MSI/Windows Settings and advisory folders, not obsolete automatic folder deletion. Other tools' EL/EN fallback strings remain open; no new translation engine. One new coverage test. Native UserAssist and full language visual acceptance pending. Parent 412f135a build-setup and offline clone succeeded; E2E pending when inspected.
+
+
+## E04/E05 — navigation and CI hygiene (2026-11-28)
+
+E05: TabLayout now validates every nested XAML section before removing any card; mismatches return false with the entire source view unchanged, as the existing contract specifies. Four deterministic authored cases (646 cumulative authored, not passed on this candidate). E04: ignore generated Python bytecode; exact parent tree contains no tracked bytecode or ai_build_agent script. Icon catalog notices already record 31 pinned entries; distribution rights and visual review remain open. Installer workflow now preserves running jobs, matching audit concurrency; pending jobs may still be superseded. E03 password/Wi-Fi collection and authorization untouched; presentation/lifetime review remains open. No new service, timer, version bump or merge.
+
+Exact parent b11b87724935b0b85ce64885fe0af404fe1a7ad0: installer run 46110058317 all six jobs success; build job 140871427909 logs 1033 desktop + 42 migration PASS, zero failures/skips. Audit source-inventory passed; windows-baseline in progress at inspection (46110058321). Not physical or final acceptance.

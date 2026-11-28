@@ -93,6 +93,65 @@ namespace OptimizerWpf.Tests
             });
         }
 
+        [Theory]
+        [InlineData(2)]
+        [InlineData(4)]
+        public void NestedSectionMismatchLeavesWholeViewIntact(int nestedCount)
+        {
+            RunSta(() =>
+            {
+                var root = new StackPanel();
+                for (int i = 0; i < 7; i++) root.Children.Add(new Border());
+                var inner = new StackPanel();
+                for (int i = 0; i < nestedCount; i++) inner.Children.Add(new Border());
+                var nested = new UserControl { Content = inner };
+                root.Children.Add(nested);
+                var view = new UserControl { Content = root };
+                var before = root.Children.Cast<UIElement>().ToArray();
+                var nestedBefore = inner.Children.Cast<UIElement>().ToArray();
+
+                Assert.False(TabLayout.ApplySections(view, "Health", new HashSet<string> { "Backups" }));
+                Assert.Equal(before, root.Children.Cast<UIElement>().ToArray());
+                Assert.Equal(nestedBefore, inner.Children.Cast<UIElement>().ToArray());
+            });
+        }
+
+        [Fact]
+        public void WrongNestedControlTypeLeavesWholeViewIntact()
+        {
+            RunSta(() =>
+            {
+                var root = new StackPanel();
+                for (int i = 0; i < 8; i++) root.Children.Add(new Border());
+                var view = new UserControl { Content = root };
+                var before = root.Children.Cast<UIElement>().ToArray();
+                Assert.False(TabLayout.ApplySections(view, "Health", new HashSet<string> { "Backups" }));
+                Assert.Equal(before, root.Children.Cast<UIElement>().ToArray());
+            });
+        }
+
+        [Fact]
+        public void ValidNestedSectionsKeepOnlyRequestedCards()
+        {
+            RunSta(() =>
+            {
+                var root = new StackPanel();
+                for (int i = 0; i < 7; i++) root.Children.Add(new Border());
+                var backup = root.Children[2];
+                var inner = new StackPanel();
+                for (int i = 0; i < 3; i++) inner.Children.Add(new Border());
+                var nested = new UserControl { Content = inner };
+                root.Children.Add(nested);
+                var view = new UserControl { Content = root };
+
+                Assert.True(TabLayout.ApplySections(view, "Health", new HashSet<string> { "Backups" }));
+                Assert.Equal(2, root.Children.Count);
+                Assert.Same(backup, root.Children[0]);
+                Assert.Same(nested, root.Children[1]);
+                Assert.Equal(3, inner.Children.Count);
+            });
+        }
+
         [Fact]
         public void EveryCardOfTheComposedViewsAppearsInExactlyOnePage()
         {

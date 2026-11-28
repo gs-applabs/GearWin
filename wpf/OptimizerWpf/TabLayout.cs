@@ -127,6 +127,18 @@ namespace OptimizerWpf
             var panel = RootPanel(view);
             if (panel == null || panel.Children.Count != map.Length) return false;
 
+            // Validate every nested mapping before removing any card. A stale XAML map
+            // must leave the entire view intact, not silently produce a partial page.
+            for (var i = 0; i < map.Length; i++)
+            {
+                var section = map[i];
+                if (section == null || !section.StartsWith('@')) continue;
+                if (!NestedSections.TryGetValue(section, out var nested) ||
+                    panel.Children[i] is not UserControl uc ||
+                    RootPanel(uc) is not StackPanel inner || inner.Children.Count != nested.Length)
+                    return false;
+            }
+
             for (var i = map.Length - 1; i >= 0; i--)
             {
                 var section = map[i];
@@ -134,8 +146,7 @@ namespace OptimizerWpf
                 if (section != null && section.StartsWith('@'))
                 {
                     var nested = NestedSections[section];
-                    var inner = child is UserControl uc ? RootPanel(uc) : null;
-                    if (inner == null || inner.Children.Count != nested.Length) continue; // ασυμφωνία: αφήνεται ανέπαφο
+                    var inner = RootPanel((UserControl)child)!; // preflight verified every nested panel
                     for (var j = nested.Length - 1; j >= 0; j--)
                         if (nested[j] == null || !keep.Contains(nested[j]!)) inner.Children.RemoveAt(j);
                     if (inner.Children.Count == 0) panel.Children.RemoveAt(i);

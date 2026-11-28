@@ -2,6 +2,12 @@
 
 Updated 2026-11-28. This is the single current entry point for a new ChatGPT/Claude Code session. Repository: gs-applabs/GearWin. Active branch: release/7.1.0-ultra. Draft integration PR: #6 (base release/7.0.0-validation). Resolve live branch HEAD first; last fully validated source 7960011c034d9e5a49605b2d34e73a0e37f6ca61; current HEAD includes newer history/product reconciliation. Master audit reference: c025e12d3e4cc8d3dc2be63d27f30b0aa8f34132. Never reset or blindly merge. No final release yet.
 
+## ACTIVE CHECKPOINT — E04/E05 navigation and CI hygiene
+
+E05: TabLayout now validates every nested XAML section before removing any card; mismatches return false with the entire source view unchanged, as the existing contract specifies. Four deterministic authored cases (646 cumulative authored, not passed on this candidate). E04: ignore generated Python bytecode; exact parent tree contains no tracked bytecode or ai_build_agent script. Icon catalog notices already record 31 pinned entries; distribution rights and visual review remain open. Installer workflow now preserves running jobs, matching audit concurrency; pending jobs may still be superseded. E03 password/Wi-Fi collection and authorization untouched; presentation/lifetime review remains open. No new service, timer, version bump or merge.
+
+Exact parent b11b87724935b0b85ce64885fe0af404fe1a7ad0: installer run 46110058317 all six jobs success; build job 140871427909 logs 1033 desktop + 42 migration PASS, zero failures/skips. Audit source-inventory passed; windows-baseline in progress at inspection (46110058321). Not physical or final acceptance.
+
 ## ACTIVE CHECKPOINT — E02 localization
 
 Read SINGLE ACTIVE BACKLOG in ROADMAP. Bloatware usage and safe uninstall messages/help localized in 14 languages; other fallback strings and full visual/native tests remain. Parent E01 build-setup and offline clone succeeded. No release.
