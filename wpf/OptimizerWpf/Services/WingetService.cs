@@ -192,7 +192,7 @@ namespace OptimizerWpf.Services
             if (source == "windowsupdate")
             {
                 var (ok, reboot, error) = await WindowsUpdateService.InstallAsync(id);
-                if (ok && reboot) RestartRequiredAfterUpdates = true;
+                if (reboot) RestartRequiredAfterUpdates = true;
                 return (ok, ok ? null : error);
             }
             using var lease = await GearWinCore.EnterAsync(CoreWork.SoftwareChange);

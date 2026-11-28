@@ -362,6 +362,7 @@ namespace OptimizerWpf.Services
                 LastInstallLog += " · PnPUtil exit " + install +
                     (install == 3010 ? " (restart required)" : "");
                 if (install is not (0 or 3010)) return false;
+                if (install == 3010) WingetService.RestartRequiredAfterUpdates = true;
                 // Acceptance is distinct from active version. A reboot or Windows
                 // ranking may defer or prevent activation.
                 try
@@ -875,29 +876,44 @@ try {
         public static async Task<bool> InstallAndWaitAsync(string updateId, CancellationToken ct = default)
         {
             using var lease = await GearWinCore.EnterAsync(CoreWork.SoftwareChange, ct: ct);
-            if (!System.Text.RegularExpressions.Regex.IsMatch(updateId ?? "", "^[0-9a-fA-F-]{36}$")) return false;
+            if (!Guid.TryParseExact(updateId, "D", out var id) || id == Guid.Empty) return false;
+            ct.ThrowIfCancellationRequested();
+            updateId = id.ToString("D");
             var script = $@"
 $ErrorActionPreference = 'Stop'
 try {{
     $session = New-Object -ComObject Microsoft.Update.Session
-    $result = $session.CreateUpdateSearcher().Search(""UpdateID='{updateId}'"")
-    if ($result.Updates.Count -eq 0) {{ exit 1 }}
+    $result = $session.CreateUpdateSearcher().Search(""UpdateID='{updateId}' and IsInstalled=0 and IsHidden=0 and Type='Driver'"")
+    if ($result.Updates.Count -ne 1) {{ exit 1 }}
+    $target = $result.Updates.Item(0)
+    if (-not $target.EulaAccepted) {{ $target.AcceptEula() }}
+    if (-not $target.EulaAccepted) {{ exit 2 }}
     $toInstall = New-Object -ComObject Microsoft.Update.UpdateColl
-    $toInstall.Add($result.Updates.Item(0)) | Out-Null
-    $downloader = $session.CreateUpdateDownloader(); $downloader.Updates = $toInstall; $downloader.Download() | Out-Null
+    $toInstall.Add($target) | Out-Null
+    if (-not $target.IsDownloaded) {{
+        $downloader = $session.CreateUpdateDownloader(); $downloader.Updates = $toInstall
+        $download = $downloader.Download()
+        $item = $download.GetUpdateResult(0)
+        if ($download.ResultCode -ne 2 -or $item.ResultCode -ne 2 -or $item.HResult -ne 0 -or -not $target.IsDownloaded) {{ exit 2 }}
+    }}
     $installer = $session.CreateUpdateInstaller(); $installer.Updates = $toInstall
+    $installer.AllowSourcePrompts = $false
     $r = $installer.Install()
-    if ($r.ResultCode -eq 2) {{ exit 0 }} else {{ exit 2 }}
+    $item = $r.GetUpdateResult(0)
+    if ($r.ResultCode -eq 2 -and $item.ResultCode -eq 2 -and $item.HResult -eq 0) {{
+        if ($r.RebootRequired -or $item.RebootRequired) {{ exit 10 }} else {{ exit 0 }}
+    }} else {{ exit 2 }}
 }} catch {{ exit 3 }}
 ";
-            var psi = new ProcessStartInfo("powershell.exe", PowerShellArgs.Command(script, hidden: true)) { UseShellExecute = false, CreateNoWindow = true };
+            var psi = new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, @"WindowsPowerShell\v1.0\powershell.exe"),
+                PowerShellArgs.Command(script, hidden: true)) { UseShellExecute = false, CreateNoWindow = true };
+            ct.ThrowIfCancellationRequested();
             using var p = Process.Start(psi);
             if (p == null) return false;
-            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            cts.CancelAfter(TimeSpan.FromMinutes(60));
-            try { await p.WaitForExitAsync(cts.Token); }
-            catch (OperationCanceledException) { try { p.Kill(true); } catch { } return false; }
-            return p.ExitCode == 0;
+            // Admission cancellation only. Do not terminate an active WUA install.
+            await p.WaitForExitAsync();
+            if (p.ExitCode == 10) WingetService.RestartRequiredAfterUpdates = true;
+            return p.ExitCode is 0 or 10;
         }
 
         // 6.9.1: αντίγραφο των τρεχόντων οδηγών τρίτων (pnputil /export-driver) σε φάκελο με timestamp ΠΡΙΝ από κάθε εγκατάσταση οδηγού· κρατούνται τα 3 τελευταία.
@@ -908,16 +924,23 @@ try {{
             {
                 var rootDir = Path.Combine(SecureStorage.RootDir, "DriverExports");
                 SecureStorage.SecureDirectory(rootDir);
-                var dest = Path.Combine(rootDir, DateTime.Now.ToString("yyyyMMdd-HHmmss"));
-                Directory.CreateDirectory(dest);
-                var ok = await RunProcessAsync("pnputil.exe", "/export-driver * " + BS_Q + dest + BS_Q, TimeSpan.FromMinutes(20));
-                foreach (var old in Directory.GetDirectories(rootDir).OrderByDescending(d => d).Skip(3))
-                    try { Directory.Delete(old, true); } catch { }
-                return ok ? dest : null;
+                // Retain prior backups, including incomplete/legacy folders. Never
+                // recursively delete an arbitrary directory merely because it is old.
+                if (Directory.EnumerateDirectories(rootDir).Take(32).Count() >= 32) return null;
+                var dest = Path.Combine(rootDir, DateTime.Now.ToString("yyyyMMdd-HHmmss") + "-" + Guid.NewGuid().ToString("N"));
+                SecureStorage.SecureDirectory(dest);
+                int code = await RunCatalogCommandAsync("pnputil.exe", "/export-driver", "*", dest);
+                // No proof of a bootable or complete backup: require actual INF
+                // output before allowing this export to serve as a precondition.
+                return code == 0 && Directory.EnumerateFiles(dest, "*.inf", SearchOption.AllDirectories)
+                    .Any(MaintenancePaths.IsOrdinaryLocalPath) ? dest : null;
             }
             catch { return null; }
         }
         private const string BS_Q = "\"";
+
+        internal static bool DriverBackupReady(bool restorePoint, string? exportPath) =>
+            restorePoint && !string.IsNullOrWhiteSpace(exportPath);
 
         public static void InstallInBackground(string updateId)
         {

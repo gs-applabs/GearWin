@@ -378,6 +378,7 @@ namespace OptimizerWpf.Views
             ApplyGearUi();
             BtnUpgradeSelected.IsEnabled = !busy;
             if (AppScan.Status != null) TxtWingetStatus.Text = AppScan.Status;
+            if (busy && AppScan.Installing && s_installCts != null) BtnCancelAppScan.Visibility = Visibility.Visible;
         }
 
         // 6.9.3: το κουμπί με το γρανάζι δείχνει «σάρωση σε εξέλιξη» για κάθε σάρωση (εφαρμογές/Windows ή οδηγοί)
@@ -476,7 +477,17 @@ namespace OptimizerWpf.Views
         }
 
         private static System.Threading.CancellationTokenSource? _scanCts;
-        private void BtnCancelAppScan_Click(object sender, RoutedEventArgs e) { _scanCts?.Cancel(); s_driverCts?.Cancel(); }
+        private static System.Threading.CancellationTokenSource? s_installCts;
+        private void BtnCancelAppScan_Click(object sender, RoutedEventArgs e)
+        {
+            if (s_installCts != null)
+            {
+                s_installCts.Cancel(); // stop before next item, not active servicing
+                BtnCancelAppScan.IsEnabled = false;
+                return;
+            }
+            _scanCts?.Cancel(); s_driverCts?.Cancel();
+        }
 
         // 6.9.1: λίστα «αγνόησης» ενημερώσεων (πηγή|id) που ο χρήστης δεν θέλει να βλέπει.
         internal static string IgnoreKey(WingetUpdate u) => (u.Source ?? "") + "|" + u.Id;
@@ -587,6 +598,7 @@ namespace OptimizerWpf.Views
         // ειλικρίνειας με τις υπόλοιπες "μόνο ό,τι πραγματικά επιβεβαιώθηκε" ενδείξεις της εφαρμογής.
         private async void BtnUpgradeSelected_Click(object sender, RoutedEventArgs e)
         {
+            if (AppScan.Busy || DriverScan.Busy) return;
             var selected = _updates.Concat(_windowsUpdates).Where(u => u.IsSelected).ToList();
             var selectedDrivers = _driverUpdates.Where(d => d.IsSelected && d.CanSelect).ToList();
             if (selected.Count == 0 && selectedDrivers.Count == 0) return;
@@ -598,15 +610,19 @@ namespace OptimizerWpf.Views
                     MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) selectedDrivers.Clear();
             if (selected.Count == 0 && selectedDrivers.Count == 0) return;
             selWindows = selected.Count(r => IsWindowsSource(r.Update));
-            if (selected.Count == 0)
+            if (!AppScan.TryBegin(installing: true)) return;
+            using var installCts = new System.Threading.CancellationTokenSource();
+            s_installCts = installCts;
+            BtnCancelAppScan.IsEnabled = true;
+            BtnCancelAppScan.Visibility = Visibility.Visible;
+            try
             {
-                var (dOk0, dFail0) = await UpdateSelectedDriversAsync(selectedDrivers);
-                FinishUpdateRun(new List<string>(), new List<string>(), new List<string>(), new List<string>(), dOk0, dFail0, new List<string>(), false);
+            if (selWindows > 0 && await RestoreGuardService.EnsureRecentAsync() == RestoreGuardResult.Failed)
+            {
+                ThemedMessageBox.Show(LanguageService.T("Health_DeletePartialFailed"),
+                    LanguageService.T("Opt_FailureTitle"), MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
-            if (selWindows > 0) await RestoreGuardService.EnsureRecentAsync();
-            if (!AppScan.TryBegin(installing: true)) return;
-
             SetBusy(true, installing: true);
             var succeeded = new List<string>();
             var failed = new List<string>();
@@ -626,6 +642,7 @@ namespace OptimizerWpf.Views
             {
             foreach (var row in selected)
             {
+                if (installCts.IsCancellationRequested) break;
                 var catIndex = IsWindowsSource(row.Update) ? 1 : 0;
                 catDone[catIndex]++;
                 progressScope.Update(string.Format(LanguageService.T("Opt_UpdateProgress"), LanguageService.T(catIndex == 1 ? "Opt_FilterWindows" : "Opt_FilterApps"), catDone[catIndex], catTotal[catIndex], row.Update.Name));
@@ -660,14 +677,26 @@ namespace OptimizerWpf.Views
                 else { Fail(row, reason == null ? row.Update.Name : $"{row.Update.Name} [{reason}]"); }
             }
             }
-            finally { progressScope.End(LanguageService.T("Ready")); SetBusy(false); AppScan.End(); }
+            finally { progressScope.End(LanguageService.T("Ready")); }
 
             // Όπως το Close-WmtStoreGui: το Store κλείνει μόνο όταν όλες οι ενημερώσεις του επιβεβαιώθηκαν.
-            if (triggeredStoreOnce && openedInStore.Count == 0 && failed.Count == 0)
+            if (!installCts.IsCancellationRequested && triggeredStoreOnce && openedInStore.Count == 0 && failed.Count == 0)
                 await Task.Run(StoreGuiUpdateService.CloseStoreWindow);
 
-            var (dOk, dFail) = selectedDrivers.Count > 0 ? await UpdateSelectedDriversAsync(selectedDrivers) : (new List<string>(), new List<string>());
-            FinishUpdateRun(appOk, appFail, winOk, winFail, dOk, dFail, openedInStore, WingetService.RestartRequiredAfterUpdates);
+            var (dOk, dFail) = selectedDrivers.Count > 0 && !installCts.IsCancellationRequested
+                ? await UpdateSelectedDriversAsync(selectedDrivers, installCts.Token) : (new List<string>(), new List<string>());
+            FinishUpdateRun(appOk, appFail, winOk, winFail, dOk, dFail, openedInStore,
+                WingetService.RestartRequiredAfterUpdates, installCts.IsCancellationRequested);
+            }
+            catch (Exception ex) { AppScan.SetStatus(LanguageService.T("Opt_ScanFailed") + ex.Message); }
+            finally
+            {
+                s_installCts = null;
+                BtnCancelAppScan.IsEnabled = true;
+                BtnCancelAppScan.Visibility = Visibility.Collapsed;
+                SetBusy(false);
+                AppScan.End();
+            }
         }
 
         // 6.9.8: ΕΝΑ τελικό pop-up για όλη την εκτέλεση: ανά κατηγορία «ΟΚ / σύνολο» και οι αποτυχίες· μετά το γρανάζι γίνεται «Επανασάρωση»
@@ -690,10 +719,11 @@ namespace OptimizerWpf.Views
             return string.Join(Environment.NewLine, lines);
         }
 
-        private void FinishUpdateRun(List<string> appOk, List<string> appFail, List<string> winOk, List<string> winFail, List<string> drvOk, List<string> drvFail, List<string> openedInStore, bool restartRequired)
+        private void FinishUpdateRun(List<string> appOk, List<string> appFail, List<string> winOk, List<string> winFail, List<string> drvOk, List<string> drvFail, List<string> openedInStore, bool restartRequired, bool cancelled = false)
         {
             var summary = BuildUpdateSummary(appOk, appFail, winOk, winFail, drvOk, drvFail, openedInStore.Count, restartRequired);
-            var anyFail = appFail.Count + winFail.Count + drvFail.Count > 0;
+            if (cancelled) summary += Environment.NewLine + LanguageService.T("Health_ToolCancelled");
+            var anyFail = cancelled || appFail.Count + winFail.Count + drvFail.Count > 0;
             AppScan.SetStatus(summary.Replace(Environment.NewLine, " | "));
             StatusService.SetIdle(summary.Replace(Environment.NewLine, " | "));   // 6.9.1: η γραμμή κατάστασης δείχνει το αποτέλεσμα
             s_rescanPending = true;
@@ -702,16 +732,20 @@ namespace OptimizerWpf.Views
         }
 
         // 6.9.1: «Ενημέρωση επιλεγμένων» και για οδηγούς: μία επιβεβαίωση, σημείο επαναφοράς + αντίγραφο οδηγών, μετά σειριακά με πρόοδο «Οδηγοί i/n».
-        private async Task<(List<string> Ok, List<string> Failed)> UpdateSelectedDriversAsync(List<UnifiedDriverRow> rows)
+        private async Task<(List<string> Ok, List<string> Failed)> UpdateSelectedDriversAsync(List<UnifiedDriverRow> rows, System.Threading.CancellationToken ct)
         {
             var okNames = new List<string>(); var failNames = new List<string>();
             using var scope = StatusService.BeginScope(LanguageService.T("Opt_CreatingRestorePoint"));
-            await SystemService.CreateRestorePointAsync();
-            scope.Update(LanguageService.T("Opt_DriverExporting"));
-            await DriverService.ExportCurrentDriversAsync();
+            if (ct.IsCancellationRequested) return (okNames, failNames);
+            if (!await PrepareDriverBackupAsync())
+            {
+                failNames.AddRange(rows.Select(row => row.Title + " · " + LanguageService.T("Opt_BackupFailedOrCancelled")));
+                return (okNames, failNames);
+            }
             int i = 0;
             foreach (var row in rows)
             {
+                if (ct.IsCancellationRequested) break;
                 i++;
                 scope.Update(string.Format(LanguageService.T("Opt_UpdateProgress"), LanguageService.T("Opt_FilterDrivers"), i, rows.Count, row.Title));
                 bool done;
@@ -1088,9 +1122,26 @@ namespace OptimizerWpf.Views
             finally { btn.IsEnabled = true; }
         }
 
+        private async Task<bool> PrepareDriverBackupAsync()
+        {
+            using var scope = StatusService.BeginScope(LanguageService.T("Opt_CreatingRestorePoint"));
+            try
+            {
+                // Require a recent restore point (or successful creation) and
+                // actual exported driver files, not a best-effort attempt.
+                var point = await RestoreGuardService.EnsureRecentAsync();
+                bool ready = point == RestoreGuardResult.AlreadyRecent || point == RestoreGuardResult.Created ||
+                    (point == RestoreGuardResult.Disabled && await SystemService.CreateRestorePointAsync());
+                if (!ready) return false;
+                scope.Update(LanguageService.T("Opt_DriverExporting"));
+                return DriverService.DriverBackupReady(ready, await DriverService.ExportCurrentDriversAsync());
+            }
+            catch { return false; }
+        }
+
         private async void BtnInstallDriver_Click(object sender, RoutedEventArgs e)
         {
-            if (sender is not Button { Tag: UnifiedDriverRow row } button) return;
+            if (sender is not Button { Tag: UnifiedDriverRow row } button || AppScan.Busy || DriverScan.Busy) return;
 
             if (row.VendorDownloadUrl != null)
             {
@@ -1113,9 +1164,15 @@ namespace OptimizerWpf.Views
                     LanguageService.T("Opt_ConfirmTitle"), MessageBoxButton.YesNo, MessageBoxImage.Warning);
                 if (wuConfirm != MessageBoxResult.Yes) return;
 
-                await RestoreGuardService.EnsureRecentAsync();   // 6.9.0: σημείο επαναφοράς πριν από κάθε εγκατάσταση οδηγού
-                using (var ex = StatusService.BeginScope(LanguageService.T("Opt_DriverExporting"))) { await DriverService.ExportCurrentDriversAsync(); ex.End(LanguageService.T("Ready")); }
+                if (!AppScan.TryBegin(installing: true)) return;
                 button.IsEnabled = false;
+                try
+                {
+                if (!await PrepareDriverBackupAsync())
+                {
+                    ThemedMessageBox.Show(LanguageService.T("Opt_BackupFailedOrCancelled"), LanguageService.T("Opt_FailureTitle"), MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return;
+                }
                 var installingText = $"{LanguageService.T("Opt_WuInstallingPrefix")}{row.WuUpdate.Title}";
                 TxtDriverStatus.Text = installingText;
                 StatusService.SetBusy(installingText);
@@ -1128,7 +1185,9 @@ namespace OptimizerWpf.Views
                 var resultText = string.Format(LanguageService.T(installed ? "Opt_DriverWuDone" : "Opt_DriverWuFailed"), row.WuUpdate.Title);
                 TxtDriverStatus.Text = resultText;
                 StatusService.SetIdle(resultText);
-                if (installed) _driverUpdates.Remove(row); else button.IsEnabled = true;
+                if (installed) { _driverUpdates.Remove(row); UpdatesHubService.ReportDriverScan(null); }
+                }
+                finally { button.IsEnabled = true; AppScan.End(); BtnCancelAppScan.Visibility = Visibility.Collapsed; }
                 return;
             }
             if (row.CatalogCandidate == null) return;
@@ -1149,13 +1208,15 @@ namespace OptimizerWpf.Views
                 LanguageService.T("Opt_ConfirmTitle"), MessageBoxButton.YesNo, MessageBoxImage.Warning);
             if (confirm != MessageBoxResult.Yes) return;
 
+            if (!AppScan.TryBegin(installing: true)) return;
             button.IsEnabled = false;
-            StatusService.SetBusy(LanguageService.T("Opt_CreatingRestorePoint"));
-            await SystemService.CreateRestorePointAsync();
-            StatusService.SetIdle(LanguageService.T("Opt_DriverExporting"));
-            StatusService.SetBusy(LanguageService.T("Opt_DriverExporting"));
-            await DriverService.ExportCurrentDriversAsync();   // 6.9.1: αντίγραφο τρεχόντων οδηγών πριν από κάθε εγκατάσταση
-            StatusService.SetIdle(LanguageService.T("Ready"));
+            try
+            {
+            if (!await PrepareDriverBackupAsync())
+            {
+                ThemedMessageBox.Show(LanguageService.T("Opt_BackupFailedOrCancelled"), LanguageService.T("Opt_FailureTitle"), MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
 
             StatusService.SetBusy($"{LanguageService.T("Opt_DownloadVerifyInstallPrefix")}{candidate.Title}...");
             var ok = await DriverService.InstallCatalogDriverAsync(candidate);
@@ -1174,6 +1235,14 @@ namespace OptimizerWpf.Views
                 button.IsEnabled = true;
                 ThemedMessageBox.Show(LanguageService.T("Opt_DriverInstallFailedMsg"),
                     LanguageService.T("Opt_FailureTitle"), MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+            }
+            finally
+            {
+                button.IsEnabled = true;
+                StatusService.SetIdle(LanguageService.T("Ready"));
+                AppScan.End();
+                BtnCancelAppScan.Visibility = Visibility.Collapsed;
             }
         }
 

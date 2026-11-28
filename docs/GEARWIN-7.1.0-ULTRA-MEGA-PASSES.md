@@ -792,3 +792,12 @@ CatalogPackage streams HTTPS Microsoft allowlisted CAB to protected staging with
 - Five new deterministic cases (578 cumulative authored, not passed). Parent ffc566747a7c5ad368fe5bd868429ac8d8de0a68 audit 46106464870 pending, installer 46106464886 in progress at inspection. No final certification or release.
 - Remaining implementation: update progress/cancel between items and actual native results, driver backup/restore-point failure handling, broader cleanup dedupe, SSD physical identity, opt-in usage suggestions, gaming ownership, migration, UI/i18n and unified tests. Keep P4 hardware and independent provider open; no merge. Version metadata remains 7.0.0.
 
+
+
+## Current P2 follow-up: update batch lifecycle and driver recovery prerequisites — 2026-11-28
+
+- RQ15: one AppScan install lifetime across apps, Windows and drivers, including driver-only selection; existing cancel control stops between items (not forced termination of servicing); unstarted rows remain selected/available; summary indicates cancellation; failed Windows restore guard blocks batch. Single driver installs share AppScan guard. No in-flight winget/Store/WUA cancellation or auto-retry claimed; rescan remains explicit. UI/native tests pending.
+- Both single and batch driver installation require successful/recent restore point and export with INF output; if automatic restore points disabled, explicit driver action still attempts one. Protected unique export directory, no blind old-directory deletion; cap 32 directories, explicit manual review needed when full. Export is third-party driver files only, not verified restore. WUA driver install exact GUID, driver type, per-item download/install success, reboot tracking; no arbitrary process kill after servicing starts. Catalog reboot propagates; WUA software reboot retained even on partial failure. Legacy detached driver API and alternate callers remain audit items.
+- Five new deterministic cases (583 cumulative authored, not passed). Parent a8f87c16239c4099830680cee025f1646487e102 installer 46106550084 in progress, offline clone job 140860513921 green, audit 46106550074 pending at inspection. No final release or merge. User requests combined final tests after implementation.
+- Next: verify current compile and batch UI lifecycle, native progress/cancellation/explicit retry, remaining cleanup overlap, physical disk identity, gaming journal, usage suggestions, migration and P3 UI/i18n; P4/P5 remain open. No change to version metadata 7.0.0.
+

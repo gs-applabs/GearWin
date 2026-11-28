@@ -70,6 +70,15 @@ public class DriverServiceTests
     public void IncompleteDriverScanIsNotReportedAsComplete(bool failed, int scanned, int found, bool expected) =>
         Assert.Equal(expected, DriverService.CatalogScanIncomplete(failed, scanned, found));
 
+    [Theory]
+    [InlineData(true, @"C:\Backup", true)]
+    [InlineData(false, @"C:\Backup", false)]
+    [InlineData(true, null, false)]
+    [InlineData(true, "", false)]
+    [InlineData(true, " ", false)]
+    public void DriverInstallNeedsBothRecoveryPrerequisites(bool restorePoint, string? exportPath, bool expected) =>
+        Assert.Equal(expected, DriverService.DriverBackupReady(restorePoint, exportPath));
+
     [Fact]
     public void HasSourceOverlap_MatchesSubstringEitherDirection()
     {
