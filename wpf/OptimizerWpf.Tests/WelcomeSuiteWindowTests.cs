@@ -103,6 +103,20 @@ namespace OptimizerWpf.Tests
 
         private static OncePerVersionStore TempStore() => new(Path.Combine(Path.GetTempPath(), "gwwin_" + Guid.NewGuid().ToString("N"), "s.json"));
 
+        [Theory]
+        [InlineData(true, false, false)]
+        [InlineData(false, false, false)]
+        [InlineData(false, true, true)]
+        public void OverlayOfferRequiresSuccessfulVisibleShow(bool fails, bool visible, bool expected)
+        {
+            int cleanups = 0;
+            bool result = StartupGuideCoordinator.TryShowOverlay(
+                () => { if (fails) throw new InvalidOperationException("closed owner"); },
+                () => visible, () => cleanups++);
+            Assert.Equal(expected, result);
+            Assert.Equal(expected ? 0 : 1, cleanups);
+        }
+
         [Fact]
         public void WelcomeGuideTextFitsInEveryLanguageAndPage()
         {

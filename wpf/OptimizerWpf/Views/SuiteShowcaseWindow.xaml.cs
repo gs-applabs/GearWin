@@ -40,6 +40,12 @@ namespace OptimizerWpf.Views
             RenderOptions.SetBitmapScalingMode(this, BitmapScalingMode.HighQuality);
             MouseEnter += (_, _) => Bounce();
             Loaded += (_, _) => StartIdle();
+            Unloaded += (_, _) =>
+            {
+                _float.BeginAnimation(TranslateTransform.YProperty, null);
+                _scale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
+                _scale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
+            };
         }
 
         public static ImageSource? LoadIcon(string appId)
@@ -83,6 +89,8 @@ namespace OptimizerWpf.Views
         private SuiteCatalog _catalog;
         private readonly Dictionary<string, ReleaseData?> _latest = new();
         private bool _closing;
+        private bool _refreshStarted;
+        private readonly System.Threading.CancellationTokenSource _passiveRefresh = new();
 
         public SuiteShowcaseWindow(MainWindow main, IInstallProbe? probe = null, SuiteCatalog? catalog = null, bool allowNetwork = true)
         {
@@ -95,33 +103,61 @@ namespace OptimizerWpf.Views
             OverlayCardHost.Attach(this, main);
             Rebuild();
             LanguageService.Changed += OnLanguageChanged;
-            Closed += (_, _) => LanguageService.Changed -= OnLanguageChanged;
-            Loaded += async (_, _) => { Focus(); BtnClose.Focus(); if (_network) await RefreshAsync(); };
+            Closed += (_, _) =>
+            {
+                _closing = true;
+                LanguageService.Changed -= OnLanguageChanged;
+                _passiveRefresh.Cancel();
+                _passiveRefresh.Dispose();
+            };
+            Loaded += async (_, _) =>
+            {
+                Focus(); BtnClose.Focus();
+                if (_network && !_refreshStarted && !_closing)
+                {
+                    _refreshStarted = true;
+                    await RefreshAsync(_passiveRefresh.Token);
+                }
+            };
         }
 
-        private void OnLanguageChanged() => Dispatcher.BeginInvoke(new Action(Rebuild));
+        private void OnLanguageChanged()
+        {
+            if (Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished) return;
+            Dispatcher.BeginInvoke(new Action(() => { if (!_closing && IsLoaded) Rebuild(); }));
+        }
 
         private string Lang => LanguageService.Current;
 
         // Ανιχνεύει εγκατεστημένες (μόνο ανάγνωση) και, αν επιτρέπεται δίκτυο, φρεσκάρει τον κατάλογο + τις τελευταίες εκδόσεις από το GitHub.
-        private async Task RefreshAsync()
+        private async Task RefreshAsync(System.Threading.CancellationToken token)
         {
             try
             {
-                var (cat, live, source) = await SuiteCatalogService.LoadAsync();
+                var (cat, live, source) = await SuiteCatalogService.LoadAsync(ct: token);
+                if (_closing || token.IsCancellationRequested) return;
                 if (!ReferenceEquals(cat, _catalog) && cat.Updated != _catalog.Updated) { _catalog = cat; Rebuild(); }
-                var installed = await Task.Run(() => _catalog.Apps.Where(a => a.Id != SelfId && InstalledAppDetector.Detect(a, _probe).Installed).ToList());
+                var catalog = _catalog;
+                var installed = await Task.Run(() => catalog.Apps.Where(a =>
+                {
+                    token.ThrowIfCancellationRequested();
+                    return a.Id != SelfId && InstalledAppDetector.Detect(a, _probe).Installed;
+                }).ToList(), token);
+                if (_closing || token.IsCancellationRequested) return;
                 var tasks = installed.Select(async a =>
                 {
-                    var r = await GitHubReleaseClient.GetLatestAsync(SuiteCatalogService.Owner, a.Repo);
+                    var r = await GitHubReleaseClient.GetLatestAsync(SuiteCatalogService.Owner, a.Repo, ct: token);
                     return (a.Id, r.Release);
                 }).ToList();
                 var any = false;
-                foreach (var t in await Task.WhenAll(tasks)) { _latest[t.Id] = t.Release; any |= t.Release != null; }
+                var results = await Task.WhenAll(tasks);
+                if (_closing || token.IsCancellationRequested) return;
+                foreach (var t in results) { _latest[t.Id] = t.Release; any |= t.Release != null; }
                 if (any) Rebuild();
                 else if (installed.Count > 0) TxtNote.Text = LanguageService.T("Suite_Offline");
             }
-            catch { TxtNote.Text = LanguageService.T("Suite_Offline"); }
+            catch (OperationCanceledException) when (token.IsCancellationRequested) { }
+            catch { if (!_closing && !token.IsCancellationRequested) TxtNote.Text = LanguageService.T("Suite_Offline"); }
         }
 
         public int CardCount => CardsPanel.Children.Count;
@@ -260,6 +296,7 @@ namespace OptimizerWpf.Views
         {
             if (_closing) return;
             _closing = true;
+            _passiveRefresh.Cancel();
             OverlayCardHost.CloseIntoWindow(this, Card, Backdrop, OverlayCardHost.TitleIcon(_main));
         }
     }

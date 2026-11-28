@@ -49,10 +49,20 @@ namespace OptimizerWpf.Views
             };
             // γλώσσα που αλλάζει όσο είναι ανοιχτός: ξαναγράφουμε τα κείμενα της τρέχουσας σελίδας
             LanguageService.Changed += OnLanguageChanged;
-            Closed += (_, _) => LanguageService.Changed -= OnLanguageChanged;
+            Closed += (_, _) =>
+            {
+                _closing = true;
+                LanguageService.Changed -= OnLanguageChanged;
+                IconScale.BeginAnimation(ScaleTransform.ScaleXProperty, null);
+                IconScale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
+            };
         }
 
-        private void OnLanguageChanged() => Dispatcher.BeginInvoke(new Action(() => ShowPage(_index)));
+        private void OnLanguageChanged()
+        {
+            if (Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished) return;
+            Dispatcher.BeginInvoke(new Action(() => { if (!_closing && IsLoaded) ShowPage(_index); }));
+        }
 
         private void StartIconPulse()
         {
