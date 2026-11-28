@@ -42,7 +42,7 @@ namespace OptimizerWpf.Views
         {
             InitializeComponent();
             ThemeManager.AttachWindow(this);
-            ChkCaptureEnabled.Content = LanguageService.Current == "el" ? "Καταγραφή ιστορικού στο παρασκήνιο" : "Capture clipboard history in background";
+            ChkCaptureEnabled.Content = LanguageService.T("Clip_CaptureBackground");
             ChkCaptureEnabled.IsChecked = AppSettingsService.Current.ClipboardHistoryEnabled;
             Closed += (_, _) =>
             {
@@ -75,7 +75,7 @@ namespace OptimizerWpf.Views
             CoreFeatureLifecycle.Apply();
             RefreshList();
             if (AppSettingsService.Current.ClipboardHistoryEnabled && !ClipboardManagerService.IsRunning)
-                StatusService.Report(LanguageService.Current == "el" ? "Η καταγραφή προχείρου δεν ξεκίνησε." : "Clipboard capture did not start.");
+                StatusService.Report(LanguageService.T("Clip_CaptureFailed"));
         }
 
         private void RefreshList()

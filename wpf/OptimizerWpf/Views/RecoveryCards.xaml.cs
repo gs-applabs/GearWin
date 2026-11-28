@@ -156,7 +156,7 @@ namespace OptimizerWpf.Views
             try
             {
                 button.IsEnabled = false;
-                using var busy = StatusService.BeginScope(Translation("Εξαγωγή πακέτου ανάκτησης…", "Exporting recovery kit…"));
+                using var busy = StatusService.BeginScope(LanguageService.T("Recovery_ExportingKit"));
                 string destination = picker.FileName;
                 await GearWinCore.RunAsync(CoreWork.Backup, () => System.Threading.Tasks.Task.Run(() =>
                     RecoveryKitExporter.Export(folder, destination)));
@@ -316,17 +316,13 @@ namespace OptimizerWpf.Views
 
         private void TranslateTransferUi()
         {
-            bool greek = LanguageService.Current == "el";
-            TxtTransferTitle.Text = greek ? "Έλεγχος φακέλων και λίστα εφαρμογών" : "Folder check and application inventory";
-            TxtTransferHelp.Text = greek
-                ? "Έλεγχος πριν από μεταφορά: διαδρομές, σύνδεσμοι και ελεύθερος χώρος. Δεν γίνεται αντιγραφή ή δοκιμαστική εγγραφή στον SSD."
-                : "Read-only check of paths, links and free space before a transfer. No copying or test writes to your SSD.";
-            BtnChooseFrom.Content = greek ? "Φάκελος πηγής…" : "Source folder…";
-            BtnChooseTo.Content = greek ? "Φάκελος προορισμού…" : "Destination folder…";
-            BtnTransferCheck.Content = _transferCheck != null ? LanguageService.T("Cancel") :
-                greek ? "Έλεγχος πριν από τη μεταφορά" : "Check before transfer";
-            BtnAppsExport.Content = greek ? "Εξαγωγή εγκατεστημένων εφαρμογών (JSON)" : "Export installed apps (JSON)";
-            BtnAppsExportPortable.Content = Translation("Εξαγωγή με επιλεγμένα EXE", "Export with selected EXEs");
+            TxtTransferTitle.Text = LanguageService.T("Transfer_Title");
+            TxtTransferHelp.Text = LanguageService.T("Transfer_Help");
+            BtnChooseFrom.Content = LanguageService.T("Transfer_SourceFolder");
+            BtnChooseTo.Content = LanguageService.T("Transfer_DestinationFolder");
+            BtnTransferCheck.Content = LanguageService.T(_transferCheck != null ? "Cancel" : "Transfer_Check");
+            BtnAppsExport.Content = LanguageService.T("Transfer_ExportApps");
+            BtnAppsExportPortable.Content = LanguageService.T("Transfer_ExportSelected");
             TranslateMigrationPlanUi();
         }
 

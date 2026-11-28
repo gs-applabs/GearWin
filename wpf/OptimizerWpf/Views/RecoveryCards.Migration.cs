@@ -12,12 +12,10 @@ namespace OptimizerWpf.Views
     {
         private void TranslateMigrationPlanUi()
         {
-            TxtMigrationPlanHelp.Text = Translation(
-                "Σχέδιο εφαρμογών Windows / Linux: χρησιμοποιεί κατάλογο αντιστοιχίσεων, απογραφή πηγής και προφίλ προορισμού. Μόνο προεπισκόπηση, χωρίς εγκατάσταση ή έλεγχο διαθεσιμότητας πακέτων.",
-                "Windows / Linux application plan: uses a mapping manifest, source inventory and destination profile. Preview only; no installation or package availability verification.");
-            BtnExportTargetProfile.Content = Translation("Εξαγωγή προφίλ υπολογιστή (JSON)", "Export computer profile (JSON)");
-            BtnCreateMigrationPlan.Content = Translation("Δημιουργία σχεδίου εφαρμογών (JSON)", "Create application plan (JSON)");
-            ChkCompareDestination.Content = Translation("Σύγκριση με απογραφή προορισμού (JSON)", "Compare with destination inventory (JSON)");
+            TxtMigrationPlanHelp.Text = LanguageService.T("Migration_PlanHelp");
+            BtnExportTargetProfile.Content = LanguageService.T("Migration_ExportProfile");
+            BtnCreateMigrationPlan.Content = LanguageService.T("Migration_CreatePlan");
+            ChkCompareDestination.Content = LanguageService.T("Migration_CompareDestination");
         }
 
         private static string? SelectMigrationInput(string title)

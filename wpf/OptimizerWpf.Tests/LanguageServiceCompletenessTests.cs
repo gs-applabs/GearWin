@@ -23,6 +23,16 @@ public class LanguageServiceCompletenessTests
     }
 
     [Fact]
+    public void TransferStoreAndClipboardKeysExistInAllFourteenLanguages()
+    {
+        string[] keys = { "Transfer_Title", "Transfer_Help", "Transfer_SourceFolder", "Transfer_DestinationFolder", "Transfer_Check", "Transfer_ExportApps", "Transfer_ExportSelected", "Migration_PlanHelp", "Migration_ExportProfile", "Migration_CreatePlan", "Migration_CompareDestination", "Store_UpdateFailed", "Store_UpdateUnconfirmed", "Clip_CaptureBackground", "Clip_CaptureFailed", "Recovery_ExportingKit" };
+        Assert.Equal(14, LanguageService.AllTranslations.Count);
+        foreach (var (language, dictionary) in LanguageService.AllTranslations)
+            foreach (var key in keys)
+                Assert.True(dictionary.TryGetValue(key, out var value) && !string.IsNullOrWhiteSpace(value), $"{language}: {key}");
+    }
+
+    [Fact]
     public void EveryKey_IsEitherInAllLanguages_OrOnlyInGreek()
     {
         var all = LanguageService.AllTranslations;
