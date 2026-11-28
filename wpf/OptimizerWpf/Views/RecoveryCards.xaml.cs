@@ -134,33 +134,8 @@ namespace OptimizerWpf.Views
             TxtBackupStatus.Text = "Checking WinRE (read-only)...";
             try
             {
-                var output = await System.Threading.Tasks.Task.Run(async () =>
-                {
-                    var start = new System.Diagnostics.ProcessStartInfo(
-                        Path.Combine(System.Environment.SystemDirectory, "reagentc.exe"))
-                    {
-                        UseShellExecute = false, RedirectStandardOutput = true,
-                        RedirectStandardError = true, CreateNoWindow = true
-                    };
-                    start.ArgumentList.Add("/info");
-                    using var process = System.Diagnostics.Process.Start(start);
-                    if (process == null) return "Windows RE status check did not start.";
-                    using var timeout = new System.Threading.CancellationTokenSource(System.TimeSpan.FromSeconds(25));
-                    try
-                    {
-                        var stdout = process.StandardOutput.ReadToEndAsync();
-                        var stderr = process.StandardError.ReadToEndAsync();
-                        await process.WaitForExitAsync(timeout.Token);
-                        string text = (await stdout + await stderr).Trim();
-                        if (text.Length > 4000) text = text[..4000] + "...";
-                        return process.ExitCode == 0 ? text : "WinRE status unavailable: " + text;
-                    }
-                    catch (System.OperationCanceledException)
-                    {
-                        if (!process.HasExited) process.Kill();
-                        return "WinRE status check timed out.";
-                    }
-                });
+                var result = await RecoveryMetadataProbe.WinReAsync();
+                string output = result.Success ? result.Output : "WinRE status unavailable: " + result.Output;
                 TxtBackupStatus.Text = output;
             }
             catch (System.Exception ex) when (ex is IOException or UnauthorizedAccessException

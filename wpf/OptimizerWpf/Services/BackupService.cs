@@ -75,18 +75,18 @@ namespace OptimizerWpf.Services
                     return (false, "Backup volume changed after confirmation. No backup started.");
 
                 // Capture catalog IDs before backup; an unreadable baseline is not proof of no backups.
-                var previous = await RunAsync("get", "versions", "-backupTarget:" + target.Drive);
+                var previous = await RecoveryMetadataProbe.CatalogAsync(target.Drive);
                 if (!SameTarget(target, await PrepareTargetAsync(target.Drive)))
                     return (false, "Backup volume changed during catalog baseline. No backup started.");
 
                 // wbadmin accepts a volume GUID for the backup target. Do not rely on a
                 // drive letter that can be reassigned by Windows while the job is queued.
-                var backup = await RunAsync("start", "backup", "-backupTarget:" + target.VolumeGuid,
+                var backup = await RunBackupAsync("start", "backup", "-backupTarget:" + target.VolumeGuid,
                     "-allCritical", "-vssCopy", "-quiet");
                 if (!backup.Success) return backup;
                 if (!SameTarget(target, await PrepareTargetAsync(target.Drive)))
                     return (false, "Backup reported success but the confirmed volume identity changed; verification unavailable.");
-                var catalog = await RunAsync("get", "versions", "-backupTarget:" + target.Drive);
+                var catalog = await RecoveryMetadataProbe.CatalogAsync(target.Drive);
                 if (!SameTarget(target, await PrepareTargetAsync(target.Drive)) ||
                     !catalog.Success || string.IsNullOrWhiteSpace(catalog.Output))
                     return (false, "Windows Backup reported success but the backup catalog could not be checked; " +
@@ -107,17 +107,19 @@ namespace OptimizerWpf.Services
 
         public static async Task<(bool Success, string Output)> GetBackupVersionsAsync(string targetDrive)
         {
+            if (!await BackupGate.WaitAsync(0)) return (false, "A backup or catalog query is already active.");
             try
             {
                 var drive = NormalizeDrive(targetDrive);
                 var identity = ReadVolumeGuid(drive);
-                var result = await RunAsync("get", "versions", "-backupTarget:" + drive);
+                var result = await RecoveryMetadataProbe.CatalogAsync(drive);
                 return ReadVolumeGuid(drive) == identity ? result : (false, "Catalog volume changed during query.");
             }
             catch (Exception ex) when (ex is ArgumentException or IOException or UnauthorizedAccessException)
             {
                 return (false, ex.Message);
             }
+            finally { BackupGate.Release(); }
         }
 
         private static uint? SeparateBackupDisk(string targetDrive)
@@ -192,7 +194,7 @@ namespace OptimizerWpf.Services
             return current.Count != 0;
         }
 
-        private static async Task<(bool Success, string Output)> RunAsync(params string[] arguments)
+        private static async Task<(bool Success, string Output)> RunBackupAsync(params string[] arguments)
         {
             var startInfo = new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "wbadmin.exe"))
             {

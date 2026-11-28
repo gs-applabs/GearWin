@@ -96,6 +96,11 @@ Exact validated source SHA 7960011c034d9e5a49605b2d34e73a0e37f6ca61. UMP01 46101
 RQ08: restored master Help history 6.9.12/7.0.0 translations: full LanguageService blobs compared; removing exactly 56 new history lines yields identical candidate file; all 4 keys each occur 14 times. No unrelated translation changes. Help XAML and dynamic newest-version test aligned; 2 new fixture cases for translation counts (350 cumulative authored .NET, current test count still 781). Export-app error handling already exists; TabLayout identical. Added missing installed Partclone asset assertion to installer E2E.
 RQ10: restored historical 26 screenshot blobs, gallery provenance, FAQ, two issue templates, reference audit doc, bilingual README links and read-only screenshot CI (artifacts only, no automatic master push). Existing screenshot previews are historical; new capture and visual review pending. No new release or merge. RQ11 independent provider still unverified. Next check new CI and continue P0/P1 (shutdown timeout, process safety, resource lifecycle), with P3 visual/translation acceptance and RQ20 final version pending.
 
+
+## P0 — bound recovery metadata clients (2026-11-28)
+
+Added RecoveryMetadataProbe with explicit read-only wbadmin get versions (90 s) and reagentc /info (25 s), absolute system paths, argument lists, bounded concurrent stream drains and deadline for both process and pipe completion. Timeout kills only the metadata client, not the service or backup process tree; result unknown. Backup operation remains intentionally without arbitrary deadline. Standalone catalog query now uses the same nonblocking BackupGate as actual backup to prevent duplicate catalog/backup access within process. WinRE uses the shared read-only probe, replacing unbounded ReadToEndAsync. Six new .NET fixture cases (356 cumulative authored), test only argument construction/refusal, not real timeout behavior or physical backup. Latest validated SHA remains 7960011c; new code pending CI. P0 shutdown scheduler timeout remains open; no blanket timeout inflation. Next investigate safe tweak restore, process deadlines, and sustained workload results.
+
 ### Αποδεδειγμένη κατάσταση
 
 - 283 διακριτά ευρήματα, 281 πλήρως ή μερικώς αντιμετωπισμένα σε πηγαίο κώδικα. Όχι 281 πιστοποιημένες διορθώσεις.
