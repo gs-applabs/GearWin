@@ -59,6 +59,8 @@
                         <Button Grid.Column="2" Content="{tr:Tr Backup_ViewVersionsButton}" Style="{StaticResource FlatButtonStyle}" Padding="16,8" MinWidth="300" Click="BtnViewBackupVersions_Click"/>
                     </Grid>
                     <WrapPanel Margin="0,0,0,8">
+                        <Button Content="{tr:Tr Refresh}" Style="{StaticResource FlatButtonStyle}" Margin="0,0,8,0"
+                                Click="BtnRefreshBackupTargets_Click"/>
                         <Button Content="Windows RE" Style="{StaticResource FlatButtonStyle}" Margin="0,0,8,0"
                                 Click="BtnWindowsRecoveryGuide_Click"/>
                         <Button Content="Clonezilla Live" Style="{StaticResource FlatButtonStyle}"

@@ -1,6 +1,5 @@
 using System.Collections.ObjectModel;
 using System.IO;
-using System.IO.Compression;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
@@ -14,24 +13,73 @@ namespace OptimizerWpf.Views
     {
         private void NestedScroll_PreviewMouseWheel(object sender, System.Windows.Input.MouseWheelEventArgs e) => NestedScrollHelper.Forward(sender, e);
         private readonly ObservableCollection<RestorePointInfo> _restorePoints = new();
+        private int _viewGeneration;
+        private bool _driveRead, _driveReadPending, _restoreRead, _restoreReadPending;
 
 
         private async System.Threading.Tasks.Task LoadBackupTargetDrivesAsync()
         {
-            var systemDrive = Path.GetPathRoot(System.Environment.SystemDirectory)?.TrimEnd('\\') ?? "C:";
-            var names = await System.Threading.Tasks.Task.Run(() =>
-                DriveInfo.GetDrives()
-                    .Where(d => d.IsReady && (d.DriveType == DriveType.Fixed || d.DriveType == DriveType.Removable))
-                    .Select(d => d.Name.TrimEnd('\\'))
-                    .Where(n => !string.Equals(n, systemDrive, System.StringComparison.OrdinalIgnoreCase))
-                    .ToList());
-            foreach (var name in names) ListBackupTargetDrives.Items.Add(name);
-            if (ListBackupTargetDrives.Items.Count > 0) ListBackupTargetDrives.SelectedIndex = 0;
+            if (!IsLoaded) return;
+            if (_driveRead) { _driveReadPending = true; return; }
+            _driveRead = true;
+            int generation = _viewGeneration;
+            var previous = ListBackupTargetDrives.SelectedItem as string;
+            ListBackupTargetDrives.IsEnabled = false;
+            try
+            {
+                var systemDrive = Path.GetPathRoot(System.Environment.SystemDirectory)?.TrimEnd('\\') ?? "C:";
+                var names = await GearWinCore.RunAsync(CoreWork.HardwareScan, () => System.Threading.Tasks.Task.Run(() =>
+                {
+                    var found = new System.Collections.Generic.List<string>();
+                    foreach (var drive in DriveInfo.GetDrives())
+                    {
+                        try
+                        {
+                            var name = drive.Name.TrimEnd('\\');
+                            if (drive.IsReady && (drive.DriveType is DriveType.Fixed or DriveType.Removable) &&
+                                !string.Equals(name, systemDrive, System.StringComparison.OrdinalIgnoreCase))
+                                found.Add(name);
+                        }
+                        catch (IOException) { }
+                        catch (System.UnauthorizedAccessException) { }
+                    }
+                    return found;
+                }));
+                if (!IsLoaded || generation != _viewGeneration) return;
+                ListBackupTargetDrives.Items.Clear();
+                foreach (var name in names) ListBackupTargetDrives.Items.Add(name);
+                // Never silently switch the user's target after a refresh.
+                if (previous != null && names.Contains(previous)) ListBackupTargetDrives.SelectedItem = previous;
+            }
+            catch (System.Exception ex)
+            {
+                if (IsLoaded && generation == _viewGeneration)
+                {
+                    ListBackupTargetDrives.Items.Clear();
+                    TxtBackupStatus.Text = LanguageService.T("Backup_Failed") + " " + ex.Message;
+                }
+            }
+            finally
+            {
+                _driveRead = false;
+                ListBackupTargetDrives.IsEnabled = true;
+                if (_driveReadPending)
+                {
+                    _driveReadPending = false;
+                    if (IsLoaded) _ = LoadBackupTargetDrivesAsync();
+                }
+            }
+        }
+
+        private async void BtnRefreshBackupTargets_Click(object sender, RoutedEventArgs e)
+        {
+            if (!BackupControls.IsEnabled) return;
+            await LoadBackupTargetDrivesAsync();
         }
 
         private async void BtnStartBackup_Click(object sender, RoutedEventArgs e)
         {
-            if (ListBackupTargetDrives.SelectedItem is not string targetDrive) return;
+            if (_driveRead || ListBackupTargetDrives.SelectedItem is not string targetDrive) return;
             BackupControls.IsEnabled = false;
             try
             {
@@ -62,7 +110,7 @@ namespace OptimizerWpf.Views
 
         private async void BtnViewBackupVersions_Click(object sender, RoutedEventArgs e)
         {
-            if (ListBackupTargetDrives.SelectedItem is not string targetDrive) return;
+            if (_driveRead || ListBackupTargetDrives.SelectedItem is not string targetDrive) return;
             BackupControls.IsEnabled = false;
             TxtBackupStatus.Text = "";
             try
@@ -86,23 +134,15 @@ namespace OptimizerWpf.Views
 
 
         // Export a self-contained recovery kit. The destructive action never runs inside Windows.
-        private void BtnExportOfflineClone_Click(object sender, RoutedEventArgs e)
+        private async void BtnExportOfflineClone_Click(object sender, RoutedEventArgs e)
         {
+            if (sender is not Button button || !button.IsEnabled) return;
             string warning = LanguageService.Current == "el"
                 ? "Απαιτεί OFFLINE Linux Live. Η κλωνοποίηση καταστρέφει ΟΛΑ τα δεδομένα του δίσκου προορισμού και γράφει ΟΛΟΥΣ τους τομείς, ακόμη και τον κενό χώρο. Θέλετε να εξαγάγετε το πακέτο;"
                 : "EXPERT: Requires offline Linux Live. Cloning permanently ERASES the entire target disk and writes ALL sectors including unused space. Export recovery kit?";
             if (ThemedMessageBox.Show(warning, "GearWin — Offline clone",
                     MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
             var folder = Path.Combine(System.AppContext.BaseDirectory, "Recovery");
-            var script = Path.Combine(folder, "gearwin_clone.py");
-            var adapter = Path.Combine(folder, "partclone_adapter.py");
-            var guide = Path.Combine(folder, "README.md");
-            if (!File.Exists(script) || !File.Exists(adapter) || !File.Exists(guide))
-            {
-                ThemedMessageBox.Show("Recovery assets are missing from this build.", "GearWin",
-                    MessageBoxButton.OK, MessageBoxImage.Error);
-                return;
-            }
             var picker = new Microsoft.Win32.SaveFileDialog
             {
                 FileName = "GearWin-Offline-Clone-Kit.zip",
@@ -112,11 +152,11 @@ namespace OptimizerWpf.Views
             if (picker.ShowDialog() != true) return;
             try
             {
-                using var stream = new FileStream(picker.FileName, FileMode.Create, FileAccess.Write, FileShare.None);
-                using var archive = new ZipArchive(stream, ZipArchiveMode.Create);
-                archive.CreateEntryFromFile(script, "gearwin_clone.py", CompressionLevel.Optimal);
-                archive.CreateEntryFromFile(adapter, "partclone_adapter.py", CompressionLevel.Optimal);
-                archive.CreateEntryFromFile(guide, "README.md", CompressionLevel.Optimal);
+                button.IsEnabled = false;
+                using var busy = StatusService.BeginScope(Translation("Εξαγωγή πακέτου ανάκτησης…", "Exporting recovery kit…"));
+                string destination = picker.FileName;
+                await GearWinCore.RunAsync(CoreWork.Backup, () => System.Threading.Tasks.Task.Run(() =>
+                    RecoveryKitExporter.Export(folder, destination)));
                 TxtBackupStatus.Text = "Offline recovery kit exported: " + picker.FileName +
                     ". Boot Linux Live separately before attempting the clone.";
             }
@@ -125,6 +165,7 @@ namespace OptimizerWpf.Views
             {
                 ThemedMessageBox.Show(ex.Message, "GearWin", MessageBoxButton.OK, MessageBoxImage.Error);
             }
+            finally { button.IsEnabled = true; }
         }
 
         private async void BtnCheckWindowsRe_Click(object sender, RoutedEventArgs e)
@@ -164,10 +205,33 @@ namespace OptimizerWpf.Views
 
         private async System.Threading.Tasks.Task LoadRestorePointsAsync()
         {
+            if (!IsLoaded) return;
+            if (_restoreRead) { _restoreReadPending = true; return; }
+            _restoreRead = true;
+            int generation = _viewGeneration;
             TxtRestorePointsStatus.Text = LanguageService.T("Sys_LoadingEllipsis");
-            _restorePoints.Clear();
-            foreach (var p in await SystemService.ListRestorePointsAsync()) _restorePoints.Add(p);
-            TxtRestorePointsStatus.Text = $"{_restorePoints.Count}{LanguageService.T("Sys_RestorePointsSuffix")}";
+            try
+            {
+                var points = await GearWinCore.RunAsync(CoreWork.Diagnostics, SystemService.ListRestorePointsAsync);
+                if (!IsLoaded || generation != _viewGeneration) return;
+                _restorePoints.Clear();
+                foreach (var point in points) _restorePoints.Add(point);
+                TxtRestorePointsStatus.Text = $"{_restorePoints.Count}{LanguageService.T("Sys_RestorePointsSuffix")}";
+            }
+            catch (System.Exception ex)
+            {
+                if (IsLoaded && generation == _viewGeneration)
+                    TxtRestorePointsStatus.Text = LanguageService.T("Opt_ScanFailed") + ex.Message;
+            }
+            finally
+            {
+                _restoreRead = false;
+                if (_restoreReadPending)
+                {
+                    _restoreReadPending = false;
+                    if (IsLoaded) _ = LoadRestorePointsAsync();
+                }
+            }
         }
 
         private async void BtnRefreshRestorePoints_Click(object sender, RoutedEventArgs e) => await LoadRestorePointsAsync();
@@ -358,18 +422,21 @@ namespace OptimizerWpf.Views
         {
             InitializeComponent();
             ListRestorePoints.ItemsSource = _restorePoints;
-            _ = LoadRestorePointsAsync();
-            _ = LoadBackupTargetDrivesAsync();
             TranslateTransferUi();
             Loaded += (_, _) =>
             {
                 LanguageService.Changed -= OnTransferLanguageChanged;
                 LanguageService.Changed += OnTransferLanguageChanged;
                 TranslateTransferUi();
+                ++_viewGeneration;
+                _ = LoadRestorePointsAsync();
+                _ = LoadBackupTargetDrivesAsync();
             };
             Unloaded += (_, _) =>
             {
                 LanguageService.Changed -= OnTransferLanguageChanged;
+                ++_viewGeneration;
+                _driveReadPending = _restoreReadPending = false;
                 _transferCheck?.Cancel();
             };
         }

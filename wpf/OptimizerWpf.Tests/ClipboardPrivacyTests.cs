@@ -34,6 +34,16 @@ public sealed class ClipboardPrivacyTests
         Assert.False(ClipboardManagerService.MayCapture(data));
     }
 
+    [Fact]
+    public void OwnershipMarkerMustBeExactAndWellFormed()
+    {
+        var token = Guid.NewGuid();
+        Assert.True(SecureClipboardService.MatchesOwnership(new MemoryStream(token.ToByteArray()), token));
+        Assert.False(SecureClipboardService.MatchesOwnership(Guid.NewGuid().ToByteArray(), token));
+        Assert.False(SecureClipboardService.MatchesOwnership(new byte[15], token));
+        Assert.False(SecureClipboardService.MatchesOwnership(null, token));
+    }
+
     [Theory]
     [InlineData(12u, 12u, true)]
     [InlineData(12u, 13u, false)]

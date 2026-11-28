@@ -1,4 +1,6 @@
 using System;
+using System.IO;
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Threading;
 
@@ -12,10 +14,39 @@ namespace OptimizerWpf.Services
     public static class SecureClipboardService
     {
         private const int ClearAfterSeconds = 30;
+        private const string OwnershipFormat = "GearWin.SensitiveClipboard.Generation";
+        [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool OpenClipboard(IntPtr owner);
+        [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool EmptyClipboard();
+        [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool CloseClipboard();
         private static DispatcherTimer? _timer;
 
         internal static bool ShouldClear(uint ownedSequence, uint currentSequence) =>
             ownedSequence != 0 && ownedSequence == currentSequence;
+
+        internal static bool MatchesOwnership(object? data, Guid token)
+        {
+            byte[]? bytes = data switch
+            {
+                MemoryStream stream when stream.Length == 16 => stream.ToArray(),
+                byte[] raw when raw.Length == 16 => raw,
+                _ => null
+            };
+            return bytes != null && new Guid(bytes) == token;
+        }
+
+        private static bool ClearOwnedSequence(uint sequence)
+        {
+            // Validate and empty while holding the native clipboard lock.
+            if (!OpenClipboard(IntPtr.Zero)) return false;
+            try
+            {
+                return ShouldClear(sequence, ClipboardManagerService.GetClipboardSequenceNumber()) && EmptyClipboard();
+            }
+            finally { CloseClipboard(); }
+        }
 
         public static void SetSensitiveText(string text)
         {
@@ -25,6 +56,8 @@ namespace OptimizerWpf.Services
             data.SetData("CanIncludeInClipboardHistory", new System.IO.MemoryStream(BitConverter.GetBytes(0)));
             data.SetData("CanUploadToCloudClipboard", new System.IO.MemoryStream(BitConverter.GetBytes(0)));
             data.SetData("ExcludeClipboardContentFromMonitorProcessing", new System.IO.MemoryStream(BitConverter.GetBytes(1)));
+            var token = Guid.NewGuid();
+            data.SetData(OwnershipFormat, new MemoryStream(token.ToByteArray()));
             Clipboard.SetDataObject(data, copy: true);
 
             // Track ownership by clipboard generation, never retain a password
@@ -32,7 +65,12 @@ namespace OptimizerWpf.Services
             _timer?.Stop();
             _timer = null;
             uint sequence = ClipboardManagerService.GetClipboardSequenceNumber();
-            if (sequence == 0) return;
+            try
+            {
+                if (sequence == 0 || !MatchesOwnership(Clipboard.GetData(OwnershipFormat), token) ||
+                    ClipboardManagerService.GetClipboardSequenceNumber() != sequence) return;
+            }
+            catch { return; }
             var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(ClearAfterSeconds) };
             _timer = timer;
             EventHandler? tick = null;
@@ -44,8 +82,7 @@ namespace OptimizerWpf.Services
                 _timer = null;
                 try
                 {
-                    if (ShouldClear(sequence, ClipboardManagerService.GetClipboardSequenceNumber()))
-                        Clipboard.Clear();
+                    ClearOwnedSequence(sequence);
                 }
                 catch { /* clipboard locked by another application */ }
             };
