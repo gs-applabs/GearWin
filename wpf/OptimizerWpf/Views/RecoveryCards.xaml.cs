@@ -14,15 +14,17 @@ namespace OptimizerWpf.Views
         private void NestedScroll_PreviewMouseWheel(object sender, System.Windows.Input.MouseWheelEventArgs e) => NestedScrollHelper.Forward(sender, e);
         private readonly ObservableCollection<RestorePointInfo> _restorePoints = new();
         private int _viewGeneration;
-        private bool _driveRead, _driveReadPending, _restoreRead, _restoreReadPending;
+        private System.Threading.CancellationTokenSource? _viewLifetime;
+        private bool _driveRead, _driveReadPending, _restoreRead, _restoreReadPending, _restoreMutation;
 
 
         private async System.Threading.Tasks.Task LoadBackupTargetDrivesAsync()
         {
-            if (!IsLoaded) return;
+            if (!IsLoaded || _viewLifetime == null) return;
             if (_driveRead) { _driveReadPending = true; return; }
             _driveRead = true;
             int generation = _viewGeneration;
+            var ct = _viewLifetime.Token;
             var previous = ListBackupTargetDrives.SelectedItem as string;
             ListBackupTargetDrives.IsEnabled = false;
             try
@@ -33,6 +35,7 @@ namespace OptimizerWpf.Views
                     var found = new System.Collections.Generic.List<string>();
                     foreach (var drive in DriveInfo.GetDrives())
                     {
+                        ct.ThrowIfCancellationRequested();
                         try
                         {
                             var name = drive.Name.TrimEnd('\\');
@@ -44,8 +47,8 @@ namespace OptimizerWpf.Views
                         catch (System.UnauthorizedAccessException) { }
                     }
                     return found;
-                }));
-                if (!IsLoaded || generation != _viewGeneration) return;
+                }, ct), ct: ct);
+                if (ct.IsCancellationRequested || !IsLoaded || generation != _viewGeneration) return;
                 ListBackupTargetDrives.Items.Clear();
                 foreach (var name in names) ListBackupTargetDrives.Items.Add(name);
                 // Never silently switch the user's target after a refresh.
@@ -160,8 +163,7 @@ namespace OptimizerWpf.Views
                 TxtBackupStatus.Text = "Offline recovery kit exported: " + picker.FileName +
                     ". Boot Linux Live separately before attempting the clone.";
             }
-            catch (System.Exception ex) when (ex is IOException or UnauthorizedAccessException ||
-                                               ex is System.Security.SecurityException)
+            catch (System.Exception ex)
             {
                 ThemedMessageBox.Show(ex.Message, "GearWin", MessageBoxButton.OK, MessageBoxImage.Error);
             }
@@ -205,15 +207,18 @@ namespace OptimizerWpf.Views
 
         private async System.Threading.Tasks.Task LoadRestorePointsAsync()
         {
-            if (!IsLoaded) return;
+            if (!IsLoaded || _viewLifetime == null) return;
+            if (_restoreMutation) { _restoreReadPending = true; return; }
             if (_restoreRead) { _restoreReadPending = true; return; }
             _restoreRead = true;
             int generation = _viewGeneration;
+            var ct = _viewLifetime.Token;
             TxtRestorePointsStatus.Text = LanguageService.T("Sys_LoadingEllipsis");
+            _restorePoints.Clear();
             try
             {
-                var points = await GearWinCore.RunAsync(CoreWork.Diagnostics, SystemService.ListRestorePointsAsync);
-                if (!IsLoaded || generation != _viewGeneration) return;
+                var points = await GearWinCore.RunAsync(CoreWork.Diagnostics, () => SystemService.ListRestorePointsAsync(ct), ct: ct);
+                if (ct.IsCancellationRequested || !IsLoaded || generation != _viewGeneration) return;
                 _restorePoints.Clear();
                 foreach (var point in points) _restorePoints.Add(point);
                 TxtRestorePointsStatus.Text = $"{_restorePoints.Count}{LanguageService.T("Sys_RestorePointsSuffix")}";
@@ -238,11 +243,26 @@ namespace OptimizerWpf.Views
 
         private async void BtnCreateRestorePoint_Click(object sender, RoutedEventArgs e)
         {
-            StatusService.SetBusy(LanguageService.T("Sys_CreatingRestorePoint"));
-            var ok = await SystemService.CreateRestorePointAsync();
-            StatusService.SetIdle(LanguageService.T("Ready"));
-            TxtRestorePointsStatus.Text = ok ? LanguageService.T("Sys_RestorePointCreated") : LanguageService.T("Sys_RestorePointFailed");
-            if (ok) await LoadRestorePointsAsync();
+            if (_restoreMutation || _restoreRead) return;
+            _restoreMutation = true;
+            bool ok = false;
+            using var busy = StatusService.BeginScope(LanguageService.T("Sys_CreatingRestorePoint"));
+            try
+            {
+                ok = await GearWinCore.RunAsync(CoreWork.Repair, RestoreGuardService.CreateVerifiedPointAsync);
+            }
+            catch (System.Exception ex) { System.Diagnostics.Trace.TraceWarning("Restore point creation: " + ex.Message); }
+            finally
+            {
+                _restoreMutation = false;
+                busy.End(LanguageService.T(ok ? "Sys_RestorePointCreated" : "Sys_RestorePointFailed"));
+                TxtRestorePointsStatus.Text = LanguageService.T(ok ? "Sys_RestorePointCreated" : "Sys_RestorePointFailed");
+            }
+            if (ok || _restoreReadPending)
+            {
+                _restoreReadPending = false;
+                await LoadRestorePointsAsync();
+            }
         }
 
         private void BtnOpenProtectionSettings_Click(object sender, RoutedEventArgs e) =>
@@ -251,21 +271,39 @@ namespace OptimizerWpf.Views
         // Ρητά ΔΕΝ υλοποιείται delete-by-sequence - βλ. σχόλιο στο SystemService.RestoreToPointAsync.
         private async void BtnRestoreToPoint_Click(object sender, RoutedEventArgs e)
         {
-            if (sender is not Button { Tag: RestorePointInfo point }) return;
+            if (_restoreMutation || _restoreRead || sender is not Button { Tag: RestorePointInfo point }) return;
             if (ThemedMessageBox.Show($"{LanguageService.T("Sys_RestoreConfirmPrefix")}{point.Description}{LanguageService.T("Sys_RestoreConfirmSuffix")}",
                     LanguageService.T("Sys_RestoreWarningTitle"), MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
-            StatusService.SetBusy(LanguageService.T("Sys_RestoringSystem"));
-            var ok = await SystemService.RestoreToPointAsync(point.SequenceNumber);
-            // ΔΙΟΡΘΩΣΗ (εξονυχιστικός έλεγχος εντόπισε): το αποτέλεσμα αγνοούνταν εντελώς - σε επιτυχία ο
-            // υπολογιστής επανεκκινεί άμεσα (η γραμμή κατάστασης παύει να έχει σημασία), αλλά σε αποτυχία
-            // έμενε μόνιμα κολλημένη σε "Επαναφορά συστήματος..." χωρίς καμία εξήγηση.
+            _restoreMutation = true;
+            bool ok = false;
+            using var busy = StatusService.BeginScope(LanguageService.T("Sys_RestoringSystem"));
+            try
+            {
+                ok = await GearWinCore.RunAsync(CoreWork.Repair, async () =>
+                {
+                    var current = await SystemService.ListRestorePointsAsync();
+                    if (!current.Contains(point)) return false;
+                    return await SystemService.RestoreToPointAsync(point.SequenceNumber);
+                });
+            }
+            catch (System.Exception ex) { System.Diagnostics.Trace.TraceWarning("Restore point operation: " + ex.Message); }
+            finally
+            {
+                _restoreMutation = false;
+                busy.End(LanguageService.T(ok ? "Ready" : "Sys_RestoreFailed"));
+            }
             if (!ok)
             {
-                StatusService.SetIdle(LanguageService.T("Sys_RestoreFailed"));
-                ThemedMessageBox.Show(LanguageService.T("Sys_RestoreFailed"), LanguageService.T("Sys_ErrorTitle"), MessageBoxButton.OK, MessageBoxImage.Error);
+                TxtRestorePointsStatus.Text = LanguageService.T("Sys_RestoreFailed");
+                if (IsLoaded)
+                    ThemedMessageBox.Show(LanguageService.T("Sys_RestoreFailed"), LanguageService.T("Sys_ErrorTitle"), MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+            if (_restoreReadPending)
+            {
+                _restoreReadPending = false;
+                await LoadRestorePointsAsync();
             }
         }
-
 
         private System.Threading.CancellationTokenSource? _transferCheck;
 
@@ -429,6 +467,9 @@ namespace OptimizerWpf.Views
                 LanguageService.Changed += OnTransferLanguageChanged;
                 TranslateTransferUi();
                 ++_viewGeneration;
+                _viewLifetime?.Cancel();
+                _viewLifetime?.Dispose();
+                _viewLifetime = new System.Threading.CancellationTokenSource();
                 _ = LoadRestorePointsAsync();
                 _ = LoadBackupTargetDrivesAsync();
             };
@@ -436,6 +477,9 @@ namespace OptimizerWpf.Views
             {
                 LanguageService.Changed -= OnTransferLanguageChanged;
                 ++_viewGeneration;
+                _viewLifetime?.Cancel();
+                _viewLifetime?.Dispose();
+                _viewLifetime = null;
                 _driveReadPending = _restoreReadPending = false;
                 _transferCheck?.Cancel();
             };

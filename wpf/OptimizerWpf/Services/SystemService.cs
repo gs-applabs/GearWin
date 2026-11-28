@@ -530,34 +530,49 @@ namespace OptimizerWpf.Services
         // equivalent χωρίς WMI method-signature ρίσκο - shell out σε σύντομο PowerShell script, ίδιο
         // μοτίβο με το DriverService/WingetService.
 
-        public static async Task<IReadOnlyList<RestorePointInfo>> ListRestorePointsAsync()
+        public static Task<IReadOnlyList<RestorePointInfo>> ListRestorePointsAsync() =>
+            ListRestorePointsAsync(System.Threading.CancellationToken.None);
+
+        internal static async Task<IReadOnlyList<RestorePointInfo>> ListRestorePointsAsync(System.Threading.CancellationToken ct)
         {
-            const string script = "Get-ComputerRestorePoint | Sort-Object SequenceNumber -Descending | " +
-                                   "Select-Object SequenceNumber, Description, @{N='CreationTime';E={$_.ConvertToDateTime($_.CreationTime).ToString('o')}} | " +
-                                   "ConvertTo-Json -Compress";
-            var output = await RunPowerShellAsync(script);
-            if (string.IsNullOrWhiteSpace(output)) return Array.Empty<RestorePointInfo>();
-            try
+            var result = await RecoveryMetadataProbe.RestorePointsAsync(ct);
+            if (!result.Success) throw new IOException(result.Output);
+            return ParseRestorePoints(result.Output);
+        }
+
+        internal static IReadOnlyList<RestorePointInfo> ParseRestorePoints(string output)
+        {
+            using var document = JsonDocument.Parse(output);
+            var root = document.RootElement;
+            if (root.ValueKind is not (JsonValueKind.Array or JsonValueKind.Object))
+                throw new JsonException("Invalid restore point inventory.");
+            var elements = root.ValueKind == JsonValueKind.Array ? root.EnumerateArray() : new[] { root }.AsEnumerable();
+            var points = new List<RestorePointInfo>();
+            var seen = new HashSet<int>();
+            foreach (var e in elements)
             {
-                var root = JsonDocument.Parse(output).RootElement;
-                var elements = root.ValueKind == JsonValueKind.Array ? root.EnumerateArray() : new[] { root }.AsEnumerable();
-                return elements.Select(e => new RestorePointInfo(
-                    e.GetProperty("SequenceNumber").GetInt32(),
-                    e.TryGetProperty("Description", out var d) ? d.GetString() ?? "" : "",
-                    DateTime.TryParse(e.GetProperty("CreationTime").GetString(), out var dt) ? dt : DateTime.MinValue)).ToList();
+                if (e.ValueKind != JsonValueKind.Object || !e.TryGetProperty("SequenceNumber", out var id) ||
+                    !id.TryGetInt32(out int sequence) || sequence <= 0 || !seen.Add(sequence) ||
+                    !e.TryGetProperty("CreationTime", out var time) || time.ValueKind != JsonValueKind.String ||
+                    !DateTime.TryParse(time.GetString(), out var dt))
+                    throw new JsonException("Incomplete or ambiguous restore point inventory.");
+                string description = e.TryGetProperty("Description", out var d) && d.ValueKind == JsonValueKind.String
+                    ? d.GetString() ?? "" : "";
+                points.Add(new(sequence, description, dt));
             }
-            catch (JsonException) { return Array.Empty<RestorePointInfo>(); }
+            return points;
         }
 
         public static Task<bool> CreateRestorePointAsync() =>
-            RunPowerShellForSuccessAsync($"Checkpoint-Computer -Description \"Windows Optimizer - {DateTime.Now:yyyy-MM-dd HH:mm}\" -RestorePointType MODIFY_SETTINGS");
+            RunPowerShellForSuccessAsync($"Checkpoint-Computer -Description \"Windows Optimizer - {DateTime.Now:yyyy-MM-dd HH:mm}\" -RestorePointType MODIFY_SETTINGS -ErrorAction Stop");
 
         // ΣΚΟΠΙΜΑ ΔΕΝ υλοποιείται delete-by-sequence - τεκμηριωμένος περιορισμός στο ps1 original: το
         // WMI SystemRestore δεν έχει Delete method, το vssadmin έχει ασύμβατο ID scheme (ρίσκο λάθος
         // διαγραφής). Η επιλογή "Άνοιγμα Ρυθμίσεων Προστασίας" (SystemPropertiesProtection.exe) είναι
         // η ίδια "διέξοδος" που χρησιμοποιεί και το ps1 original - βλ. SystemView.xaml.cs.
         public static Task<bool> RestoreToPointAsync(int sequenceNumber) =>
-            RunPowerShellForSuccessAsync($"Restore-Computer -RestorePoint {sequenceNumber}");
+            sequenceNumber <= 0 ? Task.FromResult(false) :
+            RunPowerShellForSuccessAsync($"Restore-Computer -RestorePoint {sequenceNumber} -ErrorAction Stop");
 
         // ===== Βελτιστοποίηση Υπηρεσιών - curated λίστα, μόνο υπηρεσίες που ήταν ήδη Automatic =====
 
@@ -688,26 +703,6 @@ namespace OptimizerWpf.Services
         }));
 
         // ===== κοινά PowerShell helpers =====
-
-        private static async Task<string> RunPowerShellAsync(string command)
-        {
-            var psi = new ProcessStartInfo
-            {
-                FileName = "powershell.exe",
-                Arguments = PowerShellArgs.Command(command),
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                StandardOutputEncoding = System.Text.Encoding.UTF8,
-            };
-            using var process = Process.Start(psi);
-            if (process == null) return "";
-            _ = process.StandardError.ReadToEndAsync(); // drain — redirected αλλά δεν διαβαζόταν (block σε μεγάλη έξοδο σφάλματος)
-            var output = await process.StandardOutput.ReadToEndAsync();
-            await process.WaitForExitAsync();
-            return output;
-        }
 
         private static async Task<bool> RunPowerShellForSuccessAsync(string command)
         {

@@ -26,6 +26,20 @@ public class RecoveryMetadataProbeTests
         Assert.Throws<ArgumentException>(() => RecoveryMetadataProbe.CatalogStart(input));
 
     [Fact]
+    public void RestorePointInventoryUsesReadOnlyAbsolutePowerShell()
+    {
+        var info = RecoveryMetadataProbe.RestorePointsStart();
+        Assert.Equal(Path.Combine(Environment.SystemDirectory, @"WindowsPowerShell\v1.0\powershell.exe"), info.FileName);
+        var encoded = info.Arguments.Split(' ')[^1];
+        string script = System.Text.Encoding.Unicode.GetString(Convert.FromBase64String(encoded));
+        Assert.Contains("Get-ComputerRestorePoint", script);
+        Assert.DoesNotContain("Checkpoint-Computer", script);
+        Assert.DoesNotContain("Restore-Computer", script);
+        Assert.False(info.UseShellExecute);
+        Assert.True(info.RedirectStandardOutput && info.RedirectStandardError);
+    }
+
+    [Fact]
     public void WinReOnlyReadsInfo()
     {
         var info = RecoveryMetadataProbe.WinReStart();

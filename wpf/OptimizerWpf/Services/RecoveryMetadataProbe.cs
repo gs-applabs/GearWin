@@ -37,13 +37,30 @@ internal static class RecoveryMetadataProbe
     internal static Task<(bool Success, string Output)> WinReAsync() =>
         ReadAsync(WinReStart(), TimeSpan.FromSeconds(25), 4000);
 
-    private static async Task<(bool Success, string Output)> ReadAsync(ProcessStartInfo start, TimeSpan deadline, int limit)
+    internal static ProcessStartInfo RestorePointsStart()
+    {
+        const string script = "$ErrorActionPreference='Stop'; $items = @(Get-ComputerRestorePoint | Sort-Object SequenceNumber -Descending | " +
+            "Select-Object SequenceNumber, Description, @{N='CreationTime';E={if ($_.CreationTime -is [datetime]) {$_.CreationTime.ToString('o')} else {$_.ConvertToDateTime($_.CreationTime).ToString('o')}}}); " +
+            "ConvertTo-Json -InputObject $items -Compress";
+        var info = Create(@"WindowsPowerShell\v1.0\powershell.exe");
+        info.Arguments = PowerShellArgs.Command(script);
+        info.StandardOutputEncoding = System.Text.Encoding.UTF8;
+        return info;
+    }
+
+    internal static Task<(bool Success, string Output)> RestorePointsAsync(CancellationToken ct) =>
+        ReadAsync(RestorePointsStart(), TimeSpan.FromSeconds(45), 65536, ct, stdoutOnly: true);
+
+    private static async Task<(bool Success, string Output)> ReadAsync(ProcessStartInfo start, TimeSpan deadline, int limit,
+        CancellationToken ct = default, bool stdoutOnly = false)
     {
         try
         {
+            ct.ThrowIfCancellationRequested();
             using var process = Process.Start(start);
             if (process is null) return (false, "Metadata query did not start.");
-            using var timer = new CancellationTokenSource(deadline);
+            using var timer = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timer.CancelAfter(deadline);
             var stdout = HealthCleanupService.ReadBoundedOutputAsync(process.StandardOutput, limit);
             var stderr = HealthCleanupService.ReadBoundedOutputAsync(process.StandardError, limit);
             var streams = Task.WhenAll(stdout, stderr);
@@ -51,6 +68,9 @@ internal static class RecoveryMetadataProbe
             {
                 await process.WaitForExitAsync(timer.Token).ConfigureAwait(false);
                 var output = await streams.WaitAsync(timer.Token).ConfigureAwait(false);
+                if (stdoutOnly)
+                    return process.ExitCode == 0 && !output[0].Contains("[Output truncated]", StringComparison.Ordinal)
+                        ? (true, output[0].Trim()) : (false, "Restore point inventory failed or was truncated.");
                 return (process.ExitCode == 0, (output[0] + "\n" + output[1]).Trim());
             }
             catch (OperationCanceledException)
@@ -58,6 +78,7 @@ internal static class RecoveryMetadataProbe
                 // Stop only the query client, never a backup/repair service or
                 // process tree. A blocked service may still need manual review.
                 try { if (!process.HasExited) process.Kill(); } catch { }
+                ct.ThrowIfCancellationRequested();
                 return (false, "Metadata query timed out; result unknown. No backup or repair was cancelled.");
             }
             finally
