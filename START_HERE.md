@@ -2,6 +2,10 @@
 
 Updated 2026-11-28. This is the single current entry point for a new ChatGPT/Claude Code session. Repository: gs-applabs/GearWin. Active branch: release/7.1.0-ultra. Draft integration PR: #6 (base release/7.0.0-validation). Resolve live branch HEAD first; last fully validated source 7960011c034d9e5a49605b2d34e73a0e37f6ca61; current HEAD includes newer history/product reconciliation. Master audit reference: c025e12d3e4cc8d3dc2be63d27f30b0aa8f34132. Never reset or blindly merge. No final release yet.
 
+## ACTIVE CHECKPOINT — source-first audit
+
+Read [ROADMAP.md](ROADMAP.md), section ACTIVE source-first cross-check, before any implementation. All 24 RQs reconciled against current source/CI; historical tables below are evidence, not current work queue. Whole-tree lexical inventory succeeded; targeted semantic review found DUP01–09, not all duplicates certified. Do not start a parallel service or remove existing methods without checking callers and compatibility. Current app source baseline 76bd8e5b, installer CI 46107336517 success (1003 desktop + 42 migration). Audit-only change extends existing inventory; next hosted report pending.
+
 ## Current P2 follow-up: opt-in usage review and gaming retry throttle — 2026-11-28
 
 - RQ13: Bloatware Deep Uninstall now has explicit consent for one-time current-user Windows UserAssist review. Only positive older launch observations (90 days, max 30 rows) with exact executable DisplayIcon identity, no missing-record inference, ambiguous shared executable excluded, suite paths protected. Known 72-byte layout only; unsupported/no data is unknown. No background monitoring, writes, transmission or automatic uninstall. UI Greek/English fallback pending all-language review; UserAssist coverage and elevated current-user identity limitations require native testing. This is advisory, not comprehensive usage accounting.

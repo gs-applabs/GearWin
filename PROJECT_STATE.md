@@ -1,13 +1,6 @@
 # CURRENT CHECKPOINT — 2026-11-28
 
-Read [START_HERE.md](START_HERE.md) first; release/7.1.0-ultra, draft PR #6.
-
-## Current P2 follow-up: opt-in usage review and gaming retry throttle — 2026-11-28
-
-- RQ13: Bloatware Deep Uninstall now has explicit consent for one-time current-user Windows UserAssist review. Only positive older launch observations (90 days, max 30 rows) with exact executable DisplayIcon identity, no missing-record inference, ambiguous shared executable excluded, suite paths protected. Known 72-byte layout only; unsupported/no data is unknown. No background monitoring, writes, transmission or automatic uninstall. UI Greek/English fallback pending all-language review; UserAssist coverage and elevated current-user identity limitations require native testing. This is advisory, not comprehensive usage accounting.
-- RQ14: automatic gaming failures now back off 30 seconds to avoid repeated failed journal/native probes every five seconds; no new timer and no change to profile ownership. UI-thread/native work and manual override race remain open.
-- Nine new deterministic cases (612 cumulative authored, not passed). Parent 55e9acc4545d7a8974ac63da8e777222275a507a installer 46106994117 in progress, offline clone job 140861889324 passed; audit 46106994114 pending. No merge or release. Next: gaming ownership, cleanup overlap, update retry, migration, UI/i18n and unified tests. Version metadata remains 7.0.0.
-
+Read [START_HERE.md](START_HERE.md) and active RQ/DUP register in [ROADMAP.md](ROADMAP.md). Source-first cross-check at 76bd8e5b: 488 files / 372 scanned / 98,678 lines; exact installer CI 46107336517 success, 1045 .NET tests; master divergent; current functional source unchanged. No feature implementation from stale statuses. New lexical audit outputs not yet run. Full semantic/native certification open.
 
 ---
 

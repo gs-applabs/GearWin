@@ -824,3 +824,60 @@ CatalogPackage streams HTTPS Microsoft allowlisted CAB to protected staging with
 - RQ14: automatic gaming failures now back off 30 seconds to avoid repeated failed journal/native probes every five seconds; no new timer and no change to profile ownership. UI-thread/native work and manual override race remain open.
 - Nine new deterministic cases (612 cumulative authored, not passed). Parent 55e9acc4545d7a8974ac63da8e777222275a507a installer 46106994117 in progress, offline clone job 140861889324 passed; audit 46106994114 pending. No merge or release. Next: gaming ownership, cleanup overlap, update retry, migration, UI/i18n and unified tests. Version metadata remains 7.0.0.
 
+
+
+## ACTIVE — source-first cross-check and anti-duplication register (2026-11-28)
+
+**Authority:** current source and verified exact-SHA evidence, not historical status labels below. Before changing an RQ, find its existing service, UI callers, tests and scope. Reuse/extend the canonical owner; document real gap. Do not implement again from an old roadmap or duplicate another suite app. Preserve legacy interfaces until callers and compatibility are checked. No feature removal based on lexical search alone.
+
+Snapshot `76bd8e5b9c2a16b5f8106c5814eccdc182bf494a`:
+- Complete Git tree 514 entries, 488 tracked files, 281 C#, 50 XAML, 20 Markdown. Existing UMP01 source-inventory job [140864376959](https://github.com/gs-applabs/GearWin/actions/runs/46107336506/job/140864376959) scanned 372 source/config files, 98,678 lines, zero missing paths. This is a whole-repo lexical inventory, not manual semantic proof.
+- Current [installer CI 46107336517](https://github.com/gs-applabs/GearWin/actions/runs/46107336517) success: build job 140862977954 reports 1003 desktop + 42 migration tests passed, zero failed/skipped. Offline clone job passed. Returned E2E jobs: Windows 2022 fresh, in-app, from-latest and Windows 2025 fresh all success. Do not claim unlisted jobs or physical/native coverage. UMP01 Windows baseline still running at inspection.
+- Master vs candidate: master 421 tracked files, candidate 488, 305 identical blobs, 112 shared paths with different blobs, 71 candidate-only paths, four master-only paths (generated recovery Python bytecode, not missing features); compare diverged 22 master-only / 366 candidate-only commits. No blind merge. PR #6 not mergeable. Each differing source requires intent-level review before any reconciliation.
+- Targeted content/call-site cross-check included core lifecycle, shared telemetry, cleaning, inventory, WUA, Catalog, gaming, storage, backup, migration, installer and UI resources. No local clone available (DNS failure); connector source reads and hosted CI evidence used. Full compiler-level call graph, semantic clone scan and all runtime paths NOT yet certified.
+- Existing `tools/audit/source_inventory.py` extended (not a competing scanner) with location-only service references, watched legacy symbols, XAML handler candidates and exact normalized 12-line cross-file/in-file duplicate-window groups (bounded report). Review actual hits before deletion; new report awaits next hosted run.
+
+### Canonical RQ status / implementation ownership (supersedes historical tables)
+
+| RQ | Existing owner and actual status | Only remaining scope |
+|---|---|---|
+| 01 | .NET 11: csproj, global.json, CI; exact SHA build PASS | No new migration; release verification |
+| 02 | App.xaml merges Themes/OpsisUI6Midnight.xaml; unique Opsis keys, adoption doc and smoke workflow | Actual screen opt-in and visual/keyboard/other themes; no second theme engine |
+| 03 | tools/recovery/gearwin_clone.py + partclone_adapter.py, loop/fixtures and RecoveryCards export | Physical restore/boot and acceptance; do not rewrite clone |
+| 04 | recovery-vm.yml and linux-distros.yml present | Exact final SHA workflows, actual distro/hardware distinction |
+| 05 | DriverService signature verification + CatalogPackage pre/post checks + DriverSignatureTests | Real signed CAB/INF trust, native compatibility; no second downloader |
+| 06 | TransferPreflight.InspectAsync delegates boundary checks to MaintenancePaths | Device/junction acceptance; no second preflight |
+| 07 | BackupService target volume GUID, disk number, before/after catalog identifiers | Actual restore/boot; do not recreate backup service |
+| 08 | TabLayout, recovery export, UI/history existing; prior port recorded | Specific regression, language/visual acceptance |
+| 09 | Inno WizardStyle=modern dynamic; installer E2E success current snapshot | Final version/upgrade/settings preservation |
+| 10 | README, gallery docs, snapshot workflow present | Fresh verified visual captures and docs |
+| 11 | AppVeyor configured .NET 11 | Independent real Windows run remains unverified |
+| 12 | Migration.ApplicationDiscovery, PackagePlanner/Verification, RecoveryCards JSON export; 42 tests PASS | Store/MSIX/portable discovery, data/settings/game/driver transfer, GUI plan/verify; extend shared core |
+| 13 | AppUsageReview invoked by BloatwareView consent button, existing BloatwareService inventory | Native UserAssist current-user validation, language coverage; no second tracker |
+| 14 | GameProfileService + AutoGameProfileJournal + AutoGamingModeService via CoreFeatureLifecycle; manual GamingTweaksService/PowerModeService share power lease | Manual override/dispatcher lifecycle/DPI/restore; no duplicate game profile engine |
+| 15 | OptimizationView unified update UI, WingetService -> WindowsUpdateService, DriverService/CatalogPackage, AutoUpdateService | Old detached driver route review; actual native results, progress/retry; no duplicate WUA engine |
+| 16 | SystemMaintenanceService -> QuickCleanService -> MaintenancePaths; HealthCleanupService browser/registry; MemoryCleanerService reused from health/home/optimization | Cross-category and legacy helper audit, native cleanup safety; no second cleaner |
+| 17 | DriveTypeService + StorageTemperatureService + SensorService/SharedTelemetry; HomeDiskMetadataService | Hotplug/physical identity, real sensor/HVCI and native test; no second sensor poller |
+| 18 | Existing TabLayout, WPF screens and 14-language infrastructure | Actual click-through/RTL/DPI/skin/chrome/accessibility |
+| 19 | CoreFeatureLifecycle, GearWinCore, ResourceDemand, SharedTelemetry, existing guide/status | Runtime lifecycle, source hygiene, guide reconciliation; no new scheduler/governor |
+| 20 | Existing Inno/source artifacts and docs; version metadata 7.0.0 | Final 7.1.0 version, artifacts, hashes and certification |
+| 21 | Signing explicitly deferred | Only free identity-preserving option; no paid certificate |
+| 22 | Media conversion belongs to Media Suite/Waveframe; GamesMediaView has diagnostics | No duplicate converter/downloader; diagnostics verification |
+| 23 | endurance workflow + prior measurements | Final sustained tests, physical SSD/UEFI/BitLocker evidence |
+| 24 | No scripts/ai_build_agent.py path in current tracked tree | Verify whether historical automation is still applicable; do not recreate without real requirement |
+
+### Confirmed overlap and review register
+
+| ID | Evidence in source | Action / boundary |
+|---|---|---|
+| DUP01 | DriverService.InstallInBackground (line 945) builds separate detached PowerShell WUA script, skips exact type/result validation and backup path; InstallAndWaitAsync (876) is called by OptimizationView single and batch | Confirm all references and compatibility, then remove or retire old path; never add a third installer |
+| DUP02 | BloatwareService.LoadInstalledAppsAsync, AppIconService.FindInstalledIconPath, RecommendedInventoryService.ReadTitles, InstalledAppDetector and Migration.ApplicationDiscovery each read uninstall registry; AppIconService and RecommendedInventoryService parse DisplayIcon independently of AppUsageReview | Shared read-only inventory abstraction with separate consumer filters, privilege boundaries and icon/executable semantics. Do not blindly unify MSI uninstall identity, display icon, usage evidence and migration ID. |
+| DUP03 | QuickCleanService.DirSize (156) recursive legacy helper and MaintenancePaths.MeasureFiles coexist; HealthCleanupService.ScanBrowserCacheSizeAsync (315)/BrowserCacheSize (340) alongside shared QuickClean browser root plan | Verify references and age/protection semantics; remove only unreachable legacy code or delegate to shared plan. |
+| DUP04 | SystemMaintenanceService.ScheduledCleanAsync uses shared MaintenancePaths but separate 7-day nonrecursive policy; QuickClean uses 2-day recursive user temp. | Intentional policy difference, preserve unless user authorizes change. No second cleaner. |
+| DUP05 | Driver WUA and Windows software WUA have separate implementations with distinct criteria; AutoUpdateService uses shared WindowsUpdateService, not a third WUA implementation. | Reuse exact result/identity helpers where semantics match; preserve driver/software selection and safety boundaries. |
+| DUP06 | ProcessHistoryService tracks RAM sparkline, AppUsageReview reads one-shot launch history. | Not duplicate functionality; no new process monitoring. |
+| DUP07 | Manual gaming and automatic journal use same profile file, separate ownership/lifecycle; GamingTweaksService and PowerModeService restore automatic journal under power lease. | Preserve explicit ownership and fix remaining stop/recovery race, no new profile format. |
+| DUP08 | Migration inventory vs Bloatware inventory overlap at uninstall registry, WingetService export serves package-specific purpose. | Share metadata where portable, retain migration IDs and uninstall trust boundaries. |
+| DUP09 | CoreFeatureLifecycle + GearWinCore + PerformanceProfileService + ResourceDemand each own different lifecycle/admission/governor/native-resource duties. | Intentional architecture, no second governor, no global lock blocking compatible tools. |
+
+No app source changes in this audit checkpoint. Next implementation only after checking generated symbol reports and existing call sites. Priority: retire unsafe legacy paths, share inventory reads where safe, close real migration/gaming gaps, then UI and integrated acceptance.
