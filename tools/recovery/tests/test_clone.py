@@ -141,5 +141,44 @@ class CloneSafetyTests(unittest.TestCase):
             copy.assert_not_called()
             self.assertEqual(close.call_count, 2)
 
+    def test_geometry_rejects_mismatched_sectors_or_small_target(self):
+        for source, target, size in (
+            ((4096, 512), (8192, 4096), 4096),
+            ((8192, 512), (4096, 512), 8192),
+            ((8192, 512), (8192, 512), 4096),
+        ):
+            with self.subTest(source=source, target=target), self.assertRaises(ValueError):
+                clone.validate_geometry(source, target, size)
+        clone.validate_geometry((4096, 512), (8192, 512), 4096)
+
+    def test_plan_rejects_incompatible_sector_sizes(self):
+        a = replace(self.a, logical_sector=512)
+        b = replace(self.b, logical_sector=4096)
+        with self.assertRaises(ValueError):
+            clone.inspect({a.path: a, b.path: b}, a.path, b.path)
+
+    def test_geometry_changed_after_confirmation(self):
+        a = replace(self.a, major_minor="8:0", logical_sector=512)
+        with self.assertRaises(ValueError):
+            clone.confirm_identity(a, replace(a, logical_sector=4096))
+
+    def test_geometry_uses_native_ioctl_and_rejects_invalid_values(self):
+        import struct
+        with patch.object(clone.fcntl, "ioctl", side_effect=[struct.pack("=Q", 8192), struct.pack("=I", 4096)]):
+            self.assertEqual(clone.get_geometry(1), (8192, 4096))
+        with patch.object(clone.fcntl, "ioctl", side_effect=[struct.pack("=Q", 8192), struct.pack("=I", 1000)]):
+            with self.assertRaises(ValueError):
+                clone.get_geometry(1)
+
+    def test_claimed_handles_verify_and_preserve_extra_bytes(self):
+        with tempfile.TemporaryFile() as a, tempfile.TemporaryFile() as b:
+            a.write(b"source")
+            b.write(b"olddata-tail")
+            a.flush()
+            b.flush()
+            self.assertTrue(clone.copy_verified_handles(a.fileno(), b.fileno(), 6))
+            b.seek(0)
+            self.assertEqual(b.read(), b"sourcea-tail")
+
 if __name__ == "__main__":
     unittest.main()

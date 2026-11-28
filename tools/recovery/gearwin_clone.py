@@ -29,6 +29,7 @@ class Disk:
     busy: bool
     major_minor: str = ""
     wwn: str = ""
+    logical_sector: int = 0
 
 def parse_disks(data):
     def busy(item):
@@ -46,12 +47,13 @@ def parse_disks(data):
                             str(obj.get("serial") or "").strip(),
                             str(obj.get("model") or "").strip(),
                             bool(int(obj.get("ro") or 0)), busy(obj),
-                            str(obj.get("maj:min") or ""), str(obj.get("wwn") or "").strip())
+                            str(obj.get("maj:min") or ""), str(obj.get("wwn") or "").strip(),
+                            int(obj.get("log-sec") or 0))
     return result
 
 def list_disks():
     result = subprocess.run(
-        ["/usr/bin/lsblk", "-J", "-b", "-o", "NAME,PATH,TYPE,SIZE,SERIAL,MODEL,RO,MOUNTPOINTS,FSTYPE,MAJ:MIN,WWN"],
+        ["/usr/bin/lsblk", "-J", "-b", "-o", "NAME,PATH,TYPE,SIZE,SERIAL,MODEL,RO,MOUNTPOINTS,FSTYPE,MAJ:MIN,WWN,LOG-SEC"],
         check=True, capture_output=True, text=True, timeout=30)
     return parse_disks(json.loads(result.stdout))
 
@@ -69,6 +71,8 @@ def inspect(disks, source, target):
         raise ValueError("Target disk is read-only.")
     if any(os.path.basename(p).startswith(("loop", "ram", "zram", "sr")) for p in (a.path, b.path)):
         raise ValueError("Virtual/optical devices are not supported.")
+    if a.logical_sector and b.logical_sector and a.logical_sector != b.logical_sector:
+        raise ValueError("Logical sector sizes differ; raw clone cannot safely preserve partition layout.")
     return a, b
 
 def is_live_boot():
@@ -143,12 +147,43 @@ def identity(disk):
     # A stable hardware identifier plus kernel device identity is mandatory.
     if not disk.major_minor or not (disk.serial or disk.wwn):
         raise ValueError("Disk identity is incomplete; use a different verified recovery method.")
-    return (disk.path, disk.size, disk.serial, disk.wwn, disk.model, disk.major_minor)
+    return (disk.path, disk.size, disk.serial, disk.wwn, disk.model, disk.major_minor, disk.logical_sector)
 
 
 def confirm_identity(before, after):
     if identity(before) != identity(after):
         raise ValueError("Disk identity changed; no copy started.")
+
+
+def get_geometry(fd):
+    size = struct.unpack("=Q", fcntl.ioctl(fd, 0x80081272, bytes(8)))[0]  # BLKGETSIZE64
+    sector = struct.unpack("=I", fcntl.ioctl(fd, 0x1268, bytes(4)))[0]  # BLKSSZGET
+    if size <= 0 or sector < 512 or sector > 65536 or sector & (sector - 1) or size % sector:
+        raise ValueError("Unsupported or inconsistent block geometry.")
+    return size, sector
+
+
+def validate_geometry(source, target, expected_size):
+    size, sector = source
+    capacity, target_sector = target
+    if expected_size != size or capacity < size or sector != target_sector:
+        raise ValueError("Source/target capacity or logical sector size is incompatible.")
+
+
+def sysfs_safety(info, partition=False):
+    actual = f"{os.major(info.st_rdev)}:{os.minor(info.st_rdev)}"
+    base = Path("/sys/dev/block") / actual
+    if not base.exists() or (base / "partition").exists() != partition:
+        raise ValueError("Unexpected block device topology.")
+    # Check partition plus its parent, or whole disk plus its partitions.
+    root = base.resolve(strict=True).parent if partition else base
+    if not (root / "dev").is_file() or (root / "partition").exists():
+        raise ValueError("Unable to identify a whole parent disk.")
+    for node in [root, *(p for p in root.iterdir() if (p / "partition").exists())]:
+        holders = node / "holders"
+        if not holders.is_dir() or any(holders.iterdir()):
+            raise ValueError("Disk or partition has active or unknown kernel holders.")
+    return actual
 
 
 def validate_open_device(fd, disk, target=False):
@@ -158,16 +193,10 @@ def validate_open_device(fd, disk, target=False):
     actual = f"{os.major(info.st_rdev)}:{os.minor(info.st_rdev)}"
     if actual != disk.major_minor:
         raise ValueError("Opened kernel device differs from confirmed disk.")
-    base = Path("/sys/dev/block") / actual
-    if not base.exists() or (base / "partition").exists():
-        raise ValueError("Only confirmed whole disks are supported.")
-    # Reject device-mapper/RAID/other consumers, even if not mounted.
-    for node in [base, *(p for p in base.iterdir() if (p / "partition").exists())]:
-        if (node / "holders").is_dir() and any((node / "holders").iterdir()):
-            raise ValueError("Disk or partition has active kernel holders.")
-    size = struct.unpack("=Q", fcntl.ioctl(fd, 0x80081272, bytes(8)))[0]  # BLKGETSIZE64
-    if size != disk.size:
-        raise ValueError("Opened device capacity differs from confirmed disk.")
+    sysfs_safety(info)
+    size, sector = get_geometry(fd)
+    if size != disk.size or sector != disk.logical_sector:
+        raise ValueError("Opened device geometry differs from confirmed disk.")
     if target and struct.unpack("=i", fcntl.ioctl(fd, 0x125e, bytes(4)))[0]:  # BLKROGET
         raise ValueError("Opened target is read-only.")
     return info.st_rdev
@@ -189,15 +218,23 @@ def clone_block_devices(src, dst):
         a, b = inspect(list_disks(), src.path, dst.path)
         confirm_identity(src, a)
         confirm_identity(dst, b)
-        with os.fdopen(reader, "rb", buffering=0, closefd=False) as inp, \
-                os.fdopen(writer, "r+b", buffering=0, closefd=False) as out:
-            copied = copy_bytes(inp, out, src.size)
-            return copied == digest_stream(out, src.size) == digest_stream(inp, src.size)
+        validate_geometry(get_geometry(reader), get_geometry(writer), src.size)
+        return copy_verified_handles(reader, writer, src.size)
+
+
+def copy_verified_handles(reader, writer, size):
+    """Use only previously claimed and checked handles; never opens a device by name."""
+    with os.fdopen(reader, "rb", buffering=0, closefd=False) as inp, \
+            os.fdopen(writer, "r+b", buffering=0, closefd=False) as out:
+        inp.seek(0)
+        out.seek(0)
+        copied = copy_bytes(inp, out, size)
+        return copied == digest_stream(out, size) == digest_stream(inp, size)
 
 
 def describe(d):
     return (f"{d.path} | {d.size:,} bytes | model={d.model or '?'} | "
-            f"serial={d.serial or '?'} | WWN={d.wwn or '?'} | device={d.major_minor or '?'} | busy={d.busy} | read-only={d.readonly}")
+            f"serial={d.serial or '?'} | WWN={d.wwn or '?'} | device={d.major_minor or '?'} | sector={d.logical_sector or '?'} | busy={d.busy} | read-only={d.readonly}")
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
@@ -218,7 +255,8 @@ def main():
     print("SOURCE:", describe(src))
     print("TARGET:", describe(dst))
     print("WARNING: RAW sector copying WRITES the entire source capacity to the target.")
-    print("ALL existing target partitions and contents WILL BE ERASED.")
+    print("Existing target partitions and data within the source-sized range WILL BE overwritten.")
+    print("Extra sectors on a larger target are not erased.")
     print("For most SSDs prefer Clonezilla's filesystem-aware disk-to-disk cloning.")
     if args.action == "plan":
         print("Plan complete; no data has been written.")
@@ -232,6 +270,9 @@ def main():
             raise ValueError("Only physical whole-disk block devices can be cloned.")
     identity(src)
     identity(dst)
+    if not src.logical_sector or not dst.logical_sector:
+        raise ValueError("Logical sector sizes must be known before execution.")
+    validate_geometry((src.size, src.logical_sector), (dst.size, dst.logical_sector), src.size)
     if src.major_minor == dst.major_minor or (src.wwn and src.wwn == dst.wwn):
         raise ValueError("Disk identities are not distinct.")
     if input(f"Type EXACT target path {dst.path}: ").strip() != dst.path:

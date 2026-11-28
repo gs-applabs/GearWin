@@ -35,3 +35,5 @@ Microsoft documents wbadmin start sysrecovery as a Recovery Console command:
 https://learn.microsoft.com/windows-server/administration/windows-commands/wbadmin-start-sysrecovery
 
 Additional execution safeguards: require serial or WWN and kernel major/minor, recheck after both typed confirmations, claim both whole block devices exclusively, reject active kernel holders, verify actual device capacity/read-only state and keep descriptors open for the entire copy and SHA-256 readback. Missing identifiers or busy devices fail closed. These safeguards cannot prove all hardware aliases, hotplug races or offline conditions; do not bypass them. Verification covers the source-sized byte range, not any extra sectors on a larger target. A failed/interrupted copy may leave an unbootable target. No automatic retry or rollback is attempted.
+
+Raw clone now also compares logical sector sizes from lsblk and native BLKSSZGET on the held descriptors. Unknown or different geometry is refused. Larger target trailing sectors remain unchanged; this is not a secure erase.
