@@ -50,6 +50,48 @@ public class DriveMetadataSlotTests
     }
 
     [Fact]
+    public async Task InvalidationDiscardsPendingReadWithoutStartingAnother()
+    {
+        var gate = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        int reads = 0;
+        var slot = new DriveMetadataSlot<string>(_ => ++reads == 1 ? gate.Task : Task.FromResult("new"));
+        var old = slot.ReadAsync("C:");
+        slot.Invalidate();
+        Assert.Null(await slot.ReadAsync("C:"));
+        Assert.Null(await slot.ReadAsync("D:"));
+        Assert.Equal(1, reads);
+        gate.SetResult("old");
+        Assert.Null(await old);
+        Assert.Equal(0, slot.CachedCount);
+        Assert.Equal("new", await slot.ReadAsync("C:"));
+        Assert.Equal(2, reads);
+    }
+
+    [Fact]
+    public async Task InvalidationClearsPreviouslyCachedLetters()
+    {
+        int reads = 0;
+        var slot = new DriveMetadataSlot<string>(_ => Task.FromResult((++reads).ToString()));
+        Assert.Equal("1", await slot.ReadAsync("C:"));
+        Assert.Equal("2", await slot.ReadAsync("D:"));
+        slot.Invalidate();
+        Assert.Equal(0, slot.CachedCount);
+        Assert.Equal("3", await slot.ReadAsync("C:"));
+    }
+
+    [Theory]
+    [InlineData(0x0219, 0x0007L, true)]
+    [InlineData(0x0219, 0x8000L, true)]
+    [InlineData(0x0219, 0x8004L, true)]
+    [InlineData(0x0219, 0x8001L, false)]
+    [InlineData(0x0218, 0x0007L, true)]
+    [InlineData(0x0218, 0x0012L, true)]
+    [InlineData(0x0218, 0x0004L, false)]
+    [InlineData(0x000F, 0x8000L, false)]
+    public void OnlyTopologyOrResumeBroadcastsInvalidate(int msg, long change, bool expected) =>
+        Assert.Equal(expected, OptimizerWpf.Views.HomeView.IsDiskTopologyMessage(msg, change));
+
+    [Fact]
     public async Task CacheExpiresAndCannotGrowBeyondAlphabet()
     {
         long clock = 0;

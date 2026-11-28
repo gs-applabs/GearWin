@@ -2,6 +2,12 @@
 
 Updated 2026-11-28. This is the single current entry point for a new ChatGPT/Claude Code session. Repository: gs-applabs/GearWin. Active branch: release/7.1.0-ultra. Draft integration PR: #6 (base release/7.0.0-validation). Resolve live branch HEAD first; last fully validated source 7960011c034d9e5a49605b2d34e73a0e37f6ca61; current HEAD includes newer history/product reconciliation. Master audit reference: c025e12d3e4cc8d3dc2be63d27f30b0aa8f34132. Never reset or blindly merge. No final release yet.
 
+## ACTIVE CHECKPOINT — M03/M04 topology invalidation
+
+M03/M04: existing Home metadata slot has generation invalidation, clears all cached letters and discards stale in-flight results without opening another native request. SMART/temperature single-flight also reject old generation. Home attaches a device/power broadcast hook during Loaded, removes on Unloaded, invalidates on visibility resume and coalesces drive-list/placeholder refresh on existing visible 20-second cadence; retains selected drive where available, cancels and rejects outdated analysis. Ten new deterministic cases (669 cumulative authored, not passed on this candidate). No new timer/worker watcher/disk writes. Native notification coverage, UI refresh latency, physical disk-number reuse and complete SMART badge refresh after topology change remain unverified/open. Other backlog rows retained.
+
+Exact parent b2d143d6da2ea187dd7067a9b3a7d835e3c10593 installer 46123145532 build-setup 140911795684 still running at inspection; offline clone passed. Audit 46123145537 in progress. Prior dcd6b8f installer 46121212415 six jobs success, 1042 desktop + 42 migration PASS; audit success. No release or merge.
+
 ## ACTIVE CHECKPOINT — M03 disk observation
 
 M03: Home disk metadata now reads one volume mapping/descriptor and optional WMI model instead of independent GetDiskModel and Detect calls; checks disk number again after model query, refuses virtual/RAID and contradictory NVMe/seek model override. WMI model failure retains native type. Standalone model and SMART results also recheck mapping before publish. Eight deterministic cases (659 cumulative authored, not passed on this candidate). No new timer or disk writes; existing cache and concurrent admission retained. Disk-number reuse, cache invalidation/hotplug, native and physical acceptance remain open. No full stable-device identity claim.

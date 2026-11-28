@@ -53,6 +53,8 @@ namespace OptimizerWpf.Views
         private bool _gpuReading;
         private readonly List<string> _drives = new();
         private int _driveIndex;
+        private bool _diskTopologyDirty;
+        private System.Windows.Interop.HwndSource? _diskMessageSource;
 
         // ΝΕΟ (χρήστης ζήτησε: "graph δίπλα στο δίκτυο, όπως στη Διαχείριση Εργασιών") - κυλιόμενο
         // ιστορικό throughput (bytes/sec), ίδιο μέγεθος παραθύρου με τα sparklines της Διαχείρισης
@@ -80,7 +82,7 @@ namespace OptimizerWpf.Views
             _refreshTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(PerformanceProfileService.Current.HomeRefreshSeconds) };
             _refreshTimer.Tick += (_, _) => { RefreshCpuRamGpu(); RefreshNetworkGraph(); };
             _diskRefreshTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(20) };
-            _diskRefreshTimer.Tick += (_, _) => { RefreshDisk(); _ = RefreshNetworkStatusAsync(); _ = RefreshTemperaturesAsync(); if (_diskIconNeedsRetry) _ = UpdateDiskIconAsync(); };
+            _diskRefreshTimer.Tick += (_, _) => { RefreshDiskTopologyIfNeeded(); RefreshDisk(); _ = RefreshNetworkStatusAsync(); _ = RefreshTemperaturesAsync(); if (_diskIconNeedsRetry) _ = UpdateDiskIconAsync(); };
 
             // Constructor-time Window.GetWindow is frequently null. Attach after Loaded.
             Window? parentWindow = null;
@@ -94,6 +96,11 @@ namespace OptimizerWpf.Views
                     DisposeCounters();
                     SetLiveSubscriptions(false);
                     return;
+                }
+                if (!_diskRefreshTimer.IsEnabled)
+                {
+                    MarkDiskTopologyChanged();
+                    RefreshDiskTopologyIfNeeded();
                 }
                 if (!_initializedVisible)
                 {
@@ -128,6 +135,8 @@ namespace OptimizerWpf.Views
                 parentWindow = Window.GetWindow(this);
                 if (parentWindow != null)
                 {
+                    _diskMessageSource = PresentationSource.FromVisual(parentWindow) as System.Windows.Interop.HwndSource;
+                    _diskMessageSource?.AddHook(DiskDeviceHook);
                     parentWindow.Activated += windowChanged;
                     parentWindow.Deactivated += windowChanged;
                     parentWindow.StateChanged += windowChanged;
@@ -139,6 +148,8 @@ namespace OptimizerWpf.Views
             };
             Unloaded += (_, _) =>
             {
+                _diskMessageSource?.RemoveHook(DiskDeviceHook);
+                _diskMessageSource = null;
                 PerformanceProfileService.Changed -= perfChanged;
                 IsVisibleChanged -= visibilityChanged;
                 if (parentWindow != null)
@@ -512,7 +523,7 @@ namespace OptimizerWpf.Views
         private async Task RefreshDiskTemperatureAsync()
         {
             var drive = CurrentDrive;
-            if (_diskTemperatureReading || drive == null || _unloaded || !IsVisible || !IsLoaded) return;
+            if (_diskTemperatureReading || drive == null || _unloaded || _diskTopologyDirty || !IsVisible || !IsLoaded) return;
             _diskTemperatureReading = true;
             var generation = _diskSelectionGeneration;
             try
@@ -550,22 +561,73 @@ namespace OptimizerWpf.Views
         // κυκλώνουν μέσα σε αυτή τη λίστα - βλ. BtnDrivePrev_Click/BtnDriveNext_Click. Περιλαμβάνει
         // πλέον ΚΑΙ αφαιρούμενους δίσκους (USB), όχι μόνο Fixed, ώστε η ανίχνευση τύπου δίσκου να
         // έχει νόημα να δείξει "USB" όταν υπάρχει συνδεδεμένο flash drive.
+        // Broadcast device changes only invalidate state. Native reads remain on the
+        // existing visible Home refresh cadence; no extra timer or watcher thread.
+        private IntPtr DiskDeviceHook(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+        {
+            if (IsDiskTopologyMessage(msg, wParam.ToInt64())) MarkDiskTopologyChanged();
+            return IntPtr.Zero;
+        }
+
+        internal static bool IsDiskTopologyMessage(int msg, long change) =>
+            (msg == 0x0219 && change is 0x0007 or 0x8000 or 0x8004) || // WM_DEVICECHANGE
+            (msg == 0x0218 && change is 0x0007 or 0x0012); // resume from suspend
+
+        private void MarkDiskTopologyChanged()
+        {
+            HomeDiskMetadataService.InvalidateTopology();
+            _diskSelectionGeneration++;
+            _diskTopologyDirty = true;
+            _analysisCts?.Cancel();
+        }
+
+        private void RefreshDiskTopologyIfNeeded()
+        {
+            if (!_diskTopologyDirty) return;
+            _diskTopologyDirty = false;
+            PopulateDriveList();
+            TxtDriveModel.Text = "";
+            TxtDriveKind.Text = "?";
+            TxtDiskTemp.Text = "—";
+            TxtDiskTemp.ToolTip = null;
+            TxtDiskSmart.Visibility = Visibility.Collapsed;
+            TxtDiskPercent.Text = "—";
+            TxtDiskDetail.Text = "—";
+            AnimateBar(BarDisk, 0);
+            ImgDiskIcon.Source = new BitmapImage(new Uri("/GearWin;component/Assets/disk-icon.png", UriKind.Relative));
+            _diskIconNeedsRetry = CurrentDrive != null;
+        }
+
         private void PopulateDriveList()
         {
-            _drives.Clear();
-            foreach (var drive in DriveInfo.GetDrives().Where(d => d.IsReady && (d.DriveType == DriveType.Fixed || d.DriveType == DriveType.Removable)))
+            var previous = CurrentDrive;
+            var previousAnalysis = AnalysisDrive;
+            var available = new List<string>();
+            try
             {
-                _drives.Add(drive.Name.TrimEnd('\\'));
+                foreach (var drive in DriveInfo.GetDrives())
+                {
+                    try
+                    {
+                        if (drive.DriveType is (DriveType.Fixed or DriveType.Removable) && drive.IsReady)
+                            available.Add(drive.Name.TrimEnd('\\'));
+                    }
+                    catch { /* a device can disappear during enumeration */ }
+                }
             }
-            _driveIndex = 0;
-            if (_drives.Count > 0) TxtDriveLabel.Text = _drives[_driveIndex];
+            catch { /* unknown topology: do not retain stale drive entries */ }
 
-            // Ο δίσκος της Ανάλυσης Χώρου επιλέγεται ΞΕΧΩΡΙΣΤΑ (δίπλα στο κουμπί "Ανάλυση"), ανεξάρτητα από το πλακίδιο Disk.
-            // Προεπιλογή: ο δίσκος του συστήματος.
+            _drives.Clear();
+            _drives.AddRange(available);
+            _driveIndex = Math.Max(0, _drives.FindIndex(d => string.Equals(d, previous, StringComparison.OrdinalIgnoreCase)));
+            TxtDriveLabel.Text = CurrentDrive ?? "—";
+
             CmbAnalysisDrive.ItemsSource = _drives.ToList();
             var sysRoot = (System.IO.Path.GetPathRoot(Environment.SystemDirectory) ?? "C:\\").TrimEnd('\\');
-            var preferred = _drives.FirstOrDefault(d => string.Equals(d, sysRoot, StringComparison.OrdinalIgnoreCase)) ?? _drives.FirstOrDefault();
-            if (preferred != null) CmbAnalysisDrive.SelectedItem = preferred;
+            var preferred = _drives.FirstOrDefault(d => string.Equals(d, previousAnalysis, StringComparison.OrdinalIgnoreCase))
+                ?? _drives.FirstOrDefault(d => string.Equals(d, sysRoot, StringComparison.OrdinalIgnoreCase))
+                ?? _drives.FirstOrDefault();
+            CmbAnalysisDrive.SelectedItem = preferred;
         }
 
         private string? AnalysisDrive => CmbAnalysisDrive.SelectedItem as string;
@@ -587,6 +649,7 @@ namespace OptimizerWpf.Views
 
         private async Task SwitchDrive(int delta)
         {
+            RefreshDiskTopologyIfNeeded();
             if (_drives.Count == 0) return;
             _driveIndex = (_driveIndex + delta + _drives.Count) % _drives.Count;
             _diskSelectionGeneration++;
@@ -608,7 +671,7 @@ namespace OptimizerWpf.Views
         private async Task UpdateDiskIconAsync()
         {
             var drive = CurrentDrive;
-            if (drive == null || _unloaded) return;
+            if (drive == null || _unloaded || _diskTopologyDirty) return;
             if (_diskIconReading) { _diskIconNeedsRetry = true; return; }
             _diskIconReading = true;
             _diskIconNeedsRetry = false;
@@ -786,7 +849,9 @@ namespace OptimizerWpf.Views
         private async void BtnAnalyzeDisk_Click(object sender, System.Windows.RoutedEventArgs e)
         {
             if (_analysisCts != null) { _analysisCts.Cancel(); return; }
+            RefreshDiskTopologyIfNeeded();
             if (AnalysisDrive is not string driveName) return;
+            var topology = HomeDiskMetadataService.TopologyGeneration;
 
             TxtDiskAnalysisStatus.Text = $"{LanguageService.T("Home_DiskAnalysisRunningPrefix")}{driveName}{LanguageService.T("Home_DiskAnalysisRunningSuffix")}";
             StatusService.SetBusy($"{LanguageService.T("Home_DiskAnalysisBusyPrefix")}{driveName}...");
@@ -818,6 +883,7 @@ namespace OptimizerWpf.Views
                 CmbAnalysisDrive.IsEnabled = true;
             }
 
+            if (_unloaded || topology != HomeDiskMetadataService.TopologyGeneration || AnalysisDrive != driveName) return;
             TxtDiskAnalysisStatus.Text = $"{LanguageService.T("Home_DiskAnalysisTotalPrefix")}{result.TotalUsedGb:0.0} GB ({driveName})";
 
             var cats = result.Categories.Where(c => c.SizeGb > 0).OrderByDescending(c => c.SizeGb).ToList();
@@ -906,7 +972,9 @@ namespace OptimizerWpf.Views
             // παραμένει στην καρτέλα Σύστημα). GetSmartHealthy κάνει WMI ερωτήματα - εκτελείται off the
             // UI thread, ίδιο μοτίβο με το HealthScoreService.Compute() παραπάνω.
             var sysDrive = System.IO.Path.GetPathRoot(Environment.SystemDirectory) ?? "C:\\";
+            var topology = HomeDiskMetadataService.TopologyGeneration;
             var smartHealthy = await HomeDiskMetadataService.ReadSystemSmartAsync(sysDrive).WaitAsync(token);
+            if (topology != HomeDiskMetadataService.TopologyGeneration) smartHealthy = null;
             if (token.IsCancellationRequested || _unloaded) return;
             if (smartHealthy.HasValue)
             {

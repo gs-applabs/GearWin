@@ -34,6 +34,7 @@ namespace OptimizerWpf.Services
         private static System.Threading.Tasks.Task<(int? Cpu, int? Gpu, int? Ram, string? Pawn)>? _temperatureTask;
         private static System.Threading.Tasks.Task<int?>? _diskTask;
         private static string? _diskTaskDrive;
+        private static long _diskTaskGeneration;
 
         internal static System.Threading.Tasks.Task<(int? Cpu, int? Gpu, int? Ram, string? Pawn)> ReadHomeTemperaturesAsync()
         {
@@ -55,11 +56,17 @@ namespace OptimizerWpf.Services
             {
                 // A slow native request is not canceled by starting more native requests.
                 // Different selections retry on their existing UI refresh tick.
+                var generation = HomeDiskMetadataService.TopologyGeneration;
                 if (_diskTask is { IsCompleted: false })
-                    return string.Equals(_diskTaskDrive, drive, StringComparison.OrdinalIgnoreCase)
+                    return _diskTaskGeneration == generation && string.Equals(_diskTaskDrive, drive, StringComparison.OrdinalIgnoreCase)
                         ? _diskTask : System.Threading.Tasks.Task.FromResult<int?>(null);
                 _diskTaskDrive = drive;
-                return _diskTask = System.Threading.Tasks.Task.Run(() => StorageTemperatureService.Read(drive));
+                _diskTaskGeneration = generation;
+                return _diskTask = System.Threading.Tasks.Task.Run(() =>
+                {
+                    var value = StorageTemperatureService.Read(drive);
+                    return generation == HomeDiskMetadataService.TopologyGeneration ? value : null;
+                });
             }
         }
 

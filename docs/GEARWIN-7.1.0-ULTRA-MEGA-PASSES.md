@@ -963,3 +963,10 @@ Exact parent 532b7d987fae1ed998935bd53ee73e3604247fa2: installer 46110764992 all
 M03: Home disk metadata now reads one volume mapping/descriptor and optional WMI model instead of independent GetDiskModel and Detect calls; checks disk number again after model query, refuses virtual/RAID and contradictory NVMe/seek model override. WMI model failure retains native type. Standalone model and SMART results also recheck mapping before publish. Eight deterministic cases (659 cumulative authored, not passed on this candidate). No new timer or disk writes; existing cache and concurrent admission retained. Disk-number reuse, cache invalidation/hotplug, native and physical acceptance remain open. No full stable-device identity claim.
 
 Exact parent dcd6b8f1bc520ea34cfc0235cecf87a9fdc59783: installer 46121212415 six jobs SUCCESS; build 140905920416 logs 1042 desktop + 42 migration PASS, zero failures/skips. Audit 46121212413 SUCCESS. PR #6 not mergeable, no release.
+
+
+## M03/M04 — disk topology generation (2026-11-28)
+
+M03/M04: existing Home metadata slot has generation invalidation, clears all cached letters and discards stale in-flight results without opening another native request. SMART/temperature single-flight also reject old generation. Home attaches a device/power broadcast hook during Loaded, removes on Unloaded, invalidates on visibility resume and coalesces drive-list/placeholder refresh on existing visible 20-second cadence; retains selected drive where available, cancels and rejects outdated analysis. Ten new deterministic cases (669 cumulative authored, not passed on this candidate). No new timer/worker watcher/disk writes. Native notification coverage, UI refresh latency, physical disk-number reuse and complete SMART badge refresh after topology change remain unverified/open. Other backlog rows retained.
+
+Exact parent b2d143d6da2ea187dd7067a9b3a7d835e3c10593 installer 46123145532 build-setup 140911795684 still running at inspection; offline clone passed. Audit 46123145537 in progress. Prior dcd6b8f installer 46121212415 six jobs success, 1042 desktop + 42 migration PASS; audit success. No release or merge.
