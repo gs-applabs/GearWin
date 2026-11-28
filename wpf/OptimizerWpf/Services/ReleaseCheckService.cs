@@ -23,6 +23,7 @@ namespace OptimizerWpf.Services
 
         private static DispatcherTimer? _timer;
         private static bool _inFlight;
+        private static CancellationTokenSource? _requestLifetime;
 
         // Καθαρός κανόνας: ειδοποίηση μόνο αν η νέα έκδοση είναι μεγαλύτερη από την τρέχουσα ΚΑΙ μεγαλύτερη από αυτήν για την οποία ειδοποιήθηκε ο χρήστης.
         public static bool ShouldNotify(ReleaseVersion current, ReleaseVersion latest, string? notifiedVersion, string? skippedVersion = null)
@@ -37,6 +38,7 @@ namespace OptimizerWpf.Services
         public static async Task<ReleaseCheckOutcome> CheckAsync(OncePerVersionStore store, ReleaseVersion current, HttpMessageHandler? handler = null, CancellationToken ct = default)
         {
             var res = await GitHubReleaseClient.GetLatestAsync(SelfUpdateService.Owner, SelfUpdateService.Repo, store.Get(KeyEtag), handler, ct: ct);
+            ct.ThrowIfCancellationRequested();
             string? tag; string page; bool can;
             switch (res.Status)
             {
@@ -67,12 +69,19 @@ namespace OptimizerWpf.Services
         {
             if (_timer != null || !AppSettingsService.Current.SelfUpdateCheckEnabled) return;
             _timer = new DispatcherTimer { Interval = FirstDelay };
-            _timer.Tick += async (_, _) => await TickAsync();
+            _timer.Tick += OnTick;
             _timer.Start();
         }
 
         private static int _generation;
-        public static void Stop() { _generation++; _timer?.Stop(); _timer = null; }
+        private static async void OnTick(object? sender, EventArgs e) => await TickAsync();
+
+        public static void Stop()
+        {
+            _generation++;
+            _requestLifetime?.Cancel();
+            if (_timer != null) { _timer.Stop(); _timer.Tick -= OnTick; _timer = null; }
+        }
 
         private static async Task TickAsync()
         {
@@ -80,12 +89,14 @@ namespace OptimizerWpf.Services
             _timer.Stop();
             _inFlight = true;
             var generation = _generation;
+            using var request = new CancellationTokenSource();
+            _requestLifetime = request;
             var next = Interval;
             try
             {
                 if (!AppSettingsService.Current.SelfUpdateCheckEnabled) return;
                 var store = new OncePerVersionStore(OncePerVersionStore.DefaultPath());
-                var outcome = await CheckAsync(store, ReleaseVersion.FromVersion(SelfUpdateService.Current));
+                var outcome = await CheckAsync(store, ReleaseVersion.FromVersion(SelfUpdateService.Current), ct: request.Token);
                 if (generation != _generation || !AppSettingsService.Current.SelfUpdateCheckEnabled || !outcome.ShouldNotify || outcome.Latest == null) return;
                 if (UserIsBusy()) { next = BusyRetry; return; }
                 store.MarkSeen(KeyBalloon, outcome.Latest);
@@ -98,8 +109,15 @@ namespace OptimizerWpf.Services
             catch { /* ο έλεγχος νέας έκδοσης δεν πρέπει ποτέ να ρίξει την εφαρμογή */ }
             finally
             {
+                if (ReferenceEquals(_requestLifetime, request)) _requestLifetime = null;
                 _inFlight = false;
-                if (_timer != null && generation == _generation && AppSettingsService.Current.SelfUpdateCheckEnabled) { _timer.Interval = next; _timer.Start(); }
+                if (_timer != null && AppSettingsService.Current.SelfUpdateCheckEnabled)
+                {
+                    // A disable/enable during a request creates a fresh timer.
+                    // Never let the old request impose its 24-hour delay on it.
+                    _timer.Interval = generation == _generation ? next : FirstDelay;
+                    _timer.Start();
+                }
             }
         }
 

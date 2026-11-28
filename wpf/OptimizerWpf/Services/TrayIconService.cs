@@ -16,6 +16,8 @@ namespace OptimizerWpf.Services
     public static class TrayIconService
     {
         private static NotifyIcon? _icon;
+        private static System.Drawing.Icon? _ownedIcon;
+        private static ContextMenuStrip? _menu;
         private static TrayPopupWindow? _popup;
         private static DateTime _popupClosedAt = DateTime.MinValue;
         private static Window? _mainWindow;
@@ -58,10 +60,13 @@ namespace OptimizerWpf.Services
         // κουμπί ✕ ή από τις Ρυθμίσεις Εμφάνισης.
         public static void Start(Window mainWindow)
         {
+            mainWindow.Dispatcher.VerifyAccess();
+            if (_icon != null) return;
+            IsExiting = false;
             _mainWindow = mainWindow;
-            var appIcon = System.Drawing.Icon.ExtractAssociatedIcon(Environment.ProcessPath!);
+            _ownedIcon = System.Drawing.Icon.ExtractAssociatedIcon(Environment.ProcessPath!);
 
-            var menu = new ContextMenuStrip();
+            var menu = _menu = new ContextMenuStrip();
             _openMainItem = new ToolStripMenuItem(LanguageService.T("Tray_OpenMain"), null, (_, _) => RestoreMainWindow());
             menu.Items.Add(_openMainItem);
             menu.Items.Add(new ToolStripSeparator());
@@ -87,7 +92,7 @@ namespace OptimizerWpf.Services
 
             _icon = new NotifyIcon
             {
-                Icon = appIcon,
+                Icon = _ownedIcon,
                 Text = "GearWin - Complete PC Care",
                 Visible = true,
                 ContextMenuStrip = menu,
@@ -98,7 +103,13 @@ namespace OptimizerWpf.Services
             // παρακάτω) εκτελεί ό,τι ενέργεια όρισε ο καλών (π.χ. άνοιγμα της καρτέλας Βελτιστοποίηση
             // για ενημερώσεις εφαρμογών/οδηγών, ή απευθείας οι Ρυθμίσεις Windows Update για τις OS
             // ενημερώσεις - βλ. UpdateNotificationService.RunCheckAsync).
-            _icon.BalloonTipClicked += (_, _) => _balloonClickAction?.Invoke();
+            _icon.BalloonTipClicked += (_, _) =>
+            {
+                var action = _balloonClickAction;
+                _balloonClickAction = null;
+                action?.Invoke();
+            };
+            _icon.BalloonTipClosed += (_, _) => _balloonClickAction = null;
 
             // ΔΙΟΡΘΩΣΗ (χρήστης ανέφερε: "κάποια elements μένουν στην προηγούμενη γλώσσα μέχρι το
             // κλείσιμο και άνοιγμα ξανά") - το ContextMenuStrip είναι WinForms, εντελώς έξω από τον
@@ -142,20 +153,26 @@ namespace OptimizerWpf.Services
 
         private static async System.Threading.Tasks.Task RunQuickCleanAsync()
         {
-            if (_quickCleanMenuItem == null || _icon == null) return;
-            _quickCleanMenuItem.Enabled = false;
-            _icon.Text = LanguageService.T("Tray_QuickCleanRunning");
+            var item = _quickCleanMenuItem;
+            var icon = _icon;
+            if (item == null || icon == null || !item.Enabled) return;
+            item.Enabled = false;
+            icon.Text = SafeTooltip(LanguageService.T("Tray_QuickCleanRunning"));
             try
             {
                 var freed = await SystemMaintenanceService.QuickCleanAsync();
-                _icon.ShowBalloonTip(4000, "GearWin - Complete PC Care",
+                if (!ReferenceEquals(icon, _icon)) return;
+                icon.ShowBalloonTip(4000, "GearWin - Complete PC Care",
                     $"{LanguageService.T("Tray_QuickCleanDonePrefix")}{QuickCleanService.FormatSize(freed)}", ToolTipIcon.Info);
             }
             catch { /* ένα exception εδώ (handler WinForms μενού, εκτός WPF Dispatcher) θα τερμάτιζε την εφαρμογή */ }
             finally
             {
-                _icon.Text = "GearWin - Complete PC Care";
-                _quickCleanMenuItem.Enabled = true;
+                if (ReferenceEquals(icon, _icon) && ReferenceEquals(item, _quickCleanMenuItem))
+                {
+                    icon.Text = "GearWin - Complete PC Care";
+                    item.Enabled = true;
+                }
             }
         }
 
@@ -169,6 +186,9 @@ namespace OptimizerWpf.Services
         // onClick=null πέφτει πίσω στο άνοιγμα της καρτέλας Βελτιστοποίηση (προεπιλογή αρχικά για
         // εφαρμογές/οδηγούς, το όνομα της μεθόδου έμεινε γενικό μόλις προστέθηκε η ειδοποίηση δίσκου).
         private static Action? _balloonClickAction;
+
+        internal static string SafeTooltip(string value) => value.Length <= 63 ? value :
+            value[..(char.IsHighSurrogate(value[62]) ? 62 : 63)];
 
         public static void ShowNotificationBalloon(string title, string text, Action? onClick = null)
         {
@@ -223,8 +243,32 @@ namespace OptimizerWpf.Services
         public static void Stop()
         {
             LanguageService.Changed -= ApplyLanguage;
-            _popup?.Close();
-            if (_icon != null) { _icon.Visible = false; _icon.Dispose(); _icon = null; }
+            var popup = _popup;
+            var icon = _icon;
+            var menu = _menu;
+            var image = _ownedIcon;
+            _popup = null;
+            _icon = null;
+            _menu = null;
+            _ownedIcon = null;
+            _mainWindow = null;
+            _balloonClickAction = null;
+            _widgetMenuItem = _quickCleanMenuItem = _openMainItem = _healthCheckItem =
+                _clipboardHistoryItem = _exitItem = _guideItem = _suiteItem = null;
+            try { popup?.Close(); }
+            catch (InvalidOperationException) { }
+            finally
+            {
+                try
+                {
+                    if (icon != null) { icon.Visible = false; icon.ContextMenuStrip = null; icon.Dispose(); }
+                }
+                finally
+                {
+                    try { menu?.Dispose(); }
+                    finally { image?.Dispose(); }
+                }
+            }
         }
     }
 }

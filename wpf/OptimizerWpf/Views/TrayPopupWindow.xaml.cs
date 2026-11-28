@@ -11,14 +11,18 @@ namespace OptimizerWpf.Views
         private PerformanceCounter? _cpuCounter;
         private readonly DispatcherTimer _timer;
         private bool _networkCheckInFlight;
+        private readonly System.Threading.CancellationTokenSource _lifetime = new();
+        private bool _closed;
         private DateTime _lastNetworkCheck = DateTime.MinValue;
 
         public TrayPopupWindow()
         {
             InitializeComponent();
             _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1.5) };
-            _timer.Tick += (_, _) => Refresh();
+            _timer.Tick += OnTick;
         }
+
+        private void OnTick(object? sender, EventArgs e) => Refresh();
 
         private void Window_Loaded(object sender, RoutedEventArgs e)
         {
@@ -26,8 +30,9 @@ namespace OptimizerWpf.Views
             // έβγαζε λάθος θέση σε οθόνες με scaling > 100%.
             PopupPlacement.PlaceBottomRightOnCursorMonitor(this);
 
+            if (_closed || _timer.IsEnabled) return;
             try { _cpuCounter = new PerformanceCounter("Processor", "% Processor Time", "_Total"); _cpuCounter.NextValue(); }
-            catch { _cpuCounter = null; }
+            catch { _cpuCounter?.Dispose(); _cpuCounter = null; }
 
             Refresh();
             _timer.Start();
@@ -35,6 +40,7 @@ namespace OptimizerWpf.Views
 
         private async void Refresh()
         {
+            if (_closed) return;
             try { if (_cpuCounter != null) TxtCpu.Text = $"{_cpuCounter.NextValue():0}%"; }
             catch { }
 
@@ -46,11 +52,11 @@ namespace OptimizerWpf.Views
             if (_networkCheckInFlight || (DateTime.UtcNow - _lastNetworkCheck).TotalSeconds < 10) return;
             _networkCheckInFlight = true;
             bool connected; int? latency;
-            try { (connected, latency) = await NetworkService.CheckInternetAsync(); }
+            try { (connected, latency) = await NetworkService.CheckInternetAsync().WaitAsync(_lifetime.Token); }
             catch { return; }
             finally { _networkCheckInFlight = false; }
             _lastNetworkCheck = DateTime.UtcNow;
-            if (!IsLoaded) return; // το παράθυρο έκλεισε όσο περιμέναμε
+            if (_closed || !IsLoaded) return; // το παράθυρο έκλεισε όσο περιμέναμε
             TxtNetwork.Text = connected
                 ? $"{LanguageService.T("Tray_Connected")}{(latency.HasValue ? $" ({latency} ms)" : "")}"
                 : LanguageService.T("Tray_Disconnected");
@@ -83,8 +89,16 @@ namespace OptimizerWpf.Views
 
         protected override void OnClosed(EventArgs e)
         {
-            _timer.Stop();
-            _cpuCounter?.Dispose();
+            if (!_closed)
+            {
+                _closed = true;
+                _timer.Stop();
+                _timer.Tick -= OnTick;
+                _lifetime.Cancel();
+                _lifetime.Dispose();
+                _cpuCounter?.Dispose();
+                _cpuCounter = null;
+            }
             base.OnClosed(e);
         }
     }

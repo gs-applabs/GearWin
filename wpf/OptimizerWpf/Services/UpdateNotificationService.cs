@@ -23,6 +23,7 @@ namespace OptimizerWpf.Services
         private static DispatcherTimer? _timer;
         private static bool _checkInFlight;
         private static int _generation;
+        private static System.Threading.CancellationTokenSource? _startupWait;
         private static bool _stopped;
         private static readonly object ScanGate = new();
         private static Task? _activeScan;
@@ -76,6 +77,8 @@ namespace OptimizerWpf.Services
             Log("StartupCheckAsync: starting, waiting 8s then for network (up to 3 min)");
             _checkInFlight = true;
             var generation = _generation;
+            using var wait = new System.Threading.CancellationTokenSource();
+            _startupWait = wait;
             // ΔΙΟΡΘΩΣΗ (ρητό αίτημα χρήστη: "όταν γίνεται η διαδικασία θα φαίνεται στη γραμμή
             // κατάστασης, που δεν βλέπω κάτι") - μέχρι τώρα ΟΛΟ αυτό το 8s+έως 3' στάδιο αναμονής ΚΑΙ
             // η ίδια η σάρωση ήταν αόρατα στη γραμμή κατάστασης (μόνο το χειροκίνητο "Έλεγχος Τώρα" το
@@ -83,27 +86,36 @@ namespace OptimizerWpf.Services
             using var busy = StatusService.BeginScope(LanguageService.T("UpdateNotify_AutoChecking"));
             try
             {
-                await Task.Delay(TimeSpan.FromSeconds(8));
+                await Task.Delay(TimeSpan.FromSeconds(8), wait.Token);
                 var waited = 0;
                 while (!_stopped && generation == _generation && waited < 18 && !System.Net.NetworkInformation.NetworkInterface.GetIsNetworkAvailable())
                 {
-                    await Task.Delay(TimeSpan.FromSeconds(10));
+                    await Task.Delay(TimeSpan.FromSeconds(10), wait.Token);
                     waited++;
                 }
                 if (_stopped || generation != _generation || !AppSettingsService.Current.UpdateNotificationsEnabled) return;
                 Log($"StartupCheckAsync: network available={System.Net.NetworkInformation.NetworkInterface.GetIsNetworkAvailable()} after {waited * 10}s wait - running check");
                 await RunCheckAsync(announce: true, background: true);
             }
+            catch (OperationCanceledException) when (wait.IsCancellationRequested) { }
             catch (Exception ex) { Log($"StartupCheckAsync: unexpected exception - {ex}"); }
-            finally { _checkInFlight = false; }
+            finally
+            {
+                if (ReferenceEquals(_startupWait, wait)) _startupWait = null;
+                _checkInFlight = false;
+            }
         }
 
-        internal static void InvalidateAutomaticScan() => _generation++;
+        internal static void InvalidateAutomaticScan()
+        {
+            _generation++;
+            _startupWait?.Cancel();
+        }
 
         public static void Stop()
         {
             _stopped = true;
-            _generation++;
+            InvalidateAutomaticScan();
             _timer?.Stop();
             _timer = null;
         }
