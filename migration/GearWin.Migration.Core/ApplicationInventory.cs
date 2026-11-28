@@ -3,7 +3,7 @@ using Microsoft.Win32;
 
 namespace GearWin.Migration;
 
-public enum InventorySource { LinuxDesktop, WindowsRegistry, WindowsStorePackage }
+public enum InventorySource { LinuxDesktop, WindowsRegistry, WindowsStorePackage, WindowsSelectedExecutable }
 
 public sealed record InstalledApplication(InventorySource Kind, string Id, string Name,
     string? Version = null, string? Publisher = null);
@@ -220,6 +220,33 @@ public static class ApplicationDiscovery
         }
         if (invalid) warnings.Add("Some Store package identities could not be interpreted.");
         warnings.Add("Store supplement covers current-user removable Store apps only; other MSIX, system apps and portable apps are not fully inventoried.");
+        return inventory with { Applications = Sort(apps), Warnings = warnings.ToArray() };
+    }
+
+    // Explicit user selections, not a discovery scan or an authenticity claim.
+    public static ApplicationInventory AddSelectedExecutables(ApplicationInventory inventory,
+        IEnumerable<string> selectedNames)
+    {
+        if (inventory.OperatingSystem != "windows" || inventory.SchemaVersion != PackagePlanner.SchemaVersion)
+            throw new ArgumentException("Expected a Windows inventory.");
+        var apps = inventory.Applications.ToList();
+        var seen = new HashSet<string>(apps.Where(a => a.Kind == InventorySource.WindowsSelectedExecutable)
+            .Select(a => a.Id), StringComparer.OrdinalIgnoreCase);
+        var warnings = inventory.Warnings.ToList();
+        bool invalid = false;
+        int count = 0;
+        foreach (var name in selectedNames)
+        {
+            if (++count > 100) { invalid = true; break; }
+            if (string.IsNullOrWhiteSpace(name) || name.Length > 255 ||
+                name.IndexOfAny(['/', '\\', ':']) >= 0 || name.Any(char.IsControl) ||
+                !name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) || name.Length <= 4)
+            { invalid = true; continue; }
+            if (seen.Add(name))
+                apps.Add(new(InventorySource.WindowsSelectedExecutable, name, name));
+        }
+        if (invalid) warnings.Add("Some selected executable names were invalid or exceeded the selection limit.");
+        warnings.Add("User-selected executable names are advisory only. Paths and file contents were not exported; portable status, authenticity and compatibility are not verified.");
         return inventory with { Applications = Sort(apps), Warnings = warnings.ToArray() };
     }
 

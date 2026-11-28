@@ -36,12 +36,13 @@ catch (Exception error) when (error is IOException or UnauthorizedAccessExceptio
     return 2;
 }
 
-void WriteJson<T>(T value) => Console.WriteLine(MigrationDocuments.Serialize(value));
+void WriteJson<T>(T value) => Console.WriteLine(MigrationDocuments.SerializeFile(value));
 
 async Task WritePlanAsync(string manifestPath, string[] options)
 {
     string? targetPath = null;
     string? inventoryPath = null;
+    string? destinationInventoryPath = null;
     bool verify = false;
     for (int i = 0; i < options.Length; i++)
     {
@@ -50,7 +51,7 @@ async Task WritePlanAsync(string manifestPath, string[] options)
             verify = true;
             continue;
         }
-        if (options[i] is not ("--target" or "--inventory"))
+        if (options[i] is not ("--target" or "--inventory" or "--destination-inventory"))
             throw new ArgumentException($"Unknown or duplicate option {options[i]}.");
         if (i + 1 == options.Length || options[i + 1].StartsWith("--", StringComparison.Ordinal))
             throw new ArgumentException($"Expected a file path after {options[i]}.");
@@ -58,6 +59,7 @@ async Task WritePlanAsync(string manifestPath, string[] options)
         {
             case "--target" when targetPath is null: targetPath = options[++i]; break;
             case "--inventory" when inventoryPath is null: inventoryPath = options[++i]; break;
+            case "--destination-inventory" when destinationInventoryPath is null: destinationInventoryPath = options[++i]; break;
             default: throw new ArgumentException($"Unknown or duplicate option {options[i]}.");
         }
     }
@@ -71,7 +73,8 @@ async Task WritePlanAsync(string manifestPath, string[] options)
     else target = MigrationDocuments.ReadTarget(targetPath);
     var manifest = MigrationDocuments.Read<PackageManifest>(manifestPath);
     var inventory = inventoryPath is null ? null : MigrationDocuments.Read<ApplicationInventory>(inventoryPath);
-    var document = MigrationDocuments.CreatePlan(target, manifest, inventory);
+    var destination = destinationInventoryPath is null ? null : MigrationDocuments.Read<ApplicationInventory>(destinationInventoryPath);
+    var document = MigrationDocuments.CreatePlan(target, manifest, inventory, destination);
     if (verify)
         document = document with { Applications = await PackageVerifier.VerifyAsync(document.Applications) };
     WriteJson(document);
@@ -82,6 +85,6 @@ static void PrintUsage(TextWriter output)
     output.WriteLine("GearWin Migration — package inventory and installation preview");
     output.WriteLine("  inspect");
     output.WriteLine("  inventory");
-    output.WriteLine("  plan <manifest.json> [--target <profile.json> | --verify] [--inventory <inventory.json>]");
+    output.WriteLine("  plan <manifest.json> [--target <profile.json> | --verify] [--inventory <inventory.json>] [--destination-inventory <destination.json>]");
 }
 

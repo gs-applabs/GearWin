@@ -99,7 +99,9 @@
                         <Button x:Name="BtnTransferCheck" Style="{StaticResource AccentButtonStyle}" Padding="12,8"
                                 Margin="0,0,8,8" Click="CheckTransfer_Click"/>
                         <Button x:Name="BtnAppsExport" Style="{StaticResource FlatButtonStyle}" Padding="12,8"
-                                Margin="0,0,0,8" Click="ExportApps_Click"/>
+                                Margin="0,0,8,8" Click="ExportApps_Click"/>
+                        <Button x:Name="BtnAppsExportPortable" Style="{StaticResource FlatButtonStyle}" Padding="12,8"
+                                Margin="0,0,0,8" Click="ExportAppsPortable_Click"/>
                     </WrapPanel>
                     <TextBlock x:Name="TxtTransferStatus" Style="{StaticResource SubTextStyle}" TextWrapping="Wrap"/>
                     <TextBlock x:Name="TxtAppsExportStatus" Style="{StaticResource SubTextStyle}" TextWrapping="Wrap" Margin="0,4,0,0"/>
@@ -108,6 +110,7 @@
                         <Button x:Name="BtnExportTargetProfile" Style="{StaticResource FlatButtonStyle}" Padding="12,8" Margin="0,0,8,8" Click="ExportTargetProfile_Click"/>
                         <Button x:Name="BtnCreateMigrationPlan" Style="{StaticResource FlatButtonStyle}" Padding="12,8" Margin="0,0,0,8" Click="CreateMigrationPlan_Click"/>
                     </WrapPanel>
+                    <CheckBox x:Name="ChkCompareDestination" Margin="0,0,0,8"/>
                     <TextBlock x:Name="TxtMigrationPlanStatus" Style="{StaticResource SubTextStyle}" TextWrapping="Wrap"/>
                     <ListBox x:Name="ListMigrationPreview" MaxHeight="220" Margin="0,8,0,0" Visibility="Collapsed"
                              ScrollViewer.HorizontalScrollBarVisibility="Disabled" VirtualizingPanel.IsVirtualizing="True"

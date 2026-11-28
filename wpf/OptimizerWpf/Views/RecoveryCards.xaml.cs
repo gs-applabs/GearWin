@@ -224,6 +224,7 @@ namespace OptimizerWpf.Views
             BtnTransferCheck.Content = _transferCheck != null ? LanguageService.T("Cancel") :
                 greek ? "Έλεγχος πριν από τη μεταφορά" : "Check before transfer";
             BtnAppsExport.Content = greek ? "Εξαγωγή εγκατεστημένων εφαρμογών (JSON)" : "Export installed apps (JSON)";
+            BtnAppsExportPortable.Content = Translation("Εξαγωγή με επιλεγμένα EXE", "Export with selected EXEs");
             TranslateMigrationPlanUi();
         }
 
@@ -279,13 +280,35 @@ namespace OptimizerWpf.Views
             }
         }
 
-        private async void ExportApps_Click(object sender, RoutedEventArgs e)
+        private async void ExportApps_Click(object sender, RoutedEventArgs e) => await ExportAppsAsync(false);
+
+        private async void ExportAppsPortable_Click(object sender, RoutedEventArgs e) => await ExportAppsAsync(true);
+
+        private async System.Threading.Tasks.Task ExportAppsAsync(bool includeSelectedExecutables)
         {
+            if (!BtnAppsExport.IsEnabled) return;
             if (ThemedMessageBox.Show(
                     Translation("Η λίστα περιέχει ονόματα και εκδόσεις εφαρμογών. Συνέχεια;",
                                 "The JSON contains app names and versions. Continue?"),
                     Translation("Εξαγωγή εφαρμογών", "Export applications"),
                     MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
+
+            string[] selectedNames = [];
+            if (includeSelectedExecutables)
+            {
+                var files = new Microsoft.Win32.OpenFileDialog
+                {
+                    Title = Translation("Επιλέξτε έως 100 EXE (μόνο ονόματα)", "Select up to 100 EXEs (names only)"),
+                    Filter = "Executable (*.exe)|*.exe", CheckFileExists = true, Multiselect = true
+                };
+                if (files.ShowDialog() != true) return;
+                if (files.FileNames.Length > 100)
+                {
+                    TxtAppsExportStatus.Text = Translation("Μέγιστο 100 αρχεία.", "Select no more than 100 files.");
+                    return;
+                }
+                selectedNames = files.FileNames.Select(p => Path.GetFileName(p) ?? "").ToArray();
+            }
 
             var picker = new Microsoft.Win32.SaveFileDialog
             {
@@ -297,7 +320,7 @@ namespace OptimizerWpf.Views
             };
             if (picker.ShowDialog() != true) return;
 
-            BtnAppsExport.IsEnabled = false;
+            BtnAppsExport.IsEnabled = BtnAppsExportPortable.IsEnabled = false;
             try
             {
                 TxtAppsExportStatus.Text = Translation("Απογραφή εφαρμογών…", "Reading installed applications…");
@@ -315,6 +338,8 @@ namespace OptimizerWpf.Views
                     System.Diagnostics.Trace.TraceWarning("Store inventory: " + ex.Message);
                     inventory = inventory with { Warnings = inventory.Warnings.Concat(new[] { "Store inventory failed or was unavailable." }).ToArray() };
                 }
+                if (includeSelectedExecutables)
+                    inventory = GearWin.Migration.ApplicationDiscovery.AddSelectedExecutables(inventory, selectedNames);
                 string json = GearWin.Migration.MigrationDocuments.SerializeFile(inventory);
                 await GearWinCore.RunAsync(CoreWork.Backup, () => System.Threading.Tasks.Task.Run(() =>
                     AppSettingsService.WriteIfChanged(Path.GetFullPath(picker.FileName), json, null)));
@@ -326,7 +351,7 @@ namespace OptimizerWpf.Views
             {
                 TxtAppsExportStatus.Text = ex.Message;
             }
-            finally { BtnAppsExport.IsEnabled = true; }
+            finally { BtnAppsExport.IsEnabled = BtnAppsExportPortable.IsEnabled = true; }
         }
 
         public RecoveryCards()

@@ -41,8 +41,12 @@ public sealed record PackageManifest(int SchemaVersion, IReadOnlyList<Applicatio
 public enum PlanStatus { CommandPreview, Manual, Unresolved }
 
 public sealed record CommandPreview(string Executable, IReadOnlyList<string> Arguments);
+public enum DestinationMatchStatus { ExplicitIdentityFound, NotConfirmed, MultipleMatches }
+public sealed record DestinationInventoryMatch(DestinationMatchStatus Status, string? Version = null);
+
 public sealed record ApplicationPlan(string Name, PlanStatus Status, PackageCandidate? Candidate,
-    CommandPreview? Command, string Note, InstalledApplication? Source = null, PackageVerification? Verification = null);
+    CommandPreview? Command, string Note, InstalledApplication? Source = null, PackageVerification? Verification = null,
+    DestinationInventoryMatch? DestinationMatch = null);
 
 public static partial class PackagePlanner
 {
@@ -61,7 +65,7 @@ public static partial class PackagePlanner
     private static partial Regex FlatpakAppId();
 
     public static IReadOnlyList<ApplicationPlan> CreatePlan(PackageProfile target, PackageManifest manifest,
-        ApplicationInventory? source = null)
+        ApplicationInventory? source = null, ApplicationInventory? destination = null)
     {
         if (manifest.SchemaVersion != SchemaVersion)
             throw new ArgumentException($"Unsupported manifest schema version {manifest.SchemaVersion}.");
@@ -91,26 +95,63 @@ public static partial class PackagePlanner
                 throw new ArgumentException($"Every source identity for {request.Name} needs an application ID or name.");
         }
 
-        if (source is null)
-            return manifest.Applications.Select(request => PlanApplication(target, backends, request)).ToArray();
-        if (source.SchemaVersion != SchemaVersion)
-            throw new ArgumentException($"Unsupported inventory schema version {source.SchemaVersion}.");
-
         var identities = manifest.Applications.SelectMany(request =>
             (request.Sources ?? []).Select(identity => (Identity: identity.Normalize(), Request: request)))
             .ToLookup(entry => entry.Identity, entry => entry.Request);
+
+        ApplicationRequest[] Match(InstalledApplication application) =>
+            ApplicationIdentity.KeysFor(application).SelectMany(key => identities[key])
+                .Distinct<ApplicationRequest>(ReferenceEqualityComparer.Instance).Take(2).ToArray();
+
+        Dictionary<ApplicationRequest, DestinationInventoryMatch>? destinationMatches = null;
+        if (destination != null)
+        {
+            if (destination.SchemaVersion != SchemaVersion || destination.OperatingSystem != target.OperatingSystem)
+                throw new ArgumentException("Destination inventory schema or operating system does not match the target profile.");
+            destinationMatches = new(ReferenceEqualityComparer.Instance);
+            foreach (var application in destination.Applications)
+            {
+                ValidateInventoryEntry(application);
+                if (application.Kind == InventorySource.WindowsSelectedExecutable) continue;
+                var matches = Match(application);
+                if (matches.Length != 1) continue;
+                var request = matches[0];
+                destinationMatches[request] = destinationMatches.ContainsKey(request)
+                    ? new(DestinationMatchStatus.MultipleMatches)
+                    : new(DestinationMatchStatus.ExplicitIdentityFound, application.Version);
+            }
+        }
+
+        ApplicationPlan ForRequest(ApplicationRequest request)
+        {
+            var entry = PlanApplication(target, backends, request);
+            return destinationMatches == null ? entry : entry with
+            {
+                DestinationMatch = destinationMatches.GetValueOrDefault(request) ??
+                    new DestinationInventoryMatch(DestinationMatchStatus.NotConfirmed)
+            };
+        }
+
+        if (source is null)
+            return manifest.Applications.Select(ForRequest).ToArray();
+        if (source.SchemaVersion != SchemaVersion)
+            throw new ArgumentException($"Unsupported inventory schema version {source.SchemaVersion}.");
+
         var plan = new List<ApplicationPlan>(source.Applications.Count);
         foreach (InstalledApplication application in source.Applications)
         {
-            if (application is null || string.IsNullOrWhiteSpace(application.Id) ||
-                string.IsNullOrWhiteSpace(application.Name) || !Enum.IsDefined(application.Kind))
-                throw new ArgumentException("The inventory contains an invalid application.");
+            ValidateInventoryEntry(application);
+            if (application.Kind == InventorySource.WindowsSelectedExecutable)
+            {
+                plan.Add(new(application.Name, PlanStatus.Manual, null, null,
+                    "User-selected executable: verify product identity, license and data manually.", application));
+                continue;
+            }
 
-            var matches = ApplicationIdentity.KeysFor(application).SelectMany(key => identities[key])
-                .Distinct<ApplicationRequest>(ReferenceEqualityComparer.Instance).Take(2).ToArray();
+            var matches = Match(application);
             plan.Add(matches.Length switch
             {
-                1 => PlanApplication(target, backends, matches[0]) with { Source = application },
+                1 => ForRequest(matches[0]) with { Source = application },
                 0 => new(application.Name, PlanStatus.Unresolved, null, null,
                     "No explicit catalog identity matches this installed application.", application),
                 _ => new(application.Name, PlanStatus.Unresolved, null, null,
@@ -118,6 +159,13 @@ public static partial class PackagePlanner
             });
         }
         return plan;
+    }
+
+    private static void ValidateInventoryEntry(InstalledApplication application)
+    {
+        if (application is null || string.IsNullOrWhiteSpace(application.Id) ||
+            string.IsNullOrWhiteSpace(application.Name) || !Enum.IsDefined(application.Kind))
+            throw new ArgumentException("The inventory contains an invalid application.");
     }
 
     private static ApplicationPlan PlanApplication(PackageProfile target, ILookup<PackageManager, PackageBackend> backends,

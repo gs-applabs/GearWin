@@ -17,6 +17,7 @@ namespace OptimizerWpf.Views
                 "Windows / Linux application plan: uses a mapping manifest, source inventory and destination profile. Preview only; no installation or package availability verification.");
             BtnExportTargetProfile.Content = Translation("Εξαγωγή προφίλ υπολογιστή (JSON)", "Export computer profile (JSON)");
             BtnCreateMigrationPlan.Content = Translation("Δημιουργία σχεδίου εφαρμογών (JSON)", "Create application plan (JSON)");
+            ChkCompareDestination.Content = Translation("Σύγκριση με απογραφή προορισμού (JSON)", "Compare with destination inventory (JSON)");
         }
 
         private static string? SelectMigrationInput(string title)
@@ -68,6 +69,12 @@ namespace OptimizerWpf.Views
             if (inventory == null) return;
             var target = SelectMigrationInput(Translation("Επιλέξτε προφίλ προορισμού", "Select destination profile"));
             if (target == null) return;
+            string? destinationInventory = null;
+            if (ChkCompareDestination.IsChecked == true)
+            {
+                destinationInventory = SelectMigrationInput(Translation("Επιλέξτε απογραφή προορισμού", "Select destination inventory"));
+                if (destinationInventory == null) return;
+            }
             var output = SelectMigrationOutput("gearwin-application-plan.json");
             if (output == null) return;
 
@@ -77,8 +84,8 @@ namespace OptimizerWpf.Views
             try
             {
                 var fullOutput = Path.GetFullPath(output);
-                if (new[] { manifest, inventory, target }.Any(input =>
-                    string.Equals(Path.GetFullPath(input), fullOutput, StringComparison.OrdinalIgnoreCase)))
+                if (new[] { manifest, inventory, target, destinationInventory }.Any(input =>
+                    input != null && string.Equals(Path.GetFullPath(input), fullOutput, StringComparison.OrdinalIgnoreCase)))
                     throw new IOException(Translation("Το σχέδιο δεν μπορεί να αντικαταστήσει αρχείο εισόδου.",
                         "The plan cannot replace an input document."));
 
@@ -86,12 +93,13 @@ namespace OptimizerWpf.Views
                 var report = await GearWinCore.RunAsync(CoreWork.TransferScan, () => Task.Run(() =>
                     MigrationDocuments.CreatePlan(MigrationDocuments.ReadTarget(target),
                         MigrationDocuments.Read<PackageManifest>(manifest),
-                        MigrationDocuments.Read<ApplicationInventory>(inventory))));
+                        MigrationDocuments.Read<ApplicationInventory>(inventory),
+                        destinationInventory == null ? null : MigrationDocuments.Read<ApplicationInventory>(destinationInventory))));
                 await WriteMigrationDocumentAsync(fullOutput, report);
                 var previews = report.Applications.Count(a => a.Status == PlanStatus.CommandPreview);
                 var manual = report.Applications.Count(a => a.Status == PlanStatus.Manual);
                 var unresolved = report.Applications.Count(a => a.Status == PlanStatus.Unresolved);
-                var warnings = report.InventoryWarnings?.Count ?? 0;
+                var warnings = (report.InventoryWarnings?.Count ?? 0) + (report.DestinationInventoryWarnings?.Count ?? 0);
                 TxtMigrationPlanStatus.Text = Translation(
                     $"Προεπισκοπήσεις: {previews}, χειροκίνητα: {manual}, χωρίς αντιστοίχιση: {unresolved}, προειδοποιήσεις απογραφής: {warnings}. ",
                     $"Previews: {previews}, manual: {manual}, unresolved: {unresolved}, inventory warnings: {warnings}. ") + fullOutput;
@@ -105,7 +113,14 @@ namespace OptimizerWpf.Views
                         PlanStatus.Manual => Translation("Χειροκίνητα", "Manual"),
                         _ => Translation("Χωρίς αντιστοίχιση", "Unresolved")
                     };
-                    return $"{status}: {a.Name} — {a.Candidate?.PackageId ?? "—"}";
+                    var match = a.DestinationMatch?.Status switch
+                    {
+                        DestinationMatchStatus.ExplicitIdentityFound => Translation(" · Ταυτότητα στην απογραφή", " · Identity in inventory"),
+                        DestinationMatchStatus.MultipleMatches => Translation(" · Πολλαπλές εγγραφές", " · Multiple entries"),
+                        DestinationMatchStatus.NotConfirmed => Translation(" · Μη επιβεβαιωμένο", " · Not confirmed"),
+                        _ => ""
+                    };
+                    return $"{status}: {a.Name} — {a.Candidate?.PackageId ?? "—"}{match}";
                 }).ToList();
                 if (report.Applications.Count > limit)
                     lines.Add(Translation("Οι υπόλοιπες εγγραφές βρίσκονται στο πλήρες JSON.", "Remaining entries are in the full JSON."));

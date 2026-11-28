@@ -6,7 +6,7 @@ namespace GearWin.Migration;
 // Common, strict document contract for the CLI and the Windows planning UI.
 public sealed record ProfileDocument(int SchemaVersion, PackageProfile Profile);
 public sealed record PlanDocument(int SchemaVersion, PackageProfile Target, IReadOnlyList<ApplicationPlan> Applications,
-    IReadOnlyList<string>? InventoryWarnings);
+    IReadOnlyList<string>? InventoryWarnings, IReadOnlyList<string>? DestinationInventoryWarnings = null);
 
 public static class MigrationDocuments
 {
@@ -42,6 +42,8 @@ public static class MigrationDocuments
         return document.Profile;
     }
 
-    public static PlanDocument CreatePlan(PackageProfile target, PackageManifest manifest, ApplicationInventory? inventory = null) =>
-        new(PackagePlanner.SchemaVersion, target, PackagePlanner.CreatePlan(target, manifest, inventory), inventory?.Warnings);
+    public static PlanDocument CreatePlan(PackageProfile target, PackageManifest manifest, ApplicationInventory? inventory = null,
+        ApplicationInventory? destination = null) =>
+        new(PackagePlanner.SchemaVersion, target, PackagePlanner.CreatePlan(target, manifest, inventory, destination),
+            inventory?.Warnings, destination?.Warnings);
 }

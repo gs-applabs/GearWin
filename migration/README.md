@@ -24,6 +24,12 @@ dotnet run --project migration/GearWin.Migration.Cli -- plan migration/example-m
 
 In System & Tools → Tools below System Image Backup, export the installed-app inventory and the computer profile as JSON. Choose Create application plan, select the mapping manifest, source inventory and destination profile, then save the report. These use the same strict document contract and planner as the CLI. The report preserves unresolved/manual entries and inventory warnings; a bounded on-screen preview shows the first 200 entries and the complete report is saved as JSON. No command is executed. Windows GUI inventory supplements uninstall registrations with the existing current-user removable Store app scan (explicit family identity, version); other MSIX and portable discovery remain incomplete. The CLI registry inventory alone does not include this supplement. For Linux, export the profile/inventory with the CLI. Local package verification remains a destination CLI operation; WinGet verification is not implemented.
 
+### Destination inventory comparison and selected executables
+
+Select "Compare with destination inventory" in the Windows planning card or pass `--destination-inventory destination.json` to the CLI. This compares explicit catalog identities against an imported destination inventory of the same OS, preserving multiple matches and uncertainty. It does not prove installation, exact package availability or compatibility; `--verify` remains a separate local package metadata check.
+
+"Export with selected EXEs" adds up to 100 user-selected executable names as advisory entries. Full paths and file contents are not exported or executed. These entries always require manual review, even if a catalog identity matches; no automatic portable discovery or authenticity claim is made.
+
 ## Scope
 
 - `inspect` reads local OS and executable metadata. Windows can detect WinGet. Linux can detect APT, DNF/DNF5, Pacman, Zypper, APK, XBPS, Portage, Eopkg, Urpmi, Slackpkg, Flatpak, Snap, rpm-ostree and transactional-update. PackageKit is a fallback when `pkcon` is present and there is no selected native manager. NixOS and Guix use manual configuration plans. Unknown variants use detected capabilities. Each preview still needs repository and installation validation on the destination.

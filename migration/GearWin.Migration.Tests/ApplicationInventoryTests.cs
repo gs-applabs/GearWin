@@ -127,6 +127,59 @@ public sealed class ApplicationInventoryTests
         Assert.Throws<ArgumentException>(() => ApplicationDiscovery.AddStorePackages(new ApplicationInventory(1, "linux", [], []), []));
     }
 
+    [Fact]
+    public void SelectedExecutablesStayManualEvenWithMatchingCatalog()
+    {
+        var source = ApplicationDiscovery.AddSelectedExecutables(new ApplicationInventory(1, "windows", [], []),
+            ["portable.exe", "PORTABLE.EXE", @"C:\\private\\other.exe", "not-an-app.txt"]);
+        var entry = Assert.Single(source.Applications);
+        Assert.Equal("portable.exe", entry.Id);
+        Assert.Equal(2, source.Warnings.Count);
+        var target = new PackageProfile("linux", "x64", "debian", "13", null, [new(PackageManager.Apt, "apt-get")], null);
+        var manifest = new PackageManifest(1, [new("Portable", [new(PackageManager.Apt, "example")],
+            [new(InventorySource.WindowsSelectedExecutable, Id: "portable.exe")])]);
+        var plan = Assert.Single(PackagePlanner.CreatePlan(target, manifest, source));
+        Assert.Equal(PlanStatus.Manual, plan.Status);
+        Assert.Null(plan.Command);
+    }
+
+    [Fact]
+    public void SelectedExecutableCountIsBounded()
+    {
+        var source = ApplicationDiscovery.AddSelectedExecutables(new ApplicationInventory(1, "windows", [], []),
+            Enumerable.Range(0, 101).Select(i => $"app{i}.exe"));
+        Assert.Equal(100, source.Applications.Count);
+        Assert.Equal(2, source.Warnings.Count);
+    }
+
+    [Theory]
+    [InlineData(0, DestinationMatchStatus.NotConfirmed)]
+    [InlineData(1, DestinationMatchStatus.ExplicitIdentityFound)]
+    [InlineData(2, DestinationMatchStatus.MultipleMatches)]
+    public void DestinationComparisonUsesExplicitCatalogIdentityWithoutClaimingPackageVerification(int count, DestinationMatchStatus expected)
+    {
+        var target = new PackageProfile("linux", "x64", "debian", "13", null, [new(PackageManager.Apt, "apt-get")], null);
+        var manifest = new PackageManifest(1, [new("VLC", [new(PackageManager.Apt, "vlc")],
+            [new(InventorySource.WindowsRegistry, Id: "vlc"), new(InventorySource.LinuxDesktop, Id: "vlc.desktop")])]);
+        var source = new ApplicationInventory(1, "windows", [new(InventorySource.WindowsRegistry, "vlc", "VLC")], []);
+        var destination = new ApplicationInventory(1, "linux",
+            Enumerable.Range(0, count).Select(i => new InstalledApplication(InventorySource.LinuxDesktop, "vlc.desktop", "VLC", i.ToString())).ToArray(),
+            ["incomplete"]);
+        var report = MigrationDocuments.CreatePlan(target, manifest, source, destination);
+        var entry = Assert.Single(report.Applications);
+        Assert.Equal(expected, entry.DestinationMatch?.Status);
+        Assert.Null(entry.Verification);
+        Assert.Equal("incomplete", Assert.Single(report.DestinationInventoryWarnings!));
+    }
+
+    [Fact]
+    public void DestinationInventoryOfWrongOsIsRejected()
+    {
+        var target = new PackageProfile("linux", "x64", "debian", null, null, [], null);
+        Assert.Throws<ArgumentException>(() => PackagePlanner.CreatePlan(target, new PackageManifest(1, []),
+            destination: new ApplicationInventory(1, "windows", [], [])));
+    }
+
     private static string Entry(string name) => $"[Desktop Entry]\nType=Application\nName={name}\n";
 
     private static void WriteEntry(string dataDirectory, string relativePath, string content)
