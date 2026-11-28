@@ -41,31 +41,55 @@ internal static class MaintenancePaths
         return Path.GetFullPath(candidate).StartsWith(prefix, StringComparison.OrdinalIgnoreCase);
     }
 
+    // Preserve user shortcuts and known suite/PowerToys data, including
+    // old installer staging inside temp. Use path components, not substring
+    // matches (e.g. "MyGearWinNotes" is not a protected product directory).
+    private static readonly HashSet<string> ProtectedComponents = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "GearWin", "OptimizerWpf", "Opsis", "Opsis Desktop Customization", "OpsisDesktopCustomization",
+        "OpsisNewsCrawler", "Opsis Media Player Pro", "Waveframe", "Chronologio", "ENFIA Pro",
+        "PowerToys", "Microsoft PowerToys", "Microsoft.PowerToys", "Microsoft.PowerToys_8wekyb3d8bbwe"
+    };
+
+    internal static bool IsProtectedMaintenancePath(string path)
+    {
+        try
+        {
+            var full = Path.GetFullPath(Environment.ExpandEnvironmentVariables(path));
+            return full.Split(new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar },
+                StringSplitOptions.RemoveEmptyEntries).Any(ProtectedComponents.Contains) ||
+                Path.GetExtension(full).Equals(".lnk", StringComparison.OrdinalIgnoreCase) ||
+                Path.GetExtension(full).Equals(".url", StringComparison.OrdinalIgnoreCase) ||
+                Path.GetExtension(full).Equals(".website", StringComparison.OrdinalIgnoreCase);
+        }
+        catch { return true; }
+    }
+
     // Identical traversal and age policy for estimates and execution. Estimates do
     // not open every file exclusively; in-use files can reduce actual removed bytes.
     private static IEnumerable<string> Candidates(string root, TimeSpan minAge, bool recursive, string pattern)
     {
-        if (!IsOrdinaryLocalPath(root) || !Directory.Exists(root)) yield break;
+        if (!IsOrdinaryLocalPath(root) || IsProtectedMaintenancePath(root) || !Directory.Exists(root)) yield break;
         var pending = new Stack<string>();
         pending.Push(root);
         var cutoff = DateTime.UtcNow - minAge;
         while (pending.Count > 0)
         {
             var dir = pending.Pop();
-            if (!IsOrdinaryLocalPath(dir)) continue;
+            if (!IsOrdinaryLocalPath(dir) || IsProtectedMaintenancePath(dir)) continue;
             string[] files, children;
             try { files = Directory.GetFiles(dir, pattern); } catch { files = Array.Empty<string>(); }
             foreach (var file in files)
             {
                 bool eligible;
-                try { eligible = IsWithin(root, file) && IsOrdinaryLocalPath(file) && File.GetLastWriteTimeUtc(file) <= cutoff; }
+                try { eligible = IsWithin(root, file) && IsOrdinaryLocalPath(file) && !IsProtectedMaintenancePath(file) && File.GetLastWriteTimeUtc(file) <= cutoff; }
                 catch { eligible = false; }
                 if (eligible) yield return file;
             }
             if (!recursive) continue;
             try { children = Directory.GetDirectories(dir); } catch { children = Array.Empty<string>(); }
             foreach (var child in children)
-                if (IsWithin(root, child) && IsOrdinaryLocalPath(child)) pending.Push(child);
+                if (IsWithin(root, child) && IsOrdinaryLocalPath(child) && !IsProtectedMaintenancePath(child)) pending.Push(child);
         }
     }
 
@@ -90,7 +114,7 @@ internal static class MaintenancePaths
                 long length;
                 using (var probe = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.None))
                     length = probe.Length;
-                if (!IsOrdinaryLocalPath(file) || File.GetLastWriteTimeUtc(file) > cutoff) continue;
+                if (!IsOrdinaryLocalPath(file) || IsProtectedMaintenancePath(file) || File.GetLastWriteTimeUtc(file) > cutoff) continue;
                 File.Delete(file);
                 if (!File.Exists(file)) removed += length;
             }

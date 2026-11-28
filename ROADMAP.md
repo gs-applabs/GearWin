@@ -1,5 +1,12 @@
 # ROADMAP
 
+## Current P2 follow-up: cleanup protection and WUA outcomes — 2026-11-28
+
+- RQ16: shared MaintenancePaths estimate and cleanup skip known GearWin/Opsis/PowerToys components and user shortcut extensions (.lnk/.url/.website), including final pre-delete check. Registry review normalizes expanded paths and uses boundary-aware matching; protected suite MUI entries excluded from scan/delete. This is conservative component-based protection, not an exhaustive product inventory or hardlink/reparse race guarantee. Other cleanup paths and cross-category overlap still require review.
+- RQ15: Windows Update scan/install use exact GUID + positive revision and language-neutral software type; no title fallback or driver duplication; ambiguous identity refused. EULA acceptance errors no longer swallowed; download requires aggregate and per-item success, zero item HRESULT and downloaded flag. Install success requires aggregate and exact per-item success, preserves reboot flag and reports uncertain results. Native COM progress/cancel and post-reboot activation remain pending; no forced interruption.
+- 18 new deterministic fixture cases (556 cumulative authored, not passed). Prior parent 61b2100539d05065843105d7e51e3ea64ab91f69 has installer run 46106216471 pending at inspection. User wants consolidated tests after functional implementation; routine auto-triggered CI may run before final acceptance. No release, no merge, no claim of all features completed.
+- Next: actual CAB pre-extraction quota, remaining update UI/progress/cancel, cleanup dedupe, SSD identity, opt-in usage suggestions, migration and P3 UI/i18n; preserve current gates and run final matrix against same SHA. Native acceptance, independent VM and physical restore/SSD still open.
+
 ## Current P2 integrated implementation checkpoint — 2026-11-28
 
 - User decision: prioritize finishing existing feature implementation, then run combined acceptance checks against a single final source SHA; routine push CI is not final certification. Parent `06453b39db9783146e6e8513d568b079f90dc249` had installer run 46106027062 in progress and audit 46106027078 pending at inspection.

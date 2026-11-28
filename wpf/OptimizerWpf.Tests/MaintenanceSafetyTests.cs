@@ -70,6 +70,36 @@ public class MaintenanceSafetyTests
         finally { System.IO.Directory.Delete(temp, true); }
     }
 
+    [Theory]
+    [InlineData(@"C:\Temp\Opsis\config.json", true)]
+    [InlineData(@"C:\Temp\Microsoft\PowerToys\config.json", true)]
+    [InlineData(@"C:\Temp\GEARWIN\state.json", true)]
+    [InlineData(@"C:\Temp\User.lnk", true)]
+    [InlineData(@"C:\Temp\Website.URL", true)]
+    [InlineData(@"C:\Temp\MyGearWinNotes\old.txt", false)]
+    [InlineData(@"C:\Temp\ordinary.txt", false)]
+    public void MaintenanceProtectionUsesComponentsAndShortcuts(string path, bool expected) =>
+        Assert.Equal(expected, MaintenancePaths.IsProtectedMaintenancePath(path));
+
+    [Theory]
+    [InlineData("00000000-0000-0000-0000-000000000001|1", true)]
+    [InlineData("00000000-0000-0000-0000-000000000000|1", false)]
+    [InlineData("00000000-0000-0000-0000-000000000001|0", false)]
+    [InlineData("00000000-0000-0000-0000-000000000001|-1", false)]
+    [InlineData("title|1", false)]
+    [InlineData("00000000-0000-0000-0000-000000000001| 1", false)]
+    public void WindowsUpdateRequiresExactIdentity(string rowId, bool expected) =>
+        Assert.Equal(expected, WindowsUpdateService.TryParseRowId(rowId, out _, out _));
+
+    [Theory]
+    [InlineData(2, 2, 0, true)]
+    [InlineData(3, 2, 0, false)]
+    [InlineData(2, 3, 0, false)]
+    [InlineData(2, 2, -1, false)]
+    [InlineData(4, 4, -1, false)]
+    public void WindowsUpdateRequiresPerItemSuccess(int aggregate, int item, int hresult, bool expected) =>
+        Assert.Equal(expected, WindowsUpdateService.ExactOperationSuccess(aggregate, item, hresult));
+
     [Fact]
     public void CleanupPreservesRecentAndLockedFilesAndCountsRemovedBytes()
     {

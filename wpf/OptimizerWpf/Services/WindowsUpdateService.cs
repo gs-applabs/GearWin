@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Management;
+using System.Globalization;
 using System.Threading.Tasks;
 
 namespace OptimizerWpf.Services
@@ -56,12 +57,13 @@ namespace OptimizerWpf.Services
                     string updateId = "";
                     int revision = 0;
                     try { updateId = ((string)update.Identity.UpdateID).Trim(); revision = (int)update.Identity.RevisionNumber; } catch { }
-                    if (updateId.Length == 0) updateId = title;
+                    if (!TryParseRowId($"{updateId}|{revision}", out _, out _)) continue;
 
                     if (completed.Contains($"{updateId}|{revision}")) { pendingReboot++; continue; }
 
+                    // UpdateType is language-neutral: utSoftware=1, utDriver=2.
+                    if ((int)update.Type != 1) continue;
                     var category = CategoryText(update);
-                    if (category.Contains("driver", StringComparison.OrdinalIgnoreCase)) continue;
 
                     string? kb = null;
                     try { if (update.KBArticleIDs.Count > 0) kb = "KB" + update.KBArticleIDs[0]; } catch { }
@@ -136,8 +138,10 @@ namespace OptimizerWpf.Services
             try
             {
                 using var s = new ManagementObjectSearcher("SELECT LastBootUpTime FROM Win32_OperatingSystem");
-                foreach (ManagementObject o in s.Get())
-                    return ManagementDateTimeConverter.ToDateTime((string)o["LastBootUpTime"]).ToUniversalTime();
+                using var rows = s.Get();
+                foreach (ManagementObject o in rows)
+                    using (o)
+                        return ManagementDateTimeConverter.ToDateTime((string)o["LastBootUpTime"]).ToUniversalTime();
             }
             catch { }
             return DateTime.UtcNow - TimeSpan.FromMilliseconds(Environment.TickCount64);
@@ -150,12 +154,24 @@ namespace OptimizerWpf.Services
         internal static Task<(bool Ok, bool RebootRequired, string? Error)> InstallCoordinatedAsync(string rowId, CorePriority priority) =>
             GearWinCore.RunAsync(CoreWork.SoftwareChange, () => InstallCoreAsync(rowId), priority);
 
+        internal static bool TryParseRowId(string? rowId, out Guid updateId, out int revision)
+        {
+            updateId = Guid.Empty;
+            revision = 0;
+            if (rowId == null || rowId.Length > 48) return false;
+            var parts = rowId.Split('|');
+            return parts.Length == 2 && Guid.TryParseExact(parts[0], "D", out updateId) &&
+                updateId != Guid.Empty && int.TryParse(parts[1], NumberStyles.None, CultureInfo.InvariantCulture, out revision) && revision > 0;
+        }
+
+        internal static bool ExactOperationSuccess(int aggregate, int item, int hresult) =>
+            aggregate == 2 && item == 2 && hresult == 0;
+
         private static Task<(bool Ok, bool RebootRequired, string? Error)> InstallCoreAsync(string rowId) => Task.Run<(bool Ok, bool RebootRequired, string? Error)>(() =>
         {
             try
             {
-                var parts = rowId.Split('|');
-                if (parts.Length != 2 || !int.TryParse(parts[1], out var revision)) return (false, false, "Invalid update id");
+                if (!TryParseRowId(rowId, out var updateId, out var revision)) return (false, false, "Invalid update id");
 
                 dynamic session = Activator.CreateInstance(Type.GetTypeFromProgID("Microsoft.Update.Session")!)!;
                 dynamic searcher = session.CreateUpdateSearcher();
@@ -167,14 +183,19 @@ namespace OptimizerWpf.Services
                 {
                     try
                     {
-                        if (string.Equals((string)u.Identity.UpdateID, parts[0], StringComparison.OrdinalIgnoreCase) && (int)u.Identity.RevisionNumber == revision)
-                        { target = u; break; }
+                        if (Guid.TryParseExact((string)u.Identity.UpdateID, "D", out Guid id) && id == updateId &&
+                            (int)u.Identity.RevisionNumber == revision && (int)u.Type == 1)
+                        {
+                            if (target != null) return (false, false, "Ambiguous update identity");
+                            target = u;
+                        }
                     }
                     catch { }
                 }
                 if (target == null) return (false, false, "Update no longer available");
 
-                try { if (!(bool)target.EulaAccepted) target.AcceptEula(); } catch { }
+                if (!(bool)target.EulaAccepted) target.AcceptEula();
+                if (!(bool)target.EulaAccepted) return (false, false, "Update license not accepted");
 
                 dynamic coll = Activator.CreateInstance(Type.GetTypeFromProgID("Microsoft.Update.UpdateColl")!)!;
                 coll.Add(target);
@@ -185,7 +206,9 @@ namespace OptimizerWpf.Services
                     downloader.Updates = coll;
                     dynamic dres = downloader.Download();
                     int dcode = (int)dres.ResultCode;
-                    if (dcode != 2 && dcode != 3) return (false, false, $"Download failed (code {dcode}, 0x{(int)dres.HResult:X8})");
+                    dynamic item = dres.GetUpdateResult(0);
+                    if (!ExactOperationSuccess(dcode, (int)item.ResultCode, (int)item.HResult) || !(bool)target.IsDownloaded)
+                        return (false, false, $"Download not verified (code {dcode}, item {(int)item.ResultCode}, 0x{(int)item.HResult:X8})");
                 }
 
                 dynamic installer = session.CreateUpdateInstaller();
@@ -196,9 +219,15 @@ namespace OptimizerWpf.Services
                 int code = (int)ires.ResultCode;
                 var reboot = false;
                 try { reboot = (bool)ires.RebootRequired; } catch { }
-                if (code == 2) return (true, reboot, null);
-                if (code == 3) return (false, reboot, "Installation completed with errors; recheck Windows Update.");
-                return (false, reboot, $"Install failed (code {code}, 0x{(int)ires.HResult:X8})");
+                try
+                {
+                    dynamic item = ires.GetUpdateResult(0);
+                    reboot |= (bool)item.RebootRequired;
+                    if (ExactOperationSuccess(code, (int)item.ResultCode, (int)item.HResult))
+                        return (true, reboot, null); // WUA reports success, not proof of post-reboot activation
+                    return (false, reboot, $"Install not verified (code {code}, item {(int)item.ResultCode}, 0x{(int)item.HResult:X8}); recheck Windows Update.");
+                }
+                catch (Exception ex) { return (false, reboot, "Update result unavailable: " + ex.Message); }
             }
             catch (Exception ex)
             {

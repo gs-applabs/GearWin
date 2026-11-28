@@ -66,7 +66,7 @@ namespace OptimizerWpf.Services
                     if (valueName.StartsWith("PS", StringComparison.Ordinal)) continue;
                     var cleanPath = System.Text.RegularExpressions.Regex.Replace(valueName, @"\.(FriendlyAppName|ApplicationCompany)$", "");
                     if (!System.Text.RegularExpressions.Regex.IsMatch(cleanPath, @"^[a-zA-Z]:\\")) continue;
-                    if (!IsConfirmedMissingLocalPath(cleanPath)) continue;
+                    if (IsProtected(cleanPath, protectedPaths) || !IsConfirmedMissingLocalPath(cleanPath)) continue;
                     findings.Add(new RegistryFinding("ObsoleteMuiCache", cleanPath, $"HKCU\\{muiKey}", valueName));
                 }
             }
@@ -146,6 +146,7 @@ namespace OptimizerWpf.Services
             f.Category == "ObsoleteMuiCache" &&
             string.Equals(f.RegPath, "HKCU\\" + MuiPath, StringComparison.OrdinalIgnoreCase) &&
             f.ValueName is string name && name.Length > 0 && name.Length <= 16383 &&
+            !MaintenancePaths.IsProtectedMaintenancePath(name) &&
             System.Text.RegularExpressions.Regex.IsMatch(name, @"^[A-Za-z]:\\.+\.(FriendlyAppName|ApplicationCompany)$",
                 System.Text.RegularExpressions.RegexOptions.IgnoreCase);
 
@@ -514,8 +515,17 @@ Write-Output $brokenCount
             return s.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? s : null;
         }
 
-        private static bool IsProtected(string path, string[] protectedPaths) =>
-            protectedPaths.Any(p => path.StartsWith(p, StringComparison.OrdinalIgnoreCase));
+        private static bool IsProtected(string path, string[] protectedPaths)
+        {
+            if (MaintenancePaths.IsProtectedMaintenancePath(path)) return true;
+            try
+            {
+                var full = Path.GetFullPath(Environment.ExpandEnvironmentVariables(path));
+                return protectedPaths.Any(p => string.Equals(Path.GetFullPath(p), full, StringComparison.OrdinalIgnoreCase) ||
+                    MaintenancePaths.IsWithin(p, full));
+            }
+            catch { return true; }
+        }
 
         internal static bool IsConfirmedMissingLocalPath(string path)
         {
