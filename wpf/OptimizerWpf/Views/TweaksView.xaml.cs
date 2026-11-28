@@ -74,11 +74,24 @@ namespace OptimizerWpf.Views
             button.IsEnabled = false;
             // Μια εξαίρεση (π.χ. μπλοκάρισμα registry από πολιτική/antivirus) άφηνε τον διακόπτη να δείχνει κατάσταση που
             // ΔΕΝ εφαρμόστηκε και έσκαγε στον global handler. Επαναφέρουμε τον διακόπτη και ενημερώνουμε τον χρήστη.
-            try { await row.ApplyRequestedAsync(row.IsOn); }
-            catch
+            try
             {
-                row.IsOn = !row.IsOn;
-                ThemedMessageBox.Show(LanguageService.T("Net_ChangeFailed"), LanguageService.T("Net_ErrorTitle"), MessageBoxButton.OK, MessageBoxImage.Warning);
+                if (row.Tweak.Id == "Hibernate" && !row.IsOn &&
+                    ThemedMessageBox.Show(row.Tweak.Description, LanguageService.T("Tweaks_ConfirmTitle"),
+                        MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
+                {
+                    row.IsOn = true;
+                    return;
+                }
+                await row.ApplyRequestedAsync(row.IsOn);
+            }
+            catch (Exception ex)
+            {
+                // A grouped operation may have partially applied. Read the
+                // actual state instead of claiming the opposite succeeded.
+                try { row.IsOn = await System.Threading.Tasks.Task.Run(() => row.Tweak.DetectState?.Invoke()) ?? !row.IsOn; }
+                catch { row.IsOn = !row.IsOn; }
+                ThemedMessageBox.Show(LanguageService.T("Net_ChangeFailed") + "\n" + ex.Message, LanguageService.T("Net_ErrorTitle"), MessageBoxButton.OK, MessageBoxImage.Warning);
             }
             finally { button.IsEnabled = true; }
         }
@@ -160,11 +173,23 @@ namespace OptimizerWpf.Views
         private void BtnVisualPerformance_Click(object sender, RoutedEventArgs e) => ConfirmAndApplyVisual(2, 0);
         private void BtnVisualBalanced_Click(object sender, RoutedEventArgs e) => ConfirmAndApplyVisual(0, 1);
 
-        private void ConfirmAndApplyVisual(int visualFx, int onOff)
+        private async void ConfirmAndApplyVisual(int visualFx, int onOff)
         {
             if (ThemedMessageBox.Show(LanguageService.T("Tweaks_VisualEffectsConfirm"),
                     LanguageService.T("Tweaks_ConfirmTitle"), MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
-            TweakService.SetVisualEffectsPreset(visualFx, onOff);
+            try
+            {
+                await GearWinCore.RunAsync(CoreWork.TweakChange, () => System.Threading.Tasks.Task.Run(() =>
+                    TweakService.SetVisualEffectsPreset(visualFx, onOff)));
+                ThemedMessageBox.Show(LanguageService.Current == "el"
+                    ? "Οι τιμές αποθηκεύτηκαν. Ενδέχεται να απαιτείται αποσύνδεση και νέα σύνδεση στα Windows."
+                    : "Values saved. Windows may require sign-out and sign-in.", LanguageService.T("Tweaks_ConfirmTitle"),
+                    MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            catch (Exception ex)
+            {
+                ThemedMessageBox.Show(ex.Message, LanguageService.T("Net_ErrorTitle"), MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
         }
 
         private void BtnAddCustomMenuItem_Click(object sender, RoutedEventArgs e)

@@ -97,8 +97,8 @@ namespace OptimizerWpf.Services
             list.Add(ToSimple(m[3])); // Delivery Optimization
             list.Add(new SimpleTweak(LanguageService.T("Tweak_MouseAccelLabel"), LanguageService.T("Tweak_MouseAccelDesc"), MouseAccelOff, MouseAccelOn,
                 Id: "MouseAccel", DetectState: () => GroupedRegistryTweaks.IsOn(GroupedRegistryTweaks.Mouse)));
-            list.Add(new SimpleTweak(LanguageService.T("Tweak_HibernateLabel"), "", HibernateOn, HibernateOff,
-                Id: "Hibernate", RequiresAdmin: true, DetectState: () => { using var k = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Control\Power"); return Convert.ToInt32(k?.GetValue("HibernateEnabled") ?? 0) == 1; }));
+            list.Add(new SimpleTweak(LanguageService.T("Tweak_HibernateLabel"), LanguageService.Current == "el" ? "Η απενεργοποίηση αφαιρεί το αρχείο αδρανοποίησης και επηρεάζει τη Γρήγορη εκκίνηση." : "Turning off removes the hibernation file and affects Fast Startup.", HibernateOn, HibernateOff,
+                Id: "Hibernate", RequiresAdmin: true, DetectState: HibernateSettings.IsEnabled));
             list.Add(ToSimple(m[4])); // Remove Recommended
             list.Add(ToSimple(m[5])); // Clipboard history
             list.Add(ToSimple(m[6])); // Network throttling
@@ -166,8 +166,8 @@ namespace OptimizerWpf.Services
 
         // ===== Αρχείο Αδρανοποίησης / Ultimate Performance =====
 
-        public static void HibernateOn() => RunProcess("powercfg.exe", "/hibernate on");
-        public static void HibernateOff() => RunProcess("powercfg.exe", "/hibernate off");
+        public static void HibernateOn() => HibernateSettings.Change(true);
+        public static void HibernateOff() => HibernateSettings.Change(false);
 
         // ΔΙΟΡΘΩΣΗ (ROADMAP.md REQ-570-03, ρητό αίτημα χρήστη: "αυτόματο gaming mode κάτω από gaming
         // mode & ultimate performance") - το toggle αυτού του tweak μετακινήθηκε από τη γενική λίστα
@@ -192,17 +192,8 @@ namespace OptimizerWpf.Services
 
         // ===== Οπτικά Εφέ - ΠΟΤΕ το undocumented UserPreferencesMask =====
 
-        public static void SetVisualEffectsPreset(int visualFx, int onOff)
-        {
-            RegSet(Registry.CurrentUser, @"Control Panel\Desktop", "DragFullWindows", onOff.ToString(), RegistryValueKind.String);
-            RegSet(Registry.CurrentUser, @"Control Panel\Desktop\WindowMetrics", "MinAnimate", onOff.ToString(), RegistryValueKind.String);
-            RegSet(Registry.CurrentUser, @"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced", "ListviewAlphaSelect", onOff);
-            RegSet(Registry.CurrentUser, @"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced", "TaskbarAnimations", onOff);
-            RegSet(Registry.CurrentUser, @"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced", "ListviewShadow", onOff);
-            RegSet(Registry.CurrentUser, @"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced", "EnableTransparency", onOff);
-            RegSet(Registry.CurrentUser, @"Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects", "VisualFXSetting", visualFx);
-            RestartExplorer();
-        }
+        public static void SetVisualEffectsPreset(int visualFx, int onOff) =>
+            VisualEffectsJournal.Apply(visualFx, onOff);
 
         // ===== Κρυπτογράφηση Συσκευής - ΠΟΤΕ registry toggle, μόνο άνοιγμα ρυθμίσεων =====
 
@@ -291,13 +282,19 @@ namespace OptimizerWpf.Services
                 try { if (ServiceStartJournal.ChangeSysMain(true)) reverted++; }
                 catch (Exception ex) { Trace.TraceError("SysMain restore: " + ex.Message); }
             }
+            if (VisualEffectsJournal.CanRestore())
+            {
+                try { VisualEffectsJournal.Restore(); reverted++; }
+                catch (Exception ex) { Trace.TraceError("Visual preset restore: " + ex.Message); }
+            }
             return reverted;
         }
 
         public static int CountRestorableTweaks() =>
             MainTweaks.Concat(AiCopilotTweaks).Concat(PerfRegTweaks).Count(TweakRegistryJournal.CanRestore)
             + GroupedRegistryTweaks.Groups().Count(g => GroupedRegistryTweaks.CanRestore(g.Values))
-            + (BackgroundAppJournal.CanRestore() ? 1 : 0) + (ServiceStartJournal.CanRestoreSysMain() ? 1 : 0);
+            + (BackgroundAppJournal.CanRestore() ? 1 : 0) + (ServiceStartJournal.CanRestoreSysMain() ? 1 : 0)
+            + (VisualEffectsJournal.CanRestore() ? 1 : 0);
 
         // ===== Ελαφρύτερα Windows (roadmap) =====
 
@@ -346,37 +343,6 @@ namespace OptimizerWpf.Services
             ApplyOn(MainTweaks[3]); // Delivery Optimization off (P2P sharing)
             DisableBackgroundApps();
             DisableSysMain();
-        }
-
-        // ===== helpers =====
-
-        private static void RegSet(RegistryKey hive, string path, string name, object value, RegistryValueKind kind = RegistryValueKind.DWord)
-        {
-            using var key = hive.CreateSubKey(path, writable: true);
-            key?.SetValue(name, value, kind);
-        }
-
-        private static void RestartExplorer()
-        {
-            foreach (var p in Process.GetProcessesByName("explorer")) { try { p.Kill(); } catch { } finally { p.Dispose(); } }
-        }
-
-        private static void RunProcess(string fileName, string arguments)
-        {
-            try { using var p = Process.Start(new ProcessStartInfo(fileName, arguments) { UseShellExecute = false, CreateNoWindow = true, WindowStyle = ProcessWindowStyle.Minimized }); p?.WaitForExit(); }
-            catch { }
-        }
-
-        private static string RunProcessCapture(string fileName, string arguments)
-        {
-            try
-            {
-                using var p = Process.Start(new ProcessStartInfo(fileName, arguments) { RedirectStandardOutput = true, UseShellExecute = false, CreateNoWindow = true, StandardOutputEncoding = System.Text.Encoding.UTF8 });
-                var output = p?.StandardOutput.ReadToEnd() ?? "";
-                p?.WaitForExit();
-                return output;
-            }
-            catch { return ""; }
         }
 
     }
